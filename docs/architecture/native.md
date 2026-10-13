@@ -51,3 +51,9 @@ Crumble reads Events from macOS EventKit and never changes them; see [ADR 0001](
 - Settings are saved as `settings.json` in the platform config directory (`~/Library/Application Support/Crumble` on macOS). A missing, unreadable, or partial file falls back to the defaults. If a save fails, the error is logged and the app keeps the new value in memory.
 - **First day of week** can be any weekday and defaults to Monday. It sets the column order of every Calendar view and where each week Period begins.
 - **Calendars** lists every Account with its Calendars, each with a checkbox, its color, and its name. Every Calendar starts enabled; unchecking one Disables it. A Disabled Account greys its Calendars out with an "Account disabled" note and keeps their checkboxes as they were. The group is hidden while access is not granted. The Disabled Accounts and Calendars are saved as sets of EventKit identifiers (`disabled_accounts`, `disabled_calendars`) and change nothing in macOS.
+
+## Agent automation
+
+- `cargo run -p crumble --features mcp` installs a [gpui-mcp](https://github.com/themixednuts/gpui-mcp) bridge on the main window under the app ID `crumble`. The `gpui-mcp` server in `.mcp.json` finds it, and agents can then read the semantic tree, click, type, and take window screenshots through GPUI's own event pipeline instead of the system mouse. Builds without the feature carry no bridge.
+- The bridge needs GPUI automation hooks, so the workspace patches `gpui-pre` with gpui-mcp's copy for every build. The bridge and the patch are pinned to the same gpui-mcp revision as the installed server; update all three together.
+- Only elements with an `.id(...)` appear in the tree. In GPUI Kit 0.7.0 a Select's options are drawn but not published, so pick them with the keyboard.
