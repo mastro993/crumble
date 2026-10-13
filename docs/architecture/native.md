@@ -9,6 +9,7 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 | `apps/desktop` | Native lifecycle: window options, menus, key bindings, and quitting after the last window closes |
 | `crates/ui` | GPUI root view: shell, sidebar, header, navigation history, pages, user settings, and embedded icon assets |
 | `crates/theme` | Colors, typography, and dimensions |
+| `crates/eventkit` | Read-only bridge to macOS EventKit: calendar access, Accounts, Calendars, Events, and change notifications as plain Rust data |
 
 ## Shell
 
@@ -32,6 +33,16 @@ Terms such as Calendar view, Period, and Focused date are defined in [CONTEXT.md
 - Week and Month grids sit in a bordered frame with 12 pt rounded corners (`SURFACE_RADIUS`). Shaded cells in the corners follow the curve, including while the Week hours scroll.
 - Today is circled in the accent color. Weekends (Saturday and Sunday) are shaded in every Calendar view. In Year view, adjacent weekend columns share one rounded strip.
 - Today is read from the local clock on every render, so a window left open past midnight updates on its next redraw.
+
+## Events
+
+Crumble reads Events from macOS EventKit and never changes them; see [ADR 0001](../adr/0001-read-only-events-via-eventkit.md). Account, Calendar, and Event are defined in [CONTEXT.md](../../CONTEXT.md).
+
+- `crates/eventkit` is the only crate that calls Objective-C. Every EventKit call is `unsafe`, so it sets its own lints with `unsafe_code = "deny"` and local allows, while the other crates keep the workspace's `forbid`. On other platforms it reports `Access::Unsupported` and returns nothing.
+- Calls go through one shared event store. EventKit exceptions, raised when its connection to the calendar daemon drops, and nils from getters declared non-null become errors instead of crashing the app.
+- Accounts are the macOS sources that hold at least one event Calendar, sorted by name. Their provider is guessed: Exchange is Outlook, a CalDAV source titled "iCloud" is Apple, and a CalDAV title containing "gmail" or "google" is Google. Anything else, including Google Workspace accounts on their own domain, is Other.
+- Calendar colors are converted to sRGB. Events are returned one per occurrence, with declined and cancelled ones left out. All-day Events are whole dates; timed Events are in the system time zone. A join link is the first `meet.google.com`, Teams, Zoom, or Webex link found in the Event's URL, then its location, then its notes.
+- macOS grants calendar access only to an app bundle whose `Info.plist` has `NSCalendarsFullAccessUsageDescription`. `apps/desktop/Info.plist` holds it, and the macOS Cargo runner (`scripts/macos-runner.sh`) wraps `crumble` in `Crumble.app`, signs it, and launches it with `open`. Ctrl-C quits the app too. Test binaries run directly.
 
 ## Settings
 
