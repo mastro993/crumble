@@ -36,6 +36,8 @@ pub struct NativeView {
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     calendar_sync: Entity<CalendarSync>,
+    /// The Account whose ⋯ menu is open, so its trigger stays shown.
+    open_account_menu: Option<String>,
 }
 
 impl NativeView {
@@ -60,6 +62,7 @@ impl NativeView {
             first_day_select,
             calendar: CalendarPage::default(),
             calendar_sync,
+            open_account_menu: None,
         }
     }
 

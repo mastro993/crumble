@@ -142,11 +142,19 @@ impl NativeView {
     fn account_row(&self, account: &Account, cx: &Context<Self>) -> Stateful<Div> {
         let disabled = self.settings.disabled_accounts.contains(&account.id);
         let group = SharedString::from(format!("account-{}", account.id));
-        let view = cx.entity().downgrade();
-        let id = account.id.clone();
-        let menu = account_menu(account, disabled, group.clone(), move |cx| {
+        let open = self.open_account_menu.as_ref() == Some(&account.id);
+        let (view, id) = (cx.entity().downgrade(), account.id.clone());
+        let toggle = move |cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
-        });
+        };
+        let (view, id) = (cx.entity().downgrade(), account.id.clone());
+        let track_open = move |open: bool, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| {
+                view.open_account_menu = open.then(|| id.clone());
+                cx.notify();
+            });
+        };
+        let menu = account_menu(account, disabled, open, group.clone(), toggle, track_open);
         row(
             group.clone(),
             provider_icon(account.provider),
@@ -173,12 +181,15 @@ impl NativeView {
     }
 }
 
-/// The ⋯ button of an Account row, shown while `group` is hovered; its one item runs `toggle`.
+/// The ⋯ button of an Account row, shown while `group` is hovered and while its menu is `open`;
+/// its one item runs `toggle`, and `track_open` hears the menu open and close.
 fn account_menu(
     account: &Account,
     disabled: bool,
+    open: bool,
     group: SharedString,
     toggle: impl Fn(&mut App) + 'static,
+    track_open: impl Fn(bool, &mut App) + 'static,
 ) -> impl IntoElement {
     let toggle = Rc::new(toggle);
     // Not `controls::button`: it stops the mouse-down that opens the menu.
@@ -188,8 +199,9 @@ fn account_menu(
         .xsmall()
         .icon(app_icon("more").size_4())
         .accessibility_label(format!("{} actions", account.name))
-        // Transparent rather than invisible, so Tab still reaches it.
-        .opacity(0.)
+        // Transparent rather than invisible, so Tab still reaches it. It stays shown while its
+        // menu is open, when neither the pointer nor the focus is on it.
+        .opacity(if open { 1. } else { 0. })
         .group_hover(group, |style| style.opacity(1.))
         .focus_visible(|style| style.opacity(1.))
         .dropdown_menu(move |menu, _, _| {
@@ -199,6 +211,7 @@ fn account_menu(
                     .on_click(move |_, _, cx| toggle(cx)),
             )
         })
+        .on_open_change(move |open, _, cx| track_open(*open, cx))
 }
 
 #[cfg(test)]
@@ -222,15 +235,17 @@ mod tests {
         assert_eq!(section(Access::Granted, false, 0), Section::Accounts);
     }
 
-    /// Stands in for the sidebar: one Account row whose menu counts its toggles.
+    /// Stands in for the sidebar: one Account row whose menu records its toggles and openings.
     struct Sidebar {
         account: Account,
         toggles: Rc<std::cell::Cell<usize>>,
+        opened: Rc<std::cell::RefCell<Vec<bool>>>,
     }
 
     impl Render for Sidebar {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let toggles = self.toggles.clone();
+            let opened = self.opened.clone();
             div()
                 .id("sidebar")
                 .size_full()
@@ -243,8 +258,10 @@ mod tests {
                         .child(account_menu(
                             &self.account,
                             false,
+                            false,
                             "row".into(),
                             move |_| toggles.set(toggles.get() + 1),
+                            move |open, _| opened.borrow_mut().push(open),
                         )),
                 )
                 .test_support()
@@ -260,7 +277,8 @@ mod tests {
             name: "Work".into(),
             provider: Provider::Google,
         };
-        let sidebar_toggles = toggles.clone();
+        let opened = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (sidebar_toggles, sidebar_opened) = (toggles.clone(), opened.clone());
         let (handle, _) = cx
             .update(|cx| {
                 gpui_kit::open_window(
@@ -276,6 +294,7 @@ mod tests {
                         cx.new(|_| Sidebar {
                             account,
                             toggles: sidebar_toggles,
+                            opened: sidebar_opened,
                         })
                     },
                 )
@@ -292,5 +311,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("update test window: {error}"));
 
         assert_eq!(toggles.get(), 1);
+        // The row keeps the trigger shown from opening until the item closes the menu.
+        assert_eq!(*opened.borrow(), [true, false]);
     }
 }
