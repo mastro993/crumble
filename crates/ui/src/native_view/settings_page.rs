@@ -4,7 +4,7 @@ use super::NativeView;
 use super::calendars_section::provider_icon;
 use crate::settings::Settings;
 use chrono::Weekday;
-use crumble_eventkit::Account;
+use crumble_eventkit::{Access, Account};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
@@ -89,8 +89,10 @@ impl NativeView {
     /// Each Account and its Calendars, with a checkbox per Calendar. A Disabled Account greys
     /// its Calendars out but keeps their checkboxes as they were.
     fn render_calendar_settings(&self, cx: &Context<Self>) -> Option<Div> {
-        let accounts = self.calendar_sync.read(cx).accounts();
-        if accounts.is_empty() {
+        let sync = self.calendar_sync.read(cx);
+        let accounts = sync.accounts();
+        // Accounts read before access was revoked stay in memory; hide them with the sidebar's.
+        if sync.access() != Access::Granted || accounts.is_empty() {
             return None;
         }
         Some(

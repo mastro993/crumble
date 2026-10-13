@@ -1,15 +1,18 @@
 //! The sidebar's Calendars section: one row per Account, or the step that grants access.
 
+use std::rc::Rc;
+
 use super::NativeView;
-use super::controls::{app_icon, button};
+use super::controls::app_icon;
 use super::sidebar_row::{activate, row};
 use crate::settings;
 use crumble_eventkit::{Access, Account, Provider};
 use crumble_theme::sidebar::{ROW_GAP, ROW_PADDING};
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, StyledExt, button::ButtonVariants, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Sizable, StyledExt, v_flex};
 use gpui_kit::{
-    AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
+    AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
     Stateful, Styled, div, prelude::FluentBuilder, px,
 };
 
@@ -141,23 +144,9 @@ impl NativeView {
         let group = SharedString::from(format!("account-{}", account.id));
         let view = cx.entity().downgrade();
         let id = account.id.clone();
-        let menu = button(SharedString::from(format!("account-menu-{}", account.id)))
-            .ghost()
-            .xsmall()
-            .icon(app_icon("more").size_4())
-            .accessibility_label(format!("{} actions", account.name))
-            .invisible()
-            .group_hover(group.clone(), |style| style.visible())
-            .dropdown_menu(move |menu, _, _| {
-                let (view, id) = (view.clone(), id.clone());
-                menu.item(
-                    PopupMenuItem::new(if disabled { "Enable" } else { "Disable" }).on_click(
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
-                        },
-                    ),
-                )
-            });
+        let menu = account_menu(account, disabled, group.clone(), move |cx| {
+            let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
+        });
         row(
             group.clone(),
             provider_icon(account.provider),
@@ -184,9 +173,43 @@ impl NativeView {
     }
 }
 
+/// The ⋯ button of an Account row, shown while `group` is hovered; its one item runs `toggle`.
+fn account_menu(
+    account: &Account,
+    disabled: bool,
+    group: SharedString,
+    toggle: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    let toggle = Rc::new(toggle);
+    // Not `controls::button`: it stops the mouse-down that opens the menu.
+    Button::new(SharedString::from(format!("account-menu-{}", account.id)))
+        .cursor_pointer()
+        .ghost()
+        .xsmall()
+        .icon(app_icon("more").size_4())
+        .accessibility_label(format!("{} actions", account.name))
+        // Transparent rather than invisible, so Tab still reaches it.
+        .opacity(0.)
+        .group_hover(group, |style| style.opacity(1.))
+        .focus_visible(|style| style.opacity(1.))
+        .dropdown_menu(move |menu, _, _| {
+            let toggle = toggle.clone();
+            menu.item(
+                PopupMenuItem::new(if disabled { "Enable" } else { "Disable" })
+                    .on_click(move |_, _, cx| toggle(cx)),
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Access, Section, section};
+    use super::{Access, Account, Provider, Section, account_menu, section};
+    use gpui_kit::test::{TestSupportExt, TestWindowExt};
+    use gpui_kit::{
+        AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Render,
+        Styled, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
+    };
+    use std::rc::Rc;
 
     #[test]
     fn each_access_state_picks_its_rows() {
@@ -197,5 +220,77 @@ mod tests {
         assert_eq!(section(Access::Granted, true, 2), Section::Accounts);
         // No hint flashes before the first read finishes.
         assert_eq!(section(Access::Granted, false, 0), Section::Accounts);
+    }
+
+    /// Stands in for the sidebar: one Account row whose menu counts its toggles.
+    struct Sidebar {
+        account: Account,
+        toggles: Rc<std::cell::Cell<usize>>,
+    }
+
+    impl Render for Sidebar {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let toggles = self.toggles.clone();
+            div()
+                .id("sidebar")
+                .size_full()
+                .child(
+                    div()
+                        .id("row")
+                        .group("row")
+                        .w(px(240.))
+                        .child(self.account.name.clone())
+                        .child(account_menu(
+                            &self.account,
+                            false,
+                            "row".into(),
+                            move |_| toggles.set(toggles.get() + 1),
+                        )),
+                )
+                .test_support()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_account_menu_disables_the_account(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let toggles = Rc::new(std::cell::Cell::new(0));
+        let account = Account {
+            id: "source-1".into(),
+            name: "Work".into(),
+            provider: Provider::Google,
+        };
+        let sidebar_toggles = toggles.clone();
+        let (handle, _) = cx
+            .update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Default::default(),
+                            size(px(400.), px(300.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        cx.new(|_| Sidebar {
+                            account,
+                            toggles: sidebar_toggles,
+                        })
+                    },
+                )
+            })
+            .unwrap_or_else(|error| panic!("open test window: {error}"));
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("account-menu-source-1", cx);
+            window.render_frame(cx);
+            window.click(0usize, cx);
+            window.render_frame(cx);
+        })
+        .unwrap_or_else(|error| panic!("update test window: {error}"));
+
+        assert_eq!(toggles.get(), 1);
     }
 }

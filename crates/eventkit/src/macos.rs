@@ -113,6 +113,10 @@ fn has_google_events(source: &EKSource) -> bool {
         let calendars = source
             .calendarsForEntityType(EKEntityType::Event)
             .allObjects();
+        // An empty list would make the predicate search every Calendar.
+        if calendars.is_empty() {
+            return false;
+        }
         let predicate = store().predicateForEventsWithStartDate_endDate_calendars(
             &ns_date(now - GOOGLE_PROBE_SPAN),
             &ns_date(now + GOOGLE_PROBE_SPAN),
