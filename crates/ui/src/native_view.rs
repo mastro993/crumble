@@ -7,6 +7,7 @@ mod settings_page;
 mod shell;
 mod sidebar;
 mod sidebar_fold;
+mod sidebar_reorder;
 mod sidebar_row;
 mod sidebar_scroll;
 
@@ -23,6 +24,7 @@ use gpui_kit::{
 };
 use route::{History, Route};
 use settings_page::WeekdaySelect;
+use sidebar_reorder::RowReorder;
 use std::collections::{HashMap, HashSet};
 
 /// GPUI owner of the application shell and navigation.
@@ -50,6 +52,8 @@ pub struct NativeView {
     section_motion: HashMap<SidebarSection, u64>,
     /// Sections whose rows are still sliding open or shut.
     sections_moving: HashSet<SidebarSection>,
+    /// Drag and slide state of the Account rows.
+    account_reorder: RowReorder<String>,
 }
 
 impl NativeView {
@@ -79,6 +83,7 @@ impl NativeView {
             sidebar_hover_motion: 0,
             section_motion: HashMap::new(),
             sections_moving: HashSet::new(),
+            account_reorder: RowReorder::default(),
         }
     }
 

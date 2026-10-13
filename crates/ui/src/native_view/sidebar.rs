@@ -104,7 +104,7 @@ impl NativeView {
         );
         // One device pixel: a hairline on Retina instead of 1pt's two pixels.
         let hairline = px(1.0 / window.scale_factor());
-        let sections = self.render_calendars_section(cx);
+        let sections = self.render_calendars_section(window, cx);
         let (above, below) = match sections {
             Some(_) => super::sidebar_scroll::scrolled_edges(&self.sidebar_scroll),
             None => (false, false),

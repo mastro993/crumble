@@ -1,19 +1,23 @@
 //! The sidebar's Calendars section: one row per Account, or the step that grants access.
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use super::NativeView;
 use super::account_dot::{dot, name};
 use super::controls::app_icon;
+use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
 use super::sidebar_row::{activate, row, row_with};
 use crate::settings::{self, AccountColor, SidebarSection};
 use crumble_eventkit::{Access, Account};
-use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, ROW_GAP, ROW_PADDING};
+use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, INSET, ROW_GAP, ROW_PADDING};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Side, h_flex};
 use gpui_kit::{
-    AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, Stateful,
-    Styled, Window, div, prelude::FluentBuilder, px,
+    AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+    div, prelude::FluentBuilder, px,
 };
 
 const PRIVACY_SETTINGS: &str =
@@ -51,6 +55,17 @@ fn section(access: Access, loaded: bool, accounts: usize) -> Section {
     }
 }
 
+/// What an Account row's context menu asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountAction {
+    /// Disable an enabled Account, or Enable a Disabled one.
+    ToggleDisabled,
+    /// Give the dot this color.
+    Recolor(AccountColor),
+    /// Move the row to this index.
+    MoveTo(usize),
+}
+
 /// An Account's label: its email when EventKit gives it away, else its System Settings name.
 pub(super) fn account_label(account: &Account) -> &str {
     account.email.as_deref().unwrap_or(&account.name)
@@ -58,7 +73,14 @@ pub(super) fn account_label(account: &Account) -> &str {
 
 impl NativeView {
     /// The section title, which folds the rows, and the rows; `None` without EventKit.
-    pub(super) fn render_calendars_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_calendars_section(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.account_reorder.moving(Instant::now()) {
+            window.request_animation_frame();
+        }
         let sync = self.calendar_sync.read(cx);
         let rows: Vec<AnyElement> =
             match section(sync.access(), sync.loaded(), sync.accounts().len()) {
@@ -94,11 +116,29 @@ impl NativeView {
                     .into_any_element(),
                 ],
                 Section::AddAccounts => vec![self.add_accounts_hint(cx).into_any_element()],
-                Section::Accounts => sync
-                    .accounts()
-                    .iter()
-                    .map(|account| self.account_row(account, cx))
-                    .collect(),
+                Section::Accounts => {
+                    let accounts = self.settings.ordered_accounts(sync.accounts());
+                    let stored: Vec<String> =
+                        accounts.iter().map(|account| account.id.clone()).collect();
+                    let (order, floating) = self
+                        .account_reorder
+                        .displayed(&stored, cx.has_active_drag());
+                    let now = Instant::now();
+                    order
+                        .iter()
+                        .filter_map(|id| accounts.iter().find(|account| &account.id == id))
+                        .enumerate()
+                        .map(|(index, account)| {
+                            let placement = Placement {
+                                index,
+                                len: order.len(),
+                                offset: self.account_reorder.offset(&account.id, now),
+                                floating: floating.as_ref() == Some(&account.id),
+                            };
+                            self.account_row(account, placement, cx)
+                        })
+                        .collect()
+                }
             };
         let items = rows.len().max(1);
         Some(
@@ -115,6 +155,22 @@ impl NativeView {
                             .flex()
                             .flex_col()
                             .gap(px(ROW_GAP))
+                            // Drag moves are measured from the first row's slot.
+                            .on_drag_move(cx.listener(
+                                |view, event: &DragMoveEvent<RowDrag<String>>, window, cx| {
+                                    let drag = event.drag(cx);
+                                    let top = drag.top(event.event.position, event.bounds);
+                                    view.drag_account(drag.id.clone(), top, window, cx)
+                                },
+                            ))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
+                            )
+                            .on_mouse_up_out(
+                                MouseButton::Left,
+                                cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
+                            )
                             .children(rows),
                     ),
                 )
@@ -145,30 +201,102 @@ impl NativeView {
         )
     }
 
-    /// Clicking the row does nothing; right-clicking it opens a menu that Disables or Enables
-    /// the Account and picks its dot color.
-    fn account_row(&self, account: &Account, cx: &Context<Self>) -> AnyElement {
+    /// Clicking the row does nothing; dragging it reorders the Accounts, and right-clicking it
+    /// opens a menu that Disables or Enables the Account, picks its dot color, and moves it.
+    fn account_row(
+        &self,
+        account: &Account,
+        placement: Placement,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let disabled = self.settings.disabled_accounts.contains(&account.id);
         let color = self.settings.account_color(&account.id);
+        let label: SharedString = account_label(account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
-        let toggle = move |cx: &mut App| {
-            let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
+        let act = move |action, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| match action {
+                AccountAction::ToggleDisabled => view.toggle_account(&id, cx),
+                AccountAction::Recolor(color) => view.set_account_color(&id, color, cx),
+                AccountAction::MoveTo(index) => view.move_account(&id, index, cx),
+            });
         };
-        let (view, id) = (cx.entity().downgrade(), account.id.clone());
-        let recolor = move |color, cx: &mut App| {
-            let _ = view.update(cx, |view, cx| view.set_account_color(&id, color, cx));
-        };
+        let menu = account_menu(disabled, color, placement.index, placement.len, act);
         row_with(
             format!("account-{}", account.id),
             dot(color, cx),
-            account_label(account).to_owned(),
+            label.clone(),
             false,
             cx,
         )
         .cursor_default()
         .when(disabled, |row| row.opacity(DISABLED_OPACITY))
-        .context_menu(account_menu(disabled, color, toggle, recolor))
+        .relative()
+        .top(px(placement.offset))
+        // The floating preview stands in for the dragged row.
+        .when(placement.floating, |row| row.opacity(0.0))
+        .on_drag(
+            RowDrag {
+                id: account.id.clone(),
+                color,
+                label,
+                width: self.sidebar_width - 2.0 * INSET,
+                grab: Cell::new(0.0),
+            },
+            |drag, offset, _, cx| {
+                drag.grab.set(f32::from(offset.y));
+                cx.new(|_| RowDragPreview::new(drag))
+            },
+        )
+        .context_menu(menu)
         .into_any_element()
+    }
+
+    /// The Account identifiers in their saved order.
+    fn account_ids(&self, cx: &App) -> Vec<String> {
+        self.settings
+            .ordered_accounts(self.calendar_sync.read(cx).accounts())
+            .into_iter()
+            .map(|account| account.id.clone())
+            .collect()
+    }
+
+    fn drag_account(&mut self, id: String, top: f32, window: &mut Window, cx: &mut Context<Self>) {
+        grab_cursor(window, cx);
+        let stored = self.account_ids(cx);
+        if self
+            .account_reorder
+            .drag(&stored, &id, top, !cx.reduce_motion())
+        {
+            cx.notify();
+        }
+    }
+
+    /// Saves the order shown when the pointer is released.
+    fn finish_account_drag(&mut self, cx: &mut Context<Self>) {
+        let stored = self.account_ids(cx);
+        let (released, animate) = (cx.has_active_drag(), !cx.reduce_motion());
+        if let Some(order) = self.account_reorder.finish(&stored, released, animate) {
+            self.save_account_order(order);
+        }
+        cx.notify();
+    }
+
+    /// Moves `id` to `target`, sliding the rows it passes.
+    fn move_account(&mut self, id: &str, target: usize, cx: &mut Context<Self>) {
+        let stored = self.account_ids(cx);
+        let animate = !cx.reduce_motion();
+        if let Some(order) = self
+            .account_reorder
+            .move_to(&stored, &id.to_owned(), target, animate)
+        {
+            self.save_account_order(order);
+        }
+        cx.notify();
+    }
+
+    fn save_account_order(&mut self, order: Vec<String>) {
+        self.settings.account_order = order;
+        self.settings.save();
     }
 
     fn set_account_color(&mut self, id: &str, color: AccountColor, cx: &mut Context<Self>) {
@@ -190,18 +318,30 @@ impl NativeView {
     }
 }
 
-/// An Account row's context menu: Disable or Enable, which runs `toggle`, and a Color submenu
-/// whose choices run `recolor`.
+/// Where an Account row sits in the list, and how it is drawn while rows move.
+struct Placement {
+    index: usize,
+    len: usize,
+    /// How far the row is drawn from its slot while it slides.
+    offset: f32,
+    /// The row is being dragged, so its floating preview stands in for it.
+    floating: bool,
+}
+
+/// An Account row's context menu, for the row at `index` of `len`; each choice runs `act`.
 fn account_menu(
     disabled: bool,
     current: AccountColor,
-    toggle: impl Fn(&mut App) + 'static,
-    recolor: impl Fn(AccountColor, &mut App) + 'static,
+    index: usize,
+    len: usize,
+    act: impl Fn(AccountAction, &mut App) + 'static,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
-    let (toggle, recolor) = (Rc::new(toggle), Rc::new(recolor));
+    let act = Rc::new(act);
     move |menu, window, cx| {
-        let toggle = toggle.clone();
-        let recolor = recolor.clone();
+        let on = |action| {
+            let act = act.clone();
+            move |_: &_, _: &mut Window, cx: &mut App| act(action, cx)
+        };
         let (label, icon) = if disabled {
             ("Enable", "view")
         } else {
@@ -209,12 +349,12 @@ fn account_menu(
         };
         let plain = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
         let menu_icon = |name| app_icon(name).text_color(plain).mr(px(ICON_GAP - 4.0));
+        let recolor = act.clone();
         menu.item(
             PopupMenuItem::new(label)
                 .icon(menu_icon(icon))
-                .on_click(move |_, _, cx| toggle(cx)),
+                .on_click(on(AccountAction::ToggleDisabled)),
         )
-        .separator()
         .submenu_with_icon(
             Some(menu_icon("paint-board")),
             "Color",
@@ -234,17 +374,30 @@ fn account_menu(
                                     .child(name(color))
                             })
                             .checked(color == current)
-                            .on_click(move |_, _, cx| recolor(color, cx)),
+                            .on_click(move |_, _, cx| recolor(AccountAction::Recolor(color), cx)),
                         )
                     })
             },
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new("Move Up")
+                .icon(menu_icon("arrow-up"))
+                .disabled(index == 0)
+                .on_click(on(AccountAction::MoveTo(index.saturating_sub(1)))),
+        )
+        .item(
+            PopupMenuItem::new("Move Down")
+                .icon(menu_icon("arrow-down"))
+                .disabled(index + 1 >= len)
+                .on_click(on(AccountAction::MoveTo(index + 1))),
         )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, Account, AccountColor, Section, account_menu, section};
+    use super::{Access, Account, AccountAction, AccountColor, Section, account_menu, section};
     use crumble_eventkit::Provider;
     use gpui_kit::component::menu::ContextMenuExt;
     use gpui_kit::test::{TestSupportExt, TestWindowExt};
@@ -265,15 +418,15 @@ mod tests {
         assert_eq!(section(Access::Granted, false, 0), Section::Accounts);
     }
 
-    /// Stands in for the sidebar: one Account row whose context menu counts its toggles.
+    /// Stands in for the sidebar: the first of two Account rows, recording its menu's choices.
     struct Sidebar {
         account: Account,
-        toggles: Rc<std::cell::Cell<usize>>,
+        actions: Rc<std::cell::RefCell<Vec<AccountAction>>>,
     }
 
     impl Render for Sidebar {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let toggles = self.toggles.clone();
+            let actions = self.actions.clone();
             div()
                 .id("sidebar")
                 .size_full()
@@ -287,8 +440,9 @@ mod tests {
                         .context_menu(account_menu(
                             false,
                             AccountColor::Blue,
-                            move |_| toggles.set(toggles.get() + 1),
-                            |_, _| {},
+                            0,
+                            2,
+                            move |action, _| actions.borrow_mut().push(action),
                         )),
                 )
                 .test_support()
@@ -296,16 +450,16 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn right_clicking_an_account_disables_it(cx: &mut TestAppContext) {
+    fn the_account_menu_disables_and_moves_the_account(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
-        let toggles = Rc::new(std::cell::Cell::new(0));
+        let actions = Rc::new(std::cell::RefCell::new(Vec::new()));
         let account = Account {
             id: "source-1".into(),
             name: "Work".into(),
             email: None,
             provider: Provider::Google,
         };
-        let sidebar_toggles = toggles.clone();
+        let sidebar_actions = actions.clone();
         let (handle, _) = cx
             .update(|cx| {
                 gpui_kit::open_window(
@@ -320,7 +474,7 @@ mod tests {
                     |_, cx| {
                         cx.new(|_| Sidebar {
                             account,
-                            toggles: sidebar_toggles,
+                            actions: sidebar_actions,
                         })
                     },
                 )
@@ -336,9 +490,16 @@ mod tests {
             // The menu is built in a deferred callback.
             cx.run_until_parked();
         };
-        step(cx, &|window, cx| window.right_click("sidebar", cx));
-        step(cx, &|window, cx| window.click(0usize, cx));
+        // Items: Disable, Color, a separator, Move Up, Move Down.
+        for item in [0usize, 3, 4] {
+            step(cx, &|window, cx| window.right_click("sidebar", cx));
+            step(cx, &|window, cx| window.click(item, cx));
+        }
 
-        assert_eq!(toggles.get(), 1);
+        // Move Up is disabled on the first row, so it records nothing.
+        assert_eq!(
+            *actions.borrow(),
+            [AccountAction::ToggleDisabled, AccountAction::MoveTo(1)]
+        );
     }
 }

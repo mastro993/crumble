@@ -101,8 +101,9 @@ impl NativeView {
                 .gap_4()
                 .child(group_title("Calendars", cx))
                 .children(
-                    accounts
-                        .iter()
+                    self.settings
+                        .ordered_accounts(accounts)
+                        .into_iter()
                         .map(|account| self.account_settings(account, cx)),
                 ),
         )

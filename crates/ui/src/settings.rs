@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::Weekday;
-use crumble_eventkit::Calendar;
+use crumble_eventkit::{Account, Calendar};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +18,9 @@ pub(crate) struct Settings {
     pub(crate) disabled_calendars: BTreeSet<String>,
     /// Sidebar sections whose rows are folded away.
     pub(crate) folded_sections: BTreeSet<SidebarSection>,
+    /// Account identifiers in the order the user dragged them into; Accounts not listed follow,
+    /// in EventKit's name order.
+    pub(crate) account_order: Vec<String>,
     /// Dot colors the user picked, by Account identifier; the others use [`AccountColor::default_for`].
     pub(crate) account_colors: BTreeMap<String, AccountColor>,
 }
@@ -75,6 +78,7 @@ impl Default for Settings {
             disabled_calendars: BTreeSet::new(),
             folded_sections: BTreeSet::new(),
             account_colors: BTreeMap::new(),
+            account_order: Vec::new(),
         }
     }
 }
@@ -109,6 +113,19 @@ impl Settings {
         if let Err(error) = write() {
             eprintln!("Could not save settings: {error}");
         }
+    }
+
+    /// `accounts` in the user's order.
+    pub(crate) fn ordered_accounts<'a>(&self, accounts: &'a [Account]) -> Vec<&'a Account> {
+        let mut ordered: Vec<&Account> = accounts.iter().collect();
+        // Stable, so unlisted Accounts keep EventKit's order after the listed ones.
+        ordered.sort_by_key(|account| {
+            self.account_order
+                .iter()
+                .position(|id| id == &account.id)
+                .unwrap_or(usize::MAX)
+        });
+        ordered
     }
 
     /// The dot color of the Account `id`: the user's pick, else its default.
@@ -146,7 +163,8 @@ pub(crate) fn toggle(disabled: &mut BTreeSet<String>, id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountColor, Calendar, Settings, SidebarSection, Weekday, toggle};
+    use super::{Account, AccountColor, Calendar, Settings, SidebarSection, Weekday, toggle};
+    use crumble_eventkit::Provider;
 
     #[test]
     fn saved_settings_read_back() {
@@ -157,6 +175,7 @@ mod tests {
         settings.disabled_accounts.insert("source-1".into());
         settings.disabled_calendars.insert("calendar-1".into());
         settings.folded_sections.insert(SidebarSection::Calendars);
+        settings.account_order = vec!["source-2".into(), "source-1".into()];
         settings
             .account_colors
             .insert("source-1".into(), AccountColor::Pink);
@@ -174,6 +193,7 @@ mod tests {
         assert_eq!(old.first_day_of_week, Weekday::Sun);
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
         assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
+        assert!(old.account_order.is_empty());
     }
 
     fn calendar(id: &str, account_id: &str) -> Calendar {
@@ -226,5 +246,26 @@ mod tests {
             .account_colors
             .insert("source-1".into(), AccountColor::Gray);
         assert_eq!(settings.account_color("source-1"), AccountColor::Gray);
+    }
+
+    #[test]
+    fn accounts_follow_the_saved_order_and_new_ones_come_last() {
+        let account = |id: &str| Account {
+            id: id.into(),
+            name: id.into(),
+            email: None,
+            provider: Provider::Other,
+        };
+        let accounts = [account("a"), account("b"), account("c"), account("d")];
+        let settings = Settings {
+            account_order: vec!["c".into(), "gone".into(), "a".into()],
+            ..Settings::default()
+        };
+        let ids: Vec<&str> = settings
+            .ordered_accounts(&accounts)
+            .iter()
+            .map(|account| account.id.as_str())
+            .collect();
+        assert_eq!(ids, ["c", "a", "b", "d"]);
     }
 }
