@@ -3,13 +3,14 @@
 use std::rc::Rc;
 
 use super::NativeView;
+use super::account_dot::{dot, name};
 use super::controls::app_icon;
-use super::sidebar_row::{activate, row};
-use crate::settings::{self, SidebarSection};
-use crumble_eventkit::{Access, Account, Provider};
+use super::sidebar_row::{activate, row, row_with};
+use crate::settings::{self, AccountColor, SidebarSection};
+use crumble_eventkit::{Access, Account};
 use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, ROW_GAP, ROW_PADDING};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Icon};
+use gpui_kit::component::{ActiveTheme, Side, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, Stateful,
     Styled, Window, div, prelude::FluentBuilder, px,
@@ -50,14 +51,9 @@ fn section(access: Access, loaded: bool, accounts: usize) -> Section {
     }
 }
 
-/// Hugeicons has no Outlook mark, so Outlook shows Microsoft's.
-pub(super) fn provider_icon(provider: Provider) -> Icon {
-    app_icon(match provider {
-        Provider::Google => "google",
-        Provider::Outlook => "microsoft",
-        Provider::Apple => "apple",
-        Provider::Other => "calendar",
-    })
+/// An Account's label: its email when EventKit gives it away, else its System Settings name.
+pub(super) fn account_label(account: &Account) -> &str {
+    account.email.as_deref().unwrap_or(&account.name)
 }
 
 impl NativeView {
@@ -150,24 +146,35 @@ impl NativeView {
     }
 
     /// Clicking the row does nothing; right-clicking it opens a menu that Disables or Enables
-    /// the Account.
+    /// the Account and picks its dot color.
     fn account_row(&self, account: &Account, cx: &Context<Self>) -> AnyElement {
         let disabled = self.settings.disabled_accounts.contains(&account.id);
+        let color = self.settings.account_color(&account.id);
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
         let toggle = move |cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
         };
-        row(
+        let (view, id) = (cx.entity().downgrade(), account.id.clone());
+        let recolor = move |color, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.set_account_color(&id, color, cx));
+        };
+        row_with(
             format!("account-{}", account.id),
-            provider_icon(account.provider),
-            account.name.clone(),
+            dot(color, cx),
+            account_label(account).to_owned(),
             false,
             cx,
         )
         .cursor_default()
         .when(disabled, |row| row.opacity(DISABLED_OPACITY))
-        .context_menu(account_menu(disabled, toggle))
+        .context_menu(account_menu(disabled, color, toggle, recolor))
         .into_any_element()
+    }
+
+    fn set_account_color(&mut self, id: &str, color: AccountColor, cx: &mut Context<Self>) {
+        self.settings.account_colors.insert(id.to_owned(), color);
+        self.settings.save();
+        cx.notify();
     }
 
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -183,31 +190,62 @@ impl NativeView {
     }
 }
 
-/// An Account row's context menu; its one item runs `toggle`.
+/// An Account row's context menu: Disable or Enable, which runs `toggle`, and a Color submenu
+/// whose choices run `recolor`.
 fn account_menu(
     disabled: bool,
+    current: AccountColor,
     toggle: impl Fn(&mut App) + 'static,
+    recolor: impl Fn(AccountColor, &mut App) + 'static,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
-    let toggle = Rc::new(toggle);
-    move |menu, _, cx| {
+    let (toggle, recolor) = (Rc::new(toggle), Rc::new(recolor));
+    move |menu, window, cx| {
         let toggle = toggle.clone();
+        let recolor = recolor.clone();
         let (label, icon) = if disabled {
             ("Enable", "view")
         } else {
             ("Disable", "view-off")
         };
-        let color = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
+        let plain = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
+        let menu_icon = |name| app_icon(name).text_color(plain).mr(px(ICON_GAP - 4.0));
         menu.item(
             PopupMenuItem::new(label)
-                .icon(app_icon(icon).text_color(color).mr(px(ICON_GAP - 4.0)))
+                .icon(menu_icon(icon))
                 .on_click(move |_, _, cx| toggle(cx)),
+        )
+        .separator()
+        .submenu_with_icon(
+            Some(menu_icon("paint-board")),
+            "Color",
+            window,
+            cx,
+            move |menu, _, _| {
+                // Each choice shows its dot, so the check moves to the right.
+                AccountColor::ALL
+                    .into_iter()
+                    .fold(menu.check_side(Side::Right), |menu, color| {
+                        let recolor = recolor.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, cx| {
+                                h_flex()
+                                    .gap(px(ICON_GAP - 4.0))
+                                    .child(dot(color, cx))
+                                    .child(name(color))
+                            })
+                            .checked(color == current)
+                            .on_click(move |_, _, cx| recolor(color, cx)),
+                        )
+                    })
+            },
         )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, Account, Provider, Section, account_menu, section};
+    use super::{Access, Account, AccountColor, Section, account_menu, section};
+    use crumble_eventkit::Provider;
     use gpui_kit::component::menu::ContextMenuExt;
     use gpui_kit::test::{TestSupportExt, TestWindowExt};
     use gpui_kit::{
@@ -246,7 +284,12 @@ mod tests {
                         .id("row")
                         .size_full()
                         .child(self.account.name.clone())
-                        .context_menu(account_menu(false, move |_| toggles.set(toggles.get() + 1))),
+                        .context_menu(account_menu(
+                            false,
+                            AccountColor::Blue,
+                            move |_| toggles.set(toggles.get() + 1),
+                            |_, _| {},
+                        )),
                 )
                 .test_support()
         }
@@ -259,6 +302,7 @@ mod tests {
         let account = Account {
             id: "source-1".into(),
             name: "Work".into(),
+            email: None,
             provider: Provider::Google,
         };
         let sidebar_toggles = toggles.clone();

@@ -1,6 +1,6 @@
 //! User settings kept across restarts in `settings.json` under the platform config directory.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::Weekday;
@@ -18,6 +18,46 @@ pub(crate) struct Settings {
     pub(crate) disabled_calendars: BTreeSet<String>,
     /// Sidebar sections whose rows are folded away.
     pub(crate) folded_sections: BTreeSet<SidebarSection>,
+    /// Dot colors the user picked, by Account identifier; the others use [`AccountColor::default_for`].
+    pub(crate) account_colors: BTreeMap<String, AccountColor>,
+}
+
+/// The dot that marks an Account in the sidebar and in Settings. The palette is SkillBinder's
+/// folder colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum AccountColor {
+    Gray,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    Pink,
+}
+
+impl AccountColor {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Gray,
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Purple,
+        Self::Pink,
+    ];
+
+    /// A color that looks random but stays the same for `id` across launches, so nothing has to
+    /// be saved until the user picks one. Gray is left for the user to choose.
+    pub(crate) fn default_for(id: &str) -> Self {
+        // FNV-1a: tiny, and unlike std's hasher its output is fixed.
+        let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+        let colorful = &Self::ALL[1..];
+        colorful[(hash % colorful.len() as u64) as usize]
+    }
 }
 
 /// A foldable sidebar section.
@@ -34,6 +74,7 @@ impl Default for Settings {
             disabled_accounts: BTreeSet::new(),
             disabled_calendars: BTreeSet::new(),
             folded_sections: BTreeSet::new(),
+            account_colors: BTreeMap::new(),
         }
     }
 }
@@ -70,6 +111,14 @@ impl Settings {
         }
     }
 
+    /// The dot color of the Account `id`: the user's pick, else its default.
+    pub(crate) fn account_color(&self, id: &str) -> AccountColor {
+        self.account_colors
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| AccountColor::default_for(id))
+    }
+
     /// Identifiers of the `calendars` whose Events show: neither they nor their Account is
     /// Disabled.
     #[cfg_attr(
@@ -97,7 +146,7 @@ pub(crate) fn toggle(disabled: &mut BTreeSet<String>, id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Calendar, Settings, SidebarSection, Weekday, toggle};
+    use super::{AccountColor, Calendar, Settings, SidebarSection, Weekday, toggle};
 
     #[test]
     fn saved_settings_read_back() {
@@ -108,6 +157,9 @@ mod tests {
         settings.disabled_accounts.insert("source-1".into());
         settings.disabled_calendars.insert("calendar-1".into());
         settings.folded_sections.insert(SidebarSection::Calendars);
+        settings
+            .account_colors
+            .insert("source-1".into(), AccountColor::Pink);
         let json = serde_json::to_string(&settings).unwrap_or_default();
         assert_eq!(Settings::parse(&json), settings);
     }
@@ -121,7 +173,7 @@ mod tests {
         let old = Settings::parse(r#"{"first_day_of_week":"Sun"}"#);
         assert_eq!(old.first_day_of_week, Weekday::Sun);
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
-        assert!(old.folded_sections.is_empty());
+        assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
     }
 
     fn calendar(id: &str, account_id: &str) -> Calendar {
@@ -155,5 +207,24 @@ mod tests {
             settings.enabled_calendar_ids(&calendars),
             ["work", "family"]
         );
+    }
+
+    #[test]
+    fn an_account_keeps_its_default_color_until_the_user_picks_one() {
+        let mut settings = Settings::default();
+        let default = settings.account_color("source-1");
+        assert_eq!(default, AccountColor::default_for("source-1"));
+        assert_ne!(default, AccountColor::Gray);
+        // Fixed across launches, and spread across the palette.
+        assert_eq!(AccountColor::default_for("source-1"), default);
+        let spread: std::collections::BTreeSet<_> = (0..40)
+            .map(|n| format!("{:?}", AccountColor::default_for(&format!("source-{n}"))))
+            .collect();
+        assert!(spread.len() > 3);
+
+        settings
+            .account_colors
+            .insert("source-1".into(), AccountColor::Gray);
+        assert_eq!(settings.account_color("source-1"), AccountColor::Gray);
     }
 }

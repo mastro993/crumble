@@ -1,7 +1,8 @@
 //! Settings page: the user settings saved in `settings.json`.
 
 use super::NativeView;
-use super::calendars_section::provider_icon;
+use super::account_dot::dot;
+use super::calendars_section::account_label;
 use crate::settings::Settings;
 use chrono::Weekday;
 use crumble_eventkit::{Access, Account};
@@ -144,13 +145,13 @@ impl NativeView {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(provider_icon(account.provider).size_4().text_color(muted))
+                    .child(dot(self.settings.account_color(&account.id), cx))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .font_medium()
-                            .child(account.name.clone()),
+                            .child(account_label(account).to_owned()),
                     )
                     .when(disabled, |header| {
                         header.child(

@@ -32,6 +32,41 @@ pub(crate) fn provider(
     }
 }
 
+/// The Account's email: the user's own address on its Events, else its one Calendar named after
+/// an address. Several such Calendars are shared ones too, so none of them is trusted.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn account_email<'a>(
+    own_address: Option<String>,
+    calendar_names: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    own_address.or_else(|| {
+        let mut addresses = calendar_names.into_iter().filter(|name| is_email(name));
+        match (addresses.next(), addresses.next()) {
+            (Some(address), None) => Some(address.to_owned()),
+            _ => None,
+        }
+    })
+}
+
+/// The address in a participant's `mailto:` URL.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn mailto_address(url: &str) -> Option<String> {
+    let (scheme, address) = url.split_once(':')?;
+    (scheme.eq_ignore_ascii_case("mailto") && is_email(address)).then(|| address.to_owned())
+}
+
+fn is_email(text: &str) -> bool {
+    let Some((user, domain)) = text.split_once('@') else {
+        return false;
+    };
+    !user.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !text.contains(char::is_whitespace)
+}
+
 /// Google Calendar gives every Event an external identifier ending in `@google.com`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn is_google_event_id(external_id: &str) -> bool {
@@ -75,7 +110,38 @@ fn is_meeting_link(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, SourceKind, is_google_event_id, join_link, provider};
+    use super::{
+        Provider, SourceKind, account_email, is_google_event_id, join_link, mailto_address,
+        provider,
+    };
+
+    #[test]
+    fn the_own_address_wins_then_a_single_calendar_named_like_one() {
+        let own = Some("me@work.com".to_owned());
+        assert_eq!(account_email(own.clone(), ["boss@work.com"]), own);
+        assert_eq!(
+            account_email(None, ["me@work.com", "Holidays in Italy"]).as_deref(),
+            Some("me@work.com")
+        );
+        // Shared Calendars are named after other people too, so two addresses are ambiguous.
+        assert_eq!(account_email(None, ["me@work.com", "boss@work.com"]), None);
+        assert_eq!(account_email(None, ["Home", "Birthdays"]), None);
+    }
+
+    #[test]
+    fn mailto_urls_give_their_address() {
+        assert_eq!(
+            mailto_address("mailto:me@work.com").as_deref(),
+            Some("me@work.com")
+        );
+        assert_eq!(
+            mailto_address("MAILTO:me@work.com").as_deref(),
+            Some("me@work.com")
+        );
+        assert_eq!(mailto_address("tel:+390000"), None);
+        assert_eq!(mailto_address("mailto:not an address"), None);
+        assert_eq!(mailto_address("mailto:me@localhost"), None);
+    }
 
     #[test]
     fn providers_follow_source_type_and_title() {

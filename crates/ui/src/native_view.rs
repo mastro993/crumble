@@ -1,3 +1,4 @@
+mod account_dot;
 mod calendar;
 mod calendars_section;
 mod controls;

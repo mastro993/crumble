@@ -51,8 +51,12 @@ pub enum Provider {
 pub struct Account {
     /// Stable EventKit source identifier.
     pub id: String,
-    /// The name shown in System Settings, often the email address.
+    /// The name shown in System Settings, such as "iCloud" or the email address.
     pub name: String,
+    /// The user's email address in this Account, when EventKit gives it away. EventKit has no
+    /// email field: it is the user's own address on a recent Event, or else the one Calendar named
+    /// after an address, as Google names an Account's main Calendar.
+    pub email: Option<String>,
     /// Service behind the Account.
     pub provider: Provider,
 }

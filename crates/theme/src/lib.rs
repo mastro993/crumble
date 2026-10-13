@@ -41,6 +41,8 @@ pub mod sidebar {
     pub const SECTION_GAP: f32 = 8.0;
     /// Corner radius of the selection fill.
     pub const RADIUS: f32 = 8.0;
+    /// Diameter of an Account's color dot, centred in the icon slot.
+    pub const DOT_SIZE: f32 = 8.0;
 }
 
 /// Applies the system font.
