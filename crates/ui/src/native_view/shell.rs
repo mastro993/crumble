@@ -2,9 +2,9 @@
 
 use std::rc::Rc;
 
-use super::NativeView;
 use super::controls::button;
 use super::sidebar::{SidebarDrag, clamp_sidebar_width, visible_width};
+use super::{NativeView, Route};
 use crumble_theme::HEADER_HEIGHT;
 use gpui_kit::component::{Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex};
 use gpui_kit::{
@@ -86,7 +86,7 @@ impl NativeView {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(self.render_header(window))
+                    .child(self.render_header(window, cx))
                     .child(
                         div()
                             .id("main-content")
@@ -131,8 +131,8 @@ impl NativeView {
             )
     }
 
-    /// Borderless, transparent header.
-    fn render_header(&self, window: &Window) -> AnyElement {
+    /// Borderless, transparent header; the Calendar page puts its toolbar here.
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (width, collapsed, left) = (
             self.sidebar_width,
             self.sidebar_collapsed,
@@ -142,6 +142,8 @@ impl NativeView {
             self.sidebar_motion_width(div().flex_shrink_0(), "header-inset", move |delta| {
                 header_inset(left, visible_width(width, collapsed, delta))
             });
+        let toolbar = (self.route == Route::Calendar)
+            .then(|| self.render_calendar_toolbar(cx).into_any_element());
         if cfg!(target_os = "macos") {
             TitleBar::new()
                 .border_0()
@@ -150,6 +152,7 @@ impl NativeView {
                 .pl_0()
                 .pr_4()
                 .child(inset)
+                .children(toolbar)
                 .into_any_element()
         } else {
             h_flex()
@@ -158,6 +161,7 @@ impl NativeView {
                 .h(px(HEADER_HEIGHT))
                 .pr_4()
                 .child(inset)
+                .children(toolbar)
                 .into_any_element()
         }
     }

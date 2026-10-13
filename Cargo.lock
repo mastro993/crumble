@@ -1310,8 +1310,12 @@ name = "crumble-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crumble-theme",
+ "dirs 6.0.0",
  "gpui-kit",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
