@@ -137,7 +137,9 @@ impl NativeView {
                             view.show_calendar_view(*calendar_view, cx);
                         }
                     }))
-                    .children(CalendarView::ALL.map(|v| Tab::new().label(v.label()))),
+                    .children(
+                        CalendarView::ALL.map(|v| Tab::new().label(v.label()).cursor_pointer()),
+                    ),
             )
     }
 
