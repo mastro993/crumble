@@ -18,6 +18,7 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 - The back and forward arrows sit in the sidebar's header row. `Cmd-[` and `Cmd-]` (`Ctrl-[` and `Ctrl-]` elsewhere) do the same. They move through an in-memory route history, and each arrow is disabled when there is nothing to go back or forward to.
 - The sidebar lists Home, Calendar, and Chat at the top and Settings pinned to the bottom. Clicking a row, or pressing Enter or Space while it has focus, opens its route and records the previous one for Back. The app starts on Home. Home and Chat show only their title for now.
 - The theme follows the window's light or dark appearance.
+- Double-clicking empty header space zooms the window, and dragging it moves the window. Presses on header buttons and tabs stay with the control, so they never zoom or drag the window.
 
 ## Calendar
 
