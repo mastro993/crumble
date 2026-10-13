@@ -4,12 +4,13 @@ use super::NativeView;
 use super::period::{is_weekend, month_weeks, week_days, week_start, weekdays, year_months};
 use crate::native_view::controls::button;
 use chrono::{Datelike, NaiveDate, Weekday};
+use crumble_theme::SURFACE_RADIUS;
 use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt, button::ButtonVariants, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, Context, Div, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
+    AnyElement, App, Context, Corners, Div, Hsla, InteractiveElement, IntoElement, ParentElement,
+    Pixels, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
 };
 
 /// Width of the Week view's hour labels.
@@ -53,6 +54,34 @@ fn weekday_header(first_day: Weekday, cx: &App) -> Div {
     }))
 }
 
+/// Corner radii for a cell that touches the given sides of a rounded frame, so its fill
+/// follows the frame's corners. GPUI does not clip children to a parent's radius.
+fn frame_corners(
+    radius: Pixels,
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+) -> Corners<Pixels> {
+    let at = |touches: bool| if touches { radius } else { px(0.) };
+    Corners {
+        top_left: at(top && left),
+        top_right: at(top && right),
+        bottom_left: at(bottom && left),
+        bottom_right: at(bottom && right),
+    }
+}
+
+/// Rounded, bordered surface holding a Week or Month grid.
+fn frame(hairline: Pixels, cx: &App) -> Div {
+    v_flex()
+        .flex_1()
+        .min_h_0()
+        .border(hairline)
+        .border_color(cx.theme().border)
+        .rounded(px(SURFACE_RADIUS))
+}
+
 pub(super) fn month(
     focused: NaiveDate,
     first_day: Weekday,
@@ -60,20 +89,25 @@ pub(super) fn month(
     hairline: Pixels,
     cx: &App,
 ) -> AnyElement {
-    let border = cx.theme().border;
-    let rows = month_weeks(focused, first_day).into_iter().map(|start| {
+    let (border, radius) = (cx.theme().border, px(SURFACE_RADIUS));
+    let weeks = month_weeks(focused, first_day);
+    let last_row = weeks.len() - 1;
+    let rows = weeks.into_iter().enumerate().map(|(row, start)| {
         h_flex()
             .flex_1()
             .min_h_0()
-            .children(week_days(start).map(|date| {
+            .children(week_days(start).enumerate().map(|(column, date)| {
+                let (top, bottom) = (row == 0, row == last_row);
+                let (left, right) = (column == 0, column == 6);
                 div()
                     .flex_1()
                     .h_full()
                     .p_1()
                     .text_sm()
-                    .border_r(hairline)
-                    .border_b(hairline)
                     .border_color(border)
+                    .when(!right, |cell| cell.border_r(hairline))
+                    .when(!bottom, |cell| cell.border_b(hairline))
+                    .corner_radii(frame_corners(radius, top, bottom, left, right))
                     .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
                     .child(day_number(
                         date,
@@ -87,15 +121,7 @@ pub(super) fn month(
     v_flex()
         .size_full()
         .child(weekday_header(first_day, cx))
-        .child(
-            v_flex()
-                .flex_1()
-                .min_h_0()
-                .border_t(hairline)
-                .border_l(hairline)
-                .border_color(border)
-                .children(rows),
-        )
+        .child(frame(hairline, cx).children(rows))
         .into_any_element()
 }
 
@@ -107,18 +133,20 @@ pub(super) fn week(
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
+    let radius = px(SURFACE_RADIUS);
     let days: Vec<NaiveDate> = week_days(week_start(focused, first_day)).collect();
     let header = h_flex()
         .pl(px(HOUR_GUTTER))
         .border_b(hairline)
         .border_color(theme.border)
-        .children(days.iter().map(|&date| {
+        .children(days.iter().enumerate().map(|(column, &date)| {
             h_flex()
                 .flex_1()
                 .justify_center()
                 .gap_1()
                 .py_1()
                 .text_sm()
+                .corner_radii(frame_corners(radius, true, false, false, column == 6))
                 .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
                 .child(
                     div()
@@ -126,6 +154,21 @@ pub(super) fn week(
                         .child(date.weekday().to_string()),
                 )
                 .child(day_number(date, today, 24.0, false, cx))
+        }));
+    // Day columns and weekend shading stay put behind the scrolling hours, so the shading
+    // keeps the frame's bottom corners while the hours scroll.
+    let columns = h_flex()
+        .absolute()
+        .size_full()
+        .pl(px(HOUR_GUTTER))
+        .children(days.iter().enumerate().map(|(column, &date)| {
+            div()
+                .flex_1()
+                .h_full()
+                .border_l(hairline)
+                .border_color(theme.border)
+                .corner_radii(frame_corners(radius, false, true, false, column == 6))
+                .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
         }));
     let hours = (0..24).map(|hour| {
         h_flex()
@@ -142,26 +185,26 @@ pub(super) fn week(
                     .text_color(theme.muted_foreground)
                     .child(format!("{hour:02}:00")),
             )
-            .children(days.iter().map(|&date| {
+            .child(
                 div()
                     .flex_1()
                     .h_full()
-                    .border_l(hairline)
-                    .border_b(hairline)
                     .border_color(theme.border)
-                    .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
-            }))
+                    .when(hour < 23, |line| line.border_b(hairline)),
+            )
     });
     v_flex()
         .size_full()
-        .child(header)
         .child(
-            div()
-                .id("week-hours")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .children(hours),
+            frame(hairline, cx).child(header).child(
+                div().relative().flex_1().min_h_0().child(columns).child(
+                    div()
+                        .id("week-hours")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .children(hours),
+                ),
+            ),
         )
         .into_any_element()
 }
