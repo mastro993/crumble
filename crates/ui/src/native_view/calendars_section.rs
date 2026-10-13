@@ -5,15 +5,14 @@ use std::rc::Rc;
 use super::NativeView;
 use super::controls::app_icon;
 use super::sidebar_row::{activate, row};
-use crate::settings;
+use crate::settings::{self, SidebarSection};
 use crumble_eventkit::{Access, Account, Provider};
-use crumble_theme::sidebar::{ROW_GAP, ROW_PADDING};
-use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, StyledExt, v_flex};
+use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, ROW_GAP, ROW_PADDING};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
+use gpui_kit::component::{ActiveTheme, Icon};
 use gpui_kit::{
-    AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, Styled, div, prelude::FluentBuilder, px,
+    AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, Stateful,
+    Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 const PRIVACY_SETTINGS: &str =
@@ -23,6 +22,8 @@ const INTERNET_ACCOUNTS: &str =
 
 /// A Disabled Account's row is dimmed to this opacity.
 const DISABLED_OPACITY: f32 = 0.5;
+/// Muted copy and menu icons sit a step below their label, as in SkillBinder.
+const MUTED_OPACITY: f32 = 0.65;
 
 /// What the Calendars section shows.
 #[derive(Debug, PartialEq, Eq)]
@@ -60,7 +61,8 @@ pub(super) fn provider_icon(provider: Provider) -> Icon {
 }
 
 impl NativeView {
-    pub(super) fn render_calendars_section(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// The section title, which folds the rows, and the rows; `None` without EventKit.
+    pub(super) fn render_calendars_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sync = self.calendar_sync.read(cx);
         let rows: Vec<AnyElement> =
             match section(sync.access(), sync.loaded(), sync.accounts().len()) {
@@ -99,37 +101,46 @@ impl NativeView {
                 Section::Accounts => sync
                     .accounts()
                     .iter()
-                    .map(|account| self.account_row(account, cx).into_any_element())
+                    .map(|account| self.account_row(account, cx))
                     .collect(),
             };
+        let items = rows.len().max(1);
         Some(
-            v_flex()
-                .gap(px(ROW_GAP))
-                .pt_4()
-                .child(
-                    div()
-                        .px(px(ROW_PADDING))
-                        .pb_1()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Calendars"),
+            div()
+                .flex()
+                .flex_col()
+                .child(self.section_header(SidebarSection::Calendars, "Calendars", cx))
+                .children(
+                    self.section_rows(
+                        SidebarSection::Calendars,
+                        items,
+                        div()
+                            .id("sidebar-calendars")
+                            .flex()
+                            .flex_col()
+                            .gap(px(ROW_GAP))
+                            .children(rows),
+                    ),
                 )
-                .children(rows),
+                .into_any_element(),
         )
     }
 
     fn add_accounts_hint(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         const HINT: &str = "Add accounts in System Settings › Internet Accounts";
-        let hover = cx.theme().foreground;
+        let theme = cx.theme();
+        let (muted, hover) = (
+            theme.muted_foreground.opacity(MUTED_OPACITY),
+            theme.foreground,
+        );
         activate(
             div()
                 .id("add-accounts")
                 .px(px(ROW_PADDING))
                 .py_1()
                 .cursor_pointer()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
+                .text_size(px(DETAIL_SIZE))
+                .text_color(muted)
                 .hover(move |style| style.text_color(hover))
                 .child(HINT),
             HINT,
@@ -138,34 +149,25 @@ impl NativeView {
         )
     }
 
-    /// The row itself does nothing; its ⋯ menu, shown on hover, Disables or Enables the Account.
-    fn account_row(&self, account: &Account, cx: &Context<Self>) -> Stateful<Div> {
+    /// Clicking the row does nothing; right-clicking it opens a menu that Disables or Enables
+    /// the Account.
+    fn account_row(&self, account: &Account, cx: &Context<Self>) -> AnyElement {
         let disabled = self.settings.disabled_accounts.contains(&account.id);
-        let group = SharedString::from(format!("account-{}", account.id));
-        let open = self.open_account_menu.as_ref() == Some(&account.id);
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
         let toggle = move |cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.toggle_account(&id, cx));
         };
-        let (view, id) = (cx.entity().downgrade(), account.id.clone());
-        let track_open = move |open: bool, cx: &mut App| {
-            let _ = view.update(cx, |view, cx| {
-                view.open_account_menu = open.then(|| id.clone());
-                cx.notify();
-            });
-        };
-        let menu = account_menu(account, disabled, open, group.clone(), toggle, track_open);
         row(
-            group.clone(),
+            format!("account-{}", account.id),
             provider_icon(account.provider),
             account.name.clone(),
             false,
             cx,
         )
-        .group(group)
         .cursor_default()
         .when(disabled, |row| row.opacity(DISABLED_OPACITY))
-        .child(menu)
+        .context_menu(account_menu(disabled, toggle))
+        .into_any_element()
     }
 
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -181,42 +183,32 @@ impl NativeView {
     }
 }
 
-/// The ⋯ button of an Account row, shown while `group` is hovered and while its menu is `open`;
-/// its one item runs `toggle`, and `track_open` hears the menu open and close.
+/// An Account row's context menu; its one item runs `toggle`.
 fn account_menu(
-    account: &Account,
     disabled: bool,
-    open: bool,
-    group: SharedString,
     toggle: impl Fn(&mut App) + 'static,
-    track_open: impl Fn(bool, &mut App) + 'static,
-) -> impl IntoElement {
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     let toggle = Rc::new(toggle);
-    // Not `controls::button`: it stops the mouse-down that opens the menu.
-    Button::new(SharedString::from(format!("account-menu-{}", account.id)))
-        .cursor_pointer()
-        .ghost()
-        .xsmall()
-        .icon(app_icon("more").size_4())
-        .accessibility_label(format!("{} actions", account.name))
-        // Transparent rather than invisible, so Tab still reaches it. It stays shown while its
-        // menu is open, when neither the pointer nor the focus is on it.
-        .opacity(if open { 1. } else { 0. })
-        .group_hover(group, |style| style.opacity(1.))
-        .focus_visible(|style| style.opacity(1.))
-        .dropdown_menu(move |menu, _, _| {
-            let toggle = toggle.clone();
-            menu.item(
-                PopupMenuItem::new(if disabled { "Enable" } else { "Disable" })
-                    .on_click(move |_, _, cx| toggle(cx)),
-            )
-        })
-        .on_open_change(move |open, _, cx| track_open(*open, cx))
+    move |menu, _, cx| {
+        let toggle = toggle.clone();
+        let (label, icon) = if disabled {
+            ("Enable", "view")
+        } else {
+            ("Disable", "view-off")
+        };
+        let color = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
+        menu.item(
+            PopupMenuItem::new(label)
+                .icon(app_icon(icon).text_color(color).mr(px(ICON_GAP - 4.0)))
+                .on_click(move |_, _, cx| toggle(cx)),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Access, Account, Provider, Section, account_menu, section};
+    use gpui_kit::component::menu::ContextMenuExt;
     use gpui_kit::test::{TestSupportExt, TestWindowExt};
     use gpui_kit::{
         AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Render,
@@ -235,41 +227,33 @@ mod tests {
         assert_eq!(section(Access::Granted, false, 0), Section::Accounts);
     }
 
-    /// Stands in for the sidebar: one Account row whose menu records its toggles and openings.
+    /// Stands in for the sidebar: one Account row whose context menu counts its toggles.
     struct Sidebar {
         account: Account,
         toggles: Rc<std::cell::Cell<usize>>,
-        opened: Rc<std::cell::RefCell<Vec<bool>>>,
     }
 
     impl Render for Sidebar {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let toggles = self.toggles.clone();
-            let opened = self.opened.clone();
             div()
                 .id("sidebar")
                 .size_full()
                 .child(
+                    // Fills the window: wrapped in its context menu, the row is no longer
+                    // observable by ID, so the test right-clicks the window's centre.
                     div()
                         .id("row")
-                        .group("row")
-                        .w(px(240.))
+                        .size_full()
                         .child(self.account.name.clone())
-                        .child(account_menu(
-                            &self.account,
-                            false,
-                            false,
-                            "row".into(),
-                            move |_| toggles.set(toggles.get() + 1),
-                            move |open, _| opened.borrow_mut().push(open),
-                        )),
+                        .context_menu(account_menu(false, move |_| toggles.set(toggles.get() + 1))),
                 )
                 .test_support()
         }
     }
 
     #[gpui_kit::test]
-    fn the_account_menu_disables_the_account(cx: &mut TestAppContext) {
+    fn right_clicking_an_account_disables_it(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let toggles = Rc::new(std::cell::Cell::new(0));
         let account = Account {
@@ -277,8 +261,7 @@ mod tests {
             name: "Work".into(),
             provider: Provider::Google,
         };
-        let opened = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let (sidebar_toggles, sidebar_opened) = (toggles.clone(), opened.clone());
+        let sidebar_toggles = toggles.clone();
         let (handle, _) = cx
             .update(|cx| {
                 gpui_kit::open_window(
@@ -294,24 +277,24 @@ mod tests {
                         cx.new(|_| Sidebar {
                             account,
                             toggles: sidebar_toggles,
-                            opened: sidebar_opened,
                         })
                     },
                 )
             })
             .unwrap_or_else(|error| panic!("open test window: {error}"));
 
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.click("account-menu-source-1", cx);
-            window.render_frame(cx);
-            window.click(0usize, cx);
-            window.render_frame(cx);
-        })
-        .unwrap_or_else(|error| panic!("update test window: {error}"));
+        let step = |cx: &mut TestAppContext, act: &dyn Fn(&mut Window, &mut gpui_kit::App)| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                act(window, cx);
+            })
+            .unwrap_or_else(|error| panic!("update test window: {error}"));
+            // The menu is built in a deferred callback.
+            cx.run_until_parked();
+        };
+        step(cx, &|window, cx| window.right_click("sidebar", cx));
+        step(cx, &|window, cx| window.click(0usize, cx));
 
         assert_eq!(toggles.get(), 1);
-        // The row keeps the trigger shown from opening until the item closes the menu.
-        assert_eq!(*opened.borrow(), [true, false]);
     }
 }

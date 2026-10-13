@@ -16,6 +16,15 @@ pub(crate) struct Settings {
     pub(crate) disabled_accounts: BTreeSet<String>,
     /// EventKit identifiers of the Disabled Calendars, kept while their Account is Disabled.
     pub(crate) disabled_calendars: BTreeSet<String>,
+    /// Sidebar sections whose rows are folded away.
+    pub(crate) folded_sections: BTreeSet<SidebarSection>,
+}
+
+/// A foldable sidebar section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub(crate) enum SidebarSection {
+    /// The Calendars section, listing Accounts.
+    Calendars,
 }
 
 impl Default for Settings {
@@ -24,6 +33,7 @@ impl Default for Settings {
             first_day_of_week: Weekday::Mon,
             disabled_accounts: BTreeSet::new(),
             disabled_calendars: BTreeSet::new(),
+            folded_sections: BTreeSet::new(),
         }
     }
 }
@@ -87,7 +97,7 @@ pub(crate) fn toggle(disabled: &mut BTreeSet<String>, id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Calendar, Settings, Weekday, toggle};
+    use super::{Calendar, Settings, SidebarSection, Weekday, toggle};
 
     #[test]
     fn saved_settings_read_back() {
@@ -97,6 +107,7 @@ mod tests {
         };
         settings.disabled_accounts.insert("source-1".into());
         settings.disabled_calendars.insert("calendar-1".into());
+        settings.folded_sections.insert(SidebarSection::Calendars);
         let json = serde_json::to_string(&settings).unwrap_or_default();
         assert_eq!(Settings::parse(&json), settings);
     }
@@ -110,6 +121,7 @@ mod tests {
         let old = Settings::parse(r#"{"first_day_of_week":"Sun"}"#);
         assert_eq!(old.first_day_of_week, Weekday::Sun);
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
+        assert!(old.folded_sections.is_empty());
     }
 
     fn calendar(id: &str, account_id: &str) -> Calendar {

@@ -47,10 +47,6 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/MicrosoftIcon.svg"),
     ),
     (
-        "icons/more.svg",
-        include_bytes!("../../../assets/hugeicons/MoreHorizontalIcon.svg"),
-    ),
-    (
         "icons/panel-left-close.svg",
         include_bytes!("../../../assets/hugeicons/LayoutLeftIcon.svg"),
     ),
@@ -61,6 +57,14 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/settings.svg",
         include_bytes!("../../../assets/hugeicons/Settings01Icon.svg"),
+    ),
+    (
+        "icons/view.svg",
+        include_bytes!("../../../assets/hugeicons/ViewIcon.svg"),
+    ),
+    (
+        "icons/view-off.svg",
+        include_bytes!("../../../assets/hugeicons/ViewOffSlashIcon.svg"),
     ),
 ];
 

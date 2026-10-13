@@ -5,21 +5,24 @@ mod route;
 mod settings_page;
 mod shell;
 mod sidebar;
+mod sidebar_fold;
 mod sidebar_row;
+mod sidebar_scroll;
 
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
 use crate::calendar_sync::CalendarSync;
-use crate::settings::Settings;
+use crate::settings::{Settings, SidebarSection};
 use calendar::CalendarPage;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder,
+    ParentElement, Render, ScrollHandle, Styled, Window, div, prelude::FluentBuilder,
 };
 use route::{History, Route};
 use settings_page::WeekdaySelect;
+use std::collections::{HashMap, HashSet};
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -36,8 +39,16 @@ pub struct NativeView {
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     calendar_sync: Entity<CalendarSync>,
-    /// The Account whose ⋯ menu is open, so its trigger stays shown.
-    open_account_menu: Option<String>,
+    /// Scroll position of the sidebar's sections.
+    sidebar_scroll: ScrollHandle,
+    /// Whether the pointer is over the sidebar, which shows the sections' scrollbar.
+    sidebar_hovered: bool,
+    /// Sidebar hover count; zero renders the scrollbar without a fade.
+    sidebar_hover_motion: u64,
+    /// Fold toggle count per section, keying its slide.
+    section_motion: HashMap<SidebarSection, u64>,
+    /// Sections whose rows are still sliding open or shut.
+    sections_moving: HashSet<SidebarSection>,
 }
 
 impl NativeView {
@@ -62,7 +73,11 @@ impl NativeView {
             first_day_select,
             calendar: CalendarPage::default(),
             calendar_sync,
-            open_account_menu: None,
+            sidebar_scroll: ScrollHandle::new(),
+            sidebar_hovered: false,
+            sidebar_hover_motion: 0,
+            section_motion: HashMap::new(),
+            sections_moving: HashSet::new(),
         }
     }
 
