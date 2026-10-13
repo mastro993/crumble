@@ -11,11 +11,15 @@ pub(crate) enum SourceKind {
     Other,
 }
 
-/// Google and iCloud both arrive as CalDAV, so only the title tells them apart.
-// ponytail: title heuristics; Google Workspace on a custom domain falls to Other. Checking for
-// event identifiers ending in `@google.com` would catch it.
+/// Google and iCloud both arrive as CalDAV, so the title tells them apart. A Google Workspace
+/// account on its own domain has neither in its title, so `google_events` is asked last: whether
+/// the Account's Events carry Google's external identifiers.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn provider(kind: SourceKind, title: &str) -> Provider {
+pub(crate) fn provider(
+    kind: SourceKind,
+    title: &str,
+    google_events: impl FnOnce() -> bool,
+) -> Provider {
     let title = title.to_lowercase();
     match kind {
         SourceKind::Exchange => Provider::Outlook,
@@ -23,8 +27,15 @@ pub(crate) fn provider(kind: SourceKind, title: &str) -> Provider {
         SourceKind::CalDav if title.contains("gmail") || title.contains("google") => {
             Provider::Google
         }
+        SourceKind::CalDav if google_events() => Provider::Google,
         _ => Provider::Other,
     }
+}
+
+/// Google Calendar gives every Event an external identifier ending in `@google.com`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn is_google_event_id(external_id: &str) -> bool {
+    external_id.ends_with("@google.com")
 }
 
 /// Hosts whose links open a video meeting. Subdomains match too, such as `us02web.zoom.us`.
@@ -64,22 +75,42 @@ fn is_meeting_link(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, SourceKind, join_link, provider};
+    use super::{Provider, SourceKind, is_google_event_id, join_link, provider};
 
     #[test]
     fn providers_follow_source_type_and_title() {
-        assert_eq!(provider(SourceKind::Exchange, "Work"), Provider::Outlook);
-        assert_eq!(provider(SourceKind::CalDav, "iCloud"), Provider::Apple);
+        let no = || false;
         assert_eq!(
-            provider(SourceKind::CalDav, "me@Gmail.com"),
+            provider(SourceKind::Exchange, "Work", no),
+            Provider::Outlook
+        );
+        assert_eq!(provider(SourceKind::CalDav, "iCloud", no), Provider::Apple);
+        assert_eq!(
+            provider(SourceKind::CalDav, "me@Gmail.com", no),
             Provider::Google
         );
-        assert_eq!(provider(SourceKind::CalDav, "Google"), Provider::Google);
+        assert_eq!(provider(SourceKind::CalDav, "Google", no), Provider::Google);
         assert_eq!(
-            provider(SourceKind::CalDav, "me@fastmail.com"),
+            provider(SourceKind::CalDav, "me@fastmail.com", no),
             Provider::Other
         );
-        assert_eq!(provider(SourceKind::Other, "Google"), Provider::Other);
+        assert_eq!(provider(SourceKind::Other, "Google", no), Provider::Other);
+    }
+
+    #[test]
+    fn workspace_accounts_are_google_by_their_events() {
+        let yes = || true;
+        assert_eq!(provider(SourceKind::CalDav, "Acme", yes), Provider::Google);
+        assert_eq!(provider(SourceKind::Other, "Acme", yes), Provider::Other);
+        // A title match never pays for the Event lookup.
+        let unreachable = || panic!("looked up Events for a known title");
+        assert_eq!(
+            provider(SourceKind::CalDav, "iCloud", unreachable),
+            Provider::Apple
+        );
+        assert!(is_google_event_id("5f3k2@google.com"));
+        assert!(!is_google_event_id("A1B2-C3D4"));
+        assert!(!is_google_event_id("x@google.com.evil"));
     }
 
     #[test]

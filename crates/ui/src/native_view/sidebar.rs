@@ -123,6 +123,7 @@ impl NativeView {
                     .child(self.nav_row(Route::Calendar, "calendar", cx))
                     .child(self.nav_row(Route::Chat, "chat", cx)),
             )
+            .children(self.render_calendars_section(cx))
             .child(div().flex_1())
             .child(self.nav_row(Route::Settings, "settings", cx))
     }

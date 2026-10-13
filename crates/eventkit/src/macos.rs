@@ -89,7 +89,9 @@ pub fn accounts() -> anyhow::Result<Vec<Account>> {
                 let name = unsafe { source.title() }.to_string();
                 Account {
                     id: unsafe { source.sourceIdentifier() }.to_string(),
-                    provider: classify::provider(source_kind(&source), &name),
+                    provider: classify::provider(source_kind(&source), &name, || {
+                        has_google_events(&source)
+                    }),
                     name,
                 }
             })
@@ -97,6 +99,31 @@ pub fn accounts() -> anyhow::Result<Vec<Account>> {
         accounts.sort_by_key(|account| account.name.to_lowercase());
         accounts
     })
+}
+
+/// How far around today [`has_google_events`] looks.
+const GOOGLE_PROBE_SPAN: TimeDelta = TimeDelta::days(90);
+
+/// Whether any Event within [`GOOGLE_PROBE_SPAN`] of today in `source` came from Google Calendar.
+// ponytail: an Account with no Events in that span stays Other; widen the span if that bites.
+fn has_google_events(source: &EKSource) -> bool {
+    let now = Local::now();
+    // SAFETY: getters on live EventKit objects, and a predicate built by the same store.
+    unsafe {
+        let calendars = source
+            .calendarsForEntityType(EKEntityType::Event)
+            .allObjects();
+        let predicate = store().predicateForEventsWithStartDate_endDate_calendars(
+            &ns_date(now - GOOGLE_PROBE_SPAN),
+            &ns_date(now + GOOGLE_PROBE_SPAN),
+            Some(&calendars),
+        );
+        store()
+            .eventsMatchingPredicate(&predicate)
+            .iter()
+            .filter_map(|event| event.calendarItemExternalIdentifier())
+            .any(|id| classify::is_google_event_id(&id.to_string()))
+    }
 }
 
 fn source_kind(source: &EKSource) -> SourceKind {

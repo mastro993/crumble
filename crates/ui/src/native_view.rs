@@ -1,4 +1,5 @@
 mod calendar;
+mod calendars_section;
 mod controls;
 mod route;
 mod settings_page;
@@ -9,12 +10,13 @@ mod sidebar_row;
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
+use crate::calendar_sync::CalendarSync;
 use crate::settings::Settings;
 use calendar::CalendarPage;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
-    Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, div, prelude::FluentBuilder,
+    AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder,
 };
 use route::{History, Route};
 use settings_page::WeekdaySelect;
@@ -33,6 +35,7 @@ pub struct NativeView {
     settings: Settings,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
+    calendar_sync: Entity<CalendarSync>,
 }
 
 impl NativeView {
@@ -43,6 +46,8 @@ impl NativeView {
         window.focus(&focus, cx);
         let settings = Settings::load();
         let first_day_select = settings_page::first_day_select(&settings, window, cx);
+        let calendar_sync = cx.new(CalendarSync::new);
+        cx.observe(&calendar_sync, |_, _, cx| cx.notify()).detach();
         Self {
             focus,
             route: Route::Home,
@@ -54,6 +59,7 @@ impl NativeView {
             settings,
             first_day_select,
             calendar: CalendarPage::default(),
+            calendar_sync,
         }
     }
 
