@@ -7,7 +7,7 @@ mod period;
 
 use super::NativeView;
 use super::controls::{app_icon, button};
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
 use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
@@ -81,10 +81,15 @@ impl Default for CalendarEvents {
     }
 }
 
+/// The start of `date`. Where clocks skip midnight for daylight saving, as in Chile, the day
+/// starts an hour later; the extra Events read are drawn only on their own dates.
 fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
-    Local
-        .from_local_datetime(&date.and_time(NaiveTime::MIN))
-        .earliest()
+    let midnight = date.and_time(NaiveTime::MIN);
+    Local.from_local_datetime(&midnight).earliest().or_else(|| {
+        Local
+            .from_local_datetime(&(midnight + TimeDelta::hours(1)))
+            .earliest()
+    })
 }
 
 /// Read on every use, so a window left open past midnight catches up on its next render.
