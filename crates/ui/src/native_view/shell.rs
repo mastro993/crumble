@@ -2,10 +2,10 @@
 
 use std::rc::Rc;
 
-use super::NativeView;
 use super::controls::button;
 use super::sidebar::{SidebarDrag, clamp_sidebar_width, visible_width};
-use crumble_theme::HEADER_HEIGHT;
+use super::{NativeView, Route};
+use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT};
 use gpui_kit::component::{Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, ParentElement,
@@ -43,9 +43,10 @@ fn toggle_left(window: &Window) -> f32 {
     }
 }
 
-/// Leading header space that keeps header content clear of the fixed toggle.
+/// Leading header space that keeps header content clear of the fixed toggle, and otherwise
+/// lines it up with the page's leading edge.
 fn header_inset(toggle_left: f32, sidebar_visible: f32) -> f32 {
-    (toggle_left + TOGGLE_SIZE + HEADER_GAP - sidebar_visible).max(HEADER_GAP)
+    (toggle_left + TOGGLE_SIZE + HEADER_GAP - sidebar_visible).max(CONTENT_PADDING)
 }
 
 impl NativeView {
@@ -86,14 +87,14 @@ impl NativeView {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(self.render_header(window))
+                    .child(self.render_header(window, cx))
                     .child(
                         div()
                             .id("main-content")
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .px_6()
+                            .px(px(CONTENT_PADDING))
                             .pb_6()
                             .child(page),
                     ),
@@ -131,8 +132,8 @@ impl NativeView {
             )
     }
 
-    /// Borderless, transparent header.
-    fn render_header(&self, window: &Window) -> AnyElement {
+    /// Borderless, transparent header; the Calendar page puts its toolbar here.
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (width, collapsed, left) = (
             self.sidebar_width,
             self.sidebar_collapsed,
@@ -142,22 +143,26 @@ impl NativeView {
             self.sidebar_motion_width(div().flex_shrink_0(), "header-inset", move |delta| {
                 header_inset(left, visible_width(width, collapsed, delta))
             });
+        let toolbar = (self.route == Route::Calendar)
+            .then(|| self.render_calendar_toolbar(cx).into_any_element());
         if cfg!(target_os = "macos") {
             TitleBar::new()
                 .border_0()
                 .bg(gpui_kit::transparent_black())
                 .h(px(HEADER_HEIGHT))
                 .pl_0()
-                .pr_4()
+                .pr(px(CONTENT_PADDING))
                 .child(inset)
+                .children(toolbar)
                 .into_any_element()
         } else {
             h_flex()
                 .id("header")
                 .flex_shrink_0()
                 .h(px(HEADER_HEIGHT))
-                .pr_4()
+                .pr(px(CONTENT_PADDING))
                 .child(inset)
+                .children(toolbar)
                 .into_any_element()
         }
     }
@@ -165,12 +170,12 @@ impl NativeView {
 
 #[cfg(test)]
 mod tests {
-    use super::{HEADER_GAP, header_inset};
+    use super::{CONTENT_PADDING, header_inset};
 
     #[test]
-    fn header_clears_the_toggle_only_while_the_sidebar_is_narrow() {
+    fn header_clears_the_toggle_then_lines_up_with_the_page() {
         assert_eq!(header_inset(93.0, 0.0), 125.0);
         assert_eq!(header_inset(93.0, 60.0), 65.0);
-        assert_eq!(header_inset(93.0, 232.0), HEADER_GAP);
+        assert_eq!(header_inset(93.0, 232.0), CONTENT_PADDING);
     }
 }

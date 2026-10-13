@@ -9,6 +9,14 @@ pub const HEADER_HEIGHT: f32 = 50.0;
 /// Top-left of the 14 pt macOS traffic lights, vertically centred in the header row.
 pub const TRAFFIC_LIGHTS_ORIGIN: (f32, f32) = (16.0, (HEADER_HEIGHT - 14.0) / 2.0);
 
+/// Horizontal padding of the main column, shared by the header and the page so their
+/// edges line up.
+pub const CONTENT_PADDING: f32 = 24.0;
+
+/// Corner radius of large content surfaces such as the Calendar grids, one tier softer than
+/// the theme's `radius_lg` controls they sit beside.
+pub const SURFACE_RADIUS: f32 = 12.0;
+
 /// Sidebar metrics in points.
 pub mod sidebar {
     /// Height of a navigation row.

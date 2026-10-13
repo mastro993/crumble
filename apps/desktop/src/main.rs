@@ -1,6 +1,6 @@
 //! Native desktop lifecycle: menus, key bindings, and the main window.
 
-use crumble_ui::{GoBack, GoForward, ToggleSidebar};
+use crumble_ui::{GoBack, GoForward, NextPeriod, PreviousPeriod, ShowToday, ToggleSidebar};
 use gpui_kit::component::TitleBar;
 use gpui_kit::{
     App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
@@ -60,16 +60,21 @@ fn run() -> anyhow::Result<()> {
         .run(|cx: &mut App| {
             crumble_ui::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
-            let (quit_key, sidebar_key, back_key, forward_key) = if cfg!(target_os = "macos") {
-                ("cmd-q", "cmd-b", "cmd-[", "cmd-]")
+            let modifier = if cfg!(target_os = "macos") {
+                "cmd"
             } else {
-                ("ctrl-q", "ctrl-b", "ctrl-[", "ctrl-]")
+                "ctrl"
             };
+            let key = |key: &str| format!("{modifier}-{key}");
             cx.bind_keys([
-                KeyBinding::new(quit_key, Quit, None),
-                KeyBinding::new(sidebar_key, ToggleSidebar, None),
-                KeyBinding::new(back_key, GoBack, None),
-                KeyBinding::new(forward_key, GoForward, None),
+                KeyBinding::new(&key("q"), Quit, None),
+                KeyBinding::new(&key("b"), ToggleSidebar, None),
+                KeyBinding::new(&key("["), GoBack, None),
+                KeyBinding::new(&key("]"), GoForward, None),
+                // Handled only while the Calendar page is open.
+                KeyBinding::new(&key("t"), ShowToday, None),
+                KeyBinding::new(&key("left"), PreviousPeriod, None),
+                KeyBinding::new(&key("right"), NextPeriod, None),
             ]);
             cx.set_menus(vec![
                 Menu {

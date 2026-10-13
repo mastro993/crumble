@@ -8,8 +8,15 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
 gpui-kit.workspace = true
 crumble-theme.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

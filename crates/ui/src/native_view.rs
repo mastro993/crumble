@@ -1,17 +1,23 @@
+mod calendar;
 mod controls;
 mod route;
+mod settings_page;
 mod shell;
 mod sidebar;
 mod sidebar_row;
 
+pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
+use crate::settings::Settings;
+use calendar::CalendarPage;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, div,
+    Styled, Window, div, prelude::FluentBuilder,
 };
 use route::{History, Route};
+use settings_page::WeekdaySelect;
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -24,6 +30,9 @@ pub struct NativeView {
     sidebar_motion: u64,
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
+    settings: Settings,
+    first_day_select: WeekdaySelect,
+    calendar: CalendarPage,
 }
 
 impl NativeView {
@@ -32,6 +41,8 @@ impl NativeView {
         // Window-level shortcuts such as ToggleSidebar dispatch through the focused view.
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let settings = Settings::load();
+        let first_day_select = settings_page::first_day_select(&settings, window, cx);
         Self {
             focus,
             route: Route::Home,
@@ -40,6 +51,9 @@ impl NativeView {
             sidebar_collapsed: false,
             sidebar_motion: 0,
             sidebar_closing: false,
+            settings,
+            first_day_select,
+            calendar: CalendarPage::default(),
         }
     }
 
@@ -74,10 +88,17 @@ impl Focusable for NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let page = div().text_xl().child(self.route.title()).into_any_element();
+        let page = match self.route {
+            Route::Calendar => self.render_calendar(window, cx),
+            Route::Settings => self.render_settings(cx).into_any_element(),
+            route => div().text_xl().child(route.title()).into_any_element(),
+        };
         let colors = cx.theme().colors;
         div()
             .track_focus(&self.focus)
+            .when(self.route == Route::Calendar, |root| {
+                self.calendar_actions(root, cx)
+            })
             .on_action(cx.listener(|view, _: &ToggleSidebar, _, cx| view.toggle_sidebar(cx)))
             .on_action(cx.listener(|view, _: &GoBack, _, cx| view.go_back(cx)))
             .on_action(cx.listener(|view, _: &GoForward, _, cx| view.go_forward(cx)))
