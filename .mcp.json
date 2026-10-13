@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gpui-skillbinder": {
+      "type": "stdio",
+      "command": "gpui-mcp",
+      "args": ["--app-id", "crumble"]
+    }
+  }
+}
