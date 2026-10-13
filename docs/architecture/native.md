@@ -27,9 +27,9 @@ Terms such as Calendar view, Period, and Focused date are defined in [CONTEXT.md
 - The Calendar page shows one Period in a Week, Month, or Year Calendar view. It opens on Month view showing today. The Calendar view and Focused date stay in memory while the app runs and are not persisted.
 - On the Calendar route the header holds Today, Previous, and Next buttons, the Period title, and a segmented Week | Month | Year switcher. The title truncates when the header is too narrow.
 - `Cmd-T` jumps to today and `Cmd-←` / `Cmd-→` step one Period (`Ctrl` elsewhere). These shortcuts are handled only while the Calendar page is open.
-- Week view is an hourly grid from 00:00 to 24:00 that scrolls on its own. Month view stretches 4–6 week rows to fill the page and mutes days from neighbouring months. Year view shows twelve small months in a 4×3 grid. Clicking a month name opens it in Month view.
+- Week view is an hourly grid from 00:00 to 24:00 that scrolls on its own. Month view stretches 4–6 week rows to fill the page and mutes days from neighbouring months. Year view shows twelve months as rounded cards in a 4×3 grid. Each card always has six week rows, so the cards in a grid row end level, and the grid stays at most 1200 pt wide. The current month's name is bold. Clicking a month name opens it in Month view.
 - Week and Month grids sit in a bordered frame with 12 pt rounded corners (`SURFACE_RADIUS`). Shaded cells in the corners follow the curve, including while the Week hours scroll.
-- Today is circled in the accent color. Weekends (Saturday and Sunday) are shaded in Week and Month views and use muted day numbers in Year view.
+- Today is circled in the accent color. Weekends (Saturday and Sunday) are shaded in every Calendar view. In Year view, adjacent weekend columns share one rounded strip.
 - Today is read from the local clock on every render, so a window left open past midnight updates on its next redraw.
 
 ## Settings

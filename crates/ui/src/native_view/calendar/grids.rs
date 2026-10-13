@@ -1,9 +1,9 @@
-//! Week, Month, and Year grids. Weekends are shaded in Week and Month and muted in Year.
+//! Week, Month, and Year grids. Weekends are shaded in every Calendar view.
 
 use super::NativeView;
 use super::period::{is_weekend, month_weeks, week_days, week_start, weekdays, year_months};
 use crate::native_view::controls::button;
-use chrono::{Datelike, NaiveDate, Weekday};
+use chrono::{Datelike, Days, NaiveDate, Weekday};
 use crumble_theme::SURFACE_RADIUS;
 use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt, button::ButtonVariants, h_flex, v_flex,
@@ -16,6 +16,11 @@ use gpui_kit::{
 /// Width of the Week view's hour labels.
 const HOUR_GUTTER: f32 = 56.0;
 const HOUR_HEIGHT: f32 = 48.0;
+/// Week rows in every Year view month, so the months in each grid row end level.
+const YEAR_WEEKS: u64 = 6;
+const YEAR_DAY_HEIGHT: f32 = 20.0;
+/// Keeps Year view day columns compact on wide windows.
+const YEAR_MAX_WIDTH: f32 = 1200.0;
 
 fn weekend_fill(cx: &App) -> Hsla {
     cx.theme().muted
@@ -54,8 +59,8 @@ fn weekday_header(first_day: Weekday, cx: &App) -> Div {
     }))
 }
 
-/// Corner radii for a cell that touches the given sides of a rounded frame, so its fill
-/// follows the frame's corners. GPUI does not clip children to a parent's radius.
+/// Corner radii for a fill that touches the given sides of a rounded shape, so the fill
+/// follows that shape's corners. GPUI does not clip children to a parent's radius.
 fn frame_corners(
     radius: Pixels,
     top: bool,
@@ -213,10 +218,11 @@ pub(super) fn year(
     focused: NaiveDate,
     first_day: Weekday,
     today: NaiveDate,
+    hairline: Pixels,
     cx: &mut Context<NativeView>,
 ) -> AnyElement {
     let months: Vec<AnyElement> = year_months(focused)
-        .map(|first| mini_month(first, first_day, today, cx))
+        .map(|first| month_card(first, first_day, today, hairline, cx))
         .collect();
     div()
         .id("year-months")
@@ -226,52 +232,95 @@ pub(super) fn year(
             div()
                 .grid()
                 .grid_cols(4)
-                .gap_x_8()
-                .gap_y_6()
+                .gap_4()
+                .max_w(px(YEAR_MAX_WIDTH))
+                .mx_auto()
                 .children(months),
         )
         .into_any_element()
 }
 
-/// One month of the Year view; its name opens the month in Month view.
-fn mini_month(
+/// One month of the Year view in a rounded card; its name opens the month in Month view.
+fn month_card(
     first: NaiveDate,
     first_day: Weekday,
     today: NaiveDate,
+    hairline: Pixels,
     cx: &mut Context<NativeView>,
 ) -> AnyElement {
-    let muted = cx.theme().muted_foreground;
-    let weeks = month_weeks(first, first_day).into_iter().map(|start| {
-        h_flex().children(week_days(start).map(|date| {
-            div()
+    let theme = cx.theme();
+    let (muted, border, column_radius) = (theme.muted_foreground, theme.border, theme.radius);
+    let current = (first.year(), first.month()) == (today.year(), today.month());
+    let grid_start = week_start(first, first_day);
+    // Columns rather than rows, so each weekend column is one shaded, rounded strip.
+    let columns: Vec<_> = (0..7)
+        .map(|column| {
+            let top = grid_start + Days::new(column);
+            // Neighbouring weekend columns share one strip: only its outer corners are round.
+            let weekend_at = |offset: i64| {
+                (0..7).contains(&(column as i64 + offset))
+                    && is_weekend(top + chrono::Duration::days(offset))
+            };
+            let (open_left, open_right) = (!weekend_at(-1), !weekend_at(1));
+            v_flex()
                 .flex_1()
-                .flex()
-                .justify_center()
-                .text_xs()
-                .when(date.month() == first.month(), |cell| {
-                    cell.child(day_number(date, today, 20.0, is_weekend(date), cx))
+                .items_center()
+                .py_1()
+                .when(is_weekend(top), |strip| {
+                    strip.bg(weekend_fill(cx)).corner_radii(frame_corners(
+                        column_radius,
+                        true,
+                        true,
+                        open_left,
+                        open_right,
+                    ))
                 })
-        }))
-    });
+                .child(
+                    div()
+                        .h(px(YEAR_DAY_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(
+                            top.weekday()
+                                .to_string()
+                                .chars()
+                                .take(2)
+                                .collect::<String>(),
+                        ),
+                )
+                .children((0..YEAR_WEEKS).map(|week| {
+                    let date = top + Days::new(week * 7);
+                    div()
+                        .h(px(YEAR_DAY_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .text_xs()
+                        .when(date.month() == first.month(), |slot| {
+                            slot.child(day_number(date, today, 20.0, false, cx))
+                        })
+                }))
+        })
+        .collect();
     v_flex()
         .gap_1()
+        .p_3()
+        .border(hairline)
+        .border_color(border)
+        .rounded(px(SURFACE_RADIUS))
         .child(
             h_flex().child(
                 button(("year-month", first.month()))
-                    .ghost()
+                    .text()
                     .small()
                     .label(first.format("%B").to_string())
+                    .when(current, |name| {
+                        name.text_color(cx.theme().primary).font_semibold()
+                    })
                     .on_click(cx.listener(move |view, _, _, cx| view.open_month(first, cx))),
             ),
         )
-        .child(h_flex().children(weekdays(first_day).map(|day| {
-            div()
-                .flex_1()
-                .text_center()
-                .text_xs()
-                .text_color(muted)
-                .child(day.to_string().chars().take(2).collect::<String>())
-        })))
-        .children(weeks)
+        .child(h_flex().children(columns))
         .into_any_element()
 }

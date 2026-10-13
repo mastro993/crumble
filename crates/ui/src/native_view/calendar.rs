@@ -152,7 +152,7 @@ impl NativeView {
         match view {
             CalendarView::Week => grids::week(focused, first_day, today, hairline, cx),
             CalendarView::Month => grids::month(focused, first_day, today, hairline, cx),
-            CalendarView::Year => grids::year(focused, first_day, today, cx),
+            CalendarView::Year => grids::year(focused, first_day, today, hairline, cx),
         }
     }
 }
