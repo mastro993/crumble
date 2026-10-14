@@ -53,6 +53,10 @@ _Avoid_: muted, removed, off
 Said of an Account whose Events Crumble leaves off the Calendar page until Crumble quits. It is chosen in the Calendars section and changes nothing in macOS.
 _Avoid_: muted, unchecked, toggled off
 
+**Alias**:
+A name the user gives an Account in Crumble. The sidebar shows only the Alias; Settings shows the Alias followed by the Account's own name in brackets. It is kept across restarts and changes nothing in macOS.
+_Avoid_: nickname, display name, rename
+
 **Calendars section**:
 The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
 

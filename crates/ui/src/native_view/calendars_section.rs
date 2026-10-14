@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use super::NativeView;
+use super::account_alias::{Rename, account_name};
 use super::account_dot::{dot, name};
 use super::controls::app_icon;
 use super::route::Route;
@@ -12,9 +13,10 @@ use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
 use super::sidebar_row::{activate, row, row_with};
 use crate::settings::{self, AccountColor, SidebarSection};
 use crumble_eventkit::{Access, Account};
-use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, INSET, ROW_GAP, ROW_PADDING};
+use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, INSET, ROW_GAP, ROW_HEIGHT, ROW_PADDING};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Side, h_flex};
+use gpui_kit::component::{ActiveTheme, Side, Sizable, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement,
     MouseButton, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
@@ -65,6 +67,8 @@ fn section(access: Access, loaded: bool, accounts: usize, listed: usize) -> Sect
 enum AccountAction {
     /// Hide a shown Account, or Show a Hidden one.
     ToggleHidden,
+    /// Edit the Account's Alias in place.
+    Rename,
     /// Give the dot this color.
     Recolor(AccountColor),
     /// Move the row to this index.
@@ -211,41 +215,46 @@ impl NativeView {
         listed
     }
 
-    /// Clicking the row Hides or Shows the Account; dragging it reorders the Accounts, and
-    /// right-clicking it opens a menu that Hides or Shows the Account, picks its dot color, and
-    /// moves it.
+    /// The row shows the Account's Alias, else its label. Clicking it Hides or Shows the
+    /// Account; dragging it reorders the Accounts, and right-clicking it opens a menu that Hides
+    /// or Shows the Account, renames it, picks its dot color, and moves it.
     fn account_row(
         &self,
         account: &Account,
         placement: Placement,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let hidden = self.hidden_accounts.contains(&account.id);
         let color = self.settings.account_color(&account.id);
-        let label: SharedString = account_label(account).to_owned().into();
+        if let Some(rename) = self
+            .renaming
+            .as_ref()
+            .filter(|rename| rename.id == account.id)
+        {
+            return rename_row(rename, color, cx);
+        }
+        let hidden = self.hidden_accounts.contains(&account.id);
+        let label: SharedString = account_name(&self.settings, account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
-        let act = move |action, cx: &mut App| {
+        let act = move |action, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| match action {
                 AccountAction::ToggleHidden => view.toggle_hidden(&id, cx),
+                AccountAction::Rename => view.start_rename(&id, window, cx),
                 AccountAction::Recolor(color) => view.set_account_color(&id, color, cx),
                 AccountAction::MoveTo(index) => view.move_account(&id, index, cx),
             });
         };
         let menu = account_menu(hidden, color, placement.index, placement.len, act);
         let id = account.id.clone();
-        activate(
-            row_with(
-                format!("account-{}", account.id),
-                dot(color, cx),
-                label.clone(),
-                false,
-                cx,
-            ),
+        row_with(
+            format!("account-{}", account.id),
+            dot(color, cx),
             label.clone(),
+            false,
             cx,
-            // A drag never ends in a click, so reordering leaves the row as it was.
-            move |view, _, cx| view.toggle_hidden(&id, cx),
         )
+        // Not `activate`: a focusable row and its context menu would both claim focus in one
+        // frame, which GPUI's accessibility tree rejects. A drag never ends in a click.
+        .on_click(cx.listener(move |view, _, _, cx| view.toggle_hidden(&id, cx)))
         .when(hidden, |row| row.opacity(HIDDEN_OPACITY))
         .relative()
         .top(px(placement.offset))
@@ -353,6 +362,20 @@ struct Placement {
     floating: bool,
 }
 
+/// An Account row turned into a field for its Alias; Enter or leaving it saves, Escape cancels.
+fn rename_row(rename: &Rename, color: AccountColor, cx: &Context<NativeView>) -> AnyElement {
+    h_flex()
+        .id(SharedString::from(format!("rename-{}", rename.id)))
+        .flex_shrink_0()
+        .gap(px(ICON_GAP))
+        .h(px(ROW_HEIGHT))
+        .px(px(ROW_PADDING))
+        .capture_key_down(cx.listener(NativeView::rename_key_down))
+        .child(dot(color, cx))
+        .child(Input::new(&rename.input).small())
+        .into_any_element()
+}
+
 /// A muted line of copy that runs `action` when clicked.
 fn hint(
     id: &'static str,
@@ -387,13 +410,13 @@ fn account_menu(
     current: AccountColor,
     index: usize,
     len: usize,
-    act: impl Fn(AccountAction, &mut App) + 'static,
+    act: impl Fn(AccountAction, &mut Window, &mut App) + 'static,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     let act = Rc::new(act);
     move |menu, window, cx| {
         let on = |action| {
             let act = act.clone();
-            move |_: &_, _: &mut Window, cx: &mut App| act(action, cx)
+            move |_: &_, window: &mut Window, cx: &mut App| act(action, window, cx)
         };
         let (label, icon) = if hidden {
             ("Show", "view")
@@ -407,6 +430,11 @@ fn account_menu(
             PopupMenuItem::new(label)
                 .icon(menu_icon(icon))
                 .on_click(on(AccountAction::ToggleHidden)),
+        )
+        .item(
+            PopupMenuItem::new("Rename…")
+                .icon(menu_icon("pencil"))
+                .on_click(on(AccountAction::Rename)),
         )
         .submenu_with_icon(
             Some(menu_icon("paint-board")),
@@ -427,7 +455,9 @@ fn account_menu(
                                     .child(name(color))
                             })
                             .checked(color == current)
-                            .on_click(move |_, _, cx| recolor(AccountAction::Recolor(color), cx)),
+                            .on_click(move |_, window, cx| {
+                                recolor(AccountAction::Recolor(color), window, cx)
+                            }),
                         )
                     })
             },
@@ -499,7 +529,7 @@ mod tests {
                             AccountColor::Blue,
                             0,
                             2,
-                            move |action, _| actions.borrow_mut().push(action),
+                            move |action, _, _| actions.borrow_mut().push(action),
                         )),
                 )
                 .test_support()
@@ -547,8 +577,8 @@ mod tests {
             // The menu is built in a deferred callback.
             cx.run_until_parked();
         };
-        // Items: Hide, Color, a separator, Move Up, Move Down.
-        for item in [0usize, 3, 4] {
+        // Items: Hide, Rename, Color, a separator, Move Up, Move Down.
+        for item in [0usize, 1, 4, 5] {
             step(cx, &|window, cx| window.right_click("sidebar", cx));
             step(cx, &|window, cx| window.click(item, cx));
         }
@@ -556,7 +586,11 @@ mod tests {
         // Move Up is disabled on the first row, so it records nothing.
         assert_eq!(
             *actions.borrow(),
-            [AccountAction::ToggleHidden, AccountAction::MoveTo(1)]
+            [
+                AccountAction::ToggleHidden,
+                AccountAction::Rename,
+                AccountAction::MoveTo(1)
+            ]
         );
     }
 }

@@ -23,6 +23,8 @@ pub(crate) struct Settings {
     pub(crate) account_order: Vec<String>,
     /// Dot colors the user picked, by Account identifier; the others use [`AccountColor::default_for`].
     pub(crate) account_colors: BTreeMap<String, AccountColor>,
+    /// Aliases the user gave, by Account identifier.
+    pub(crate) account_aliases: BTreeMap<String, String>,
 }
 
 /// The dot that marks an Account in the sidebar and in Settings. The palette is SkillBinder's
@@ -78,6 +80,7 @@ impl Default for Settings {
             disabled_calendars: BTreeSet::new(),
             folded_sections: BTreeSet::new(),
             account_colors: BTreeMap::new(),
+            account_aliases: BTreeMap::new(),
             account_order: Vec::new(),
         }
     }
@@ -134,6 +137,20 @@ impl Settings {
             .get(id)
             .copied()
             .unwrap_or_else(|| AccountColor::default_for(id))
+    }
+
+    /// The Alias of the Account `id`, if the user gave one.
+    pub(crate) fn account_alias(&self, id: &str) -> Option<&str> {
+        self.account_aliases.get(id).map(String::as_str)
+    }
+
+    /// Gives the Account `id` the Alias `alias`, trimmed; a blank one, or `own`, the Account's
+    /// own name, removes it.
+    pub(crate) fn set_account_alias(&mut self, id: &str, alias: &str, own: &str) {
+        match alias.trim() {
+            alias if alias.is_empty() || alias == own => self.account_aliases.remove(id),
+            alias => self.account_aliases.insert(id.to_owned(), alias.to_owned()),
+        };
     }
 
     /// Saves `listed`, the new order of the Accounts the sidebar lists, keeping each Disabled
@@ -199,6 +216,7 @@ mod tests {
         settings
             .account_colors
             .insert("source-1".into(), AccountColor::Pink);
+        settings.set_account_alias("source-1", "Work", "me@example.com");
         let json = serde_json::to_string(&settings).unwrap_or_default();
         assert_eq!(Settings::parse(&json), settings);
     }
@@ -213,7 +231,7 @@ mod tests {
         assert_eq!(old.first_day_of_week, Weekday::Sun);
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
         assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
-        assert!(old.account_order.is_empty());
+        assert!(old.account_order.is_empty() && old.account_aliases.is_empty());
     }
 
     fn account(id: &str) -> Account {
@@ -302,6 +320,21 @@ mod tests {
             .account_colors
             .insert("source-1".into(), AccountColor::Gray);
         assert_eq!(settings.account_color("source-1"), AccountColor::Gray);
+    }
+
+    #[test]
+    fn an_alias_is_trimmed_and_a_blank_one_or_the_own_name_removes_it() {
+        let own = "me@example.com";
+        let mut settings = Settings::default();
+        assert_eq!(settings.account_alias("source-1"), None);
+        settings.set_account_alias("source-1", "  Work ", own);
+        assert_eq!(settings.account_alias("source-1"), Some("Work"));
+        settings.set_account_alias("source-1", "   ", own);
+        assert_eq!(settings.account_alias("source-1"), None);
+
+        settings.set_account_alias("source-1", "Work", own);
+        settings.set_account_alias("source-1", " me@example.com", own);
+        assert_eq!(settings.account_alias("source-1"), None);
     }
 
     #[test]
