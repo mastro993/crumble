@@ -2,13 +2,12 @@
 
 use super::NativeView;
 use super::event_views::{Shown, all_day_strip, day_blocks, month_day};
-use super::period::{is_weekend, month_weeks, week_days, week_start, weekdays, year_months};
-use crate::native_view::controls::button;
+use super::period::{
+    CalendarView, is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
+};
 use chrono::{Datelike, Days, NaiveDate, Weekday};
 use crumble_theme::SURFACE_RADIUS;
-use gpui_kit::component::{
-    ActiveTheme, Sizable, StyledExt, button::ButtonVariants, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Context, Corners, Div, Hsla, InteractiveElement, IntoElement, ParentElement,
     Pixels, ScrollHandle, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
@@ -94,7 +93,7 @@ pub(super) fn month(
     today: NaiveDate,
     hairline: Pixels,
     shown: &[Shown],
-    cx: &App,
+    cx: &mut Context<NativeView>,
 ) -> AnyElement {
     let (border, radius) = (cx.theme().border, px(SURFACE_RADIUS));
     let weeks = month_weeks(focused, first_day);
@@ -106,7 +105,13 @@ pub(super) fn month(
             .children(week_days(start).enumerate().map(|(column, date)| {
                 let (top, bottom) = (row == 0, row == last_row);
                 let (left, right) = (column == 0, column == 6);
+                // Clicking a day opens its week; an Event's own popover keeps its click.
                 v_flex()
+                    .id(("month-day", row * 7 + column))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.open_period(CalendarView::Week, date, cx)
+                    }))
                     .flex_1()
                     .min_w_0()
                     .h_full()
@@ -276,7 +281,7 @@ pub(super) fn year(
         .into_any_element()
 }
 
-/// One month of the Year view in a rounded card; its name opens the month in Month view.
+/// One month of the Year view in a rounded card; clicking it opens the month in Month view.
 fn month_card(
     first: NaiveDate,
     first_day: Weekday,
@@ -340,22 +345,25 @@ fn month_card(
         })
         .collect();
     v_flex()
+        .id(("year-month", first.month() as usize))
+        .cursor_pointer()
+        .on_click(
+            cx.listener(move |view, _, _, cx| view.open_period(CalendarView::Month, first, cx)),
+        )
         .gap_1()
         .p_3()
         .border(hairline)
         .border_color(border)
         .rounded(px(SURFACE_RADIUS))
         .child(
-            h_flex().child(
-                button(("year-month", first.month()))
-                    .text()
-                    .small()
-                    .label(first.format("%B").to_string())
-                    .when(current, |name| {
-                        name.text_color(cx.theme().primary).font_semibold()
-                    })
-                    .on_click(cx.listener(move |view, _, _, cx| view.open_month(first, cx))),
-            ),
+            div()
+                .px_1()
+                .text_sm()
+                .font_medium()
+                .when(current, |name| {
+                    name.text_color(cx.theme().primary).font_semibold()
+                })
+                .child(first.format("%B").to_string()),
         )
         .child(h_flex().children(columns))
         .into_any_element()
