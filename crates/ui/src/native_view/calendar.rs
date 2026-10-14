@@ -167,10 +167,10 @@ impl NativeView {
         cx.notify();
     }
 
-    /// Opens Month view on the month starting at `first`.
-    fn open_month(&mut self, first: NaiveDate, cx: &mut Context<Self>) {
-        self.calendar.view = CalendarView::Month;
-        self.calendar.focused = first;
+    /// Opens `view` on the Period containing `date`.
+    fn open_period(&mut self, view: CalendarView, date: NaiveDate, cx: &mut Context<Self>) {
+        self.calendar.view = view;
+        self.calendar.focused = date;
         self.refresh_events(false, cx);
         cx.notify();
     }
