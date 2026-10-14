@@ -6,13 +6,14 @@ mod grids;
 mod period;
 
 use super::NativeView;
+use super::account_dot::tint;
 use super::controls::{app_icon, button};
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
 use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    AnyElement, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
     ScrollHandle, Styled, Task, Window, div, point, px,
 };
 use period::CalendarView;
@@ -251,8 +252,12 @@ impl NativeView {
         // One device pixel, matching the sidebar's hairline.
         let hairline = px(1.0 / window.scale_factor());
         let today = today();
-        let shown =
-            event_views::shown(&self.events.events, self.calendar_sync.read(cx).calendars());
+        let app: &App = cx;
+        let shown = event_views::shown(
+            &self.events.events,
+            self.calendar_sync.read(app).calendars(),
+            |account| tint(self.settings.account_color(account), app),
+        );
         match view {
             CalendarView::Week => grids::week(
                 focused,

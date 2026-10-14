@@ -2,12 +2,12 @@
 //! opened at the pointer above a backdrop that swallows clicks outside it.
 //!
 //! GPUI Kit's `PopupMenu` fixes its row height, separators, and corners and cannot animate in,
-//! so Crumble draws its own. One `Menu` entity holds a menu and its open submenu, with a single
-//! focus handle for the keyboard.
+//! so Crumble draws its own. One `Menu` entity holds a menu, its open submenu, and the panel one
+//! of the submenu's rows can open beside it, with a single focus handle for the keyboard.
 
 mod render;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -22,6 +22,7 @@ use gpui_kit::{
 pub(super) const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(150);
 
 type Handler = Rc<dyn Fn(&mut Window, &mut App)>;
+type Content = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// One row of a menu, or a separator.
 pub(super) struct MenuItem {
@@ -45,6 +46,12 @@ enum Kind {
     Action(Option<Handler>),
     /// ponytail: one level deep; rows of a submenu that are submenus themselves do nothing.
     Submenu(Vec<MenuItem>),
+    /// Any content, such as a color picker, in a panel beside the row: the menu's third level.
+    /// Only a submenu's rows open one.
+    Panel {
+        content: Content,
+        focus: FocusHandle,
+    },
 }
 
 impl MenuItem {
@@ -103,6 +110,20 @@ impl MenuItem {
         self
     }
 
+    /// Opens `content` in a panel beside the row, as a third level; only a submenu's row can.
+    /// Opening it from the keyboard focuses `focus`, which should be inside `content`.
+    pub(super) fn panel(
+        mut self,
+        focus: FocusHandle,
+        content: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.kind = Kind::Panel {
+            content: Rc::new(content),
+            focus,
+        };
+        self
+    }
+
     /// Whether the pointer and the keyboard can highlight the row.
     fn selectable(&self) -> bool {
         !self.disabled && !matches!(self.kind, Kind::Separator)
@@ -113,6 +134,10 @@ impl MenuItem {
             Kind::Submenu(items) => Some(items),
             _ => None,
         }
+    }
+
+    fn opens_panel(&self) -> bool {
+        matches!(self.kind, Kind::Panel { .. })
     }
 }
 
@@ -149,6 +174,10 @@ pub(super) struct Menu {
     row_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
     /// Closes the submenu once the pointer has stayed off its row for `SUBMENU_CLOSE_DELAY`.
     closing_submenu: Option<Task<()>>,
+    /// Where the row whose panel is open was last drawn; the panel opens beside it.
+    panel_row: Rc<Cell<Bounds<Pixels>>>,
+    /// Closes the panel once the pointer has stayed off its row for `SUBMENU_CLOSE_DELAY`.
+    closing_panel: Option<Task<()>>,
     closed: bool,
     _subscriptions: [Subscription; 3],
 }
@@ -158,6 +187,8 @@ struct Submenu {
     parent: usize,
     /// The highlighted submenu row; while one is, the arrow keys move through the submenu.
     highlight: Option<usize>,
+    /// The submenu row whose panel is open.
+    panel: Option<usize>,
 }
 
 impl EventEmitter<DismissEvent> for Menu {}
@@ -174,9 +205,17 @@ impl Menu {
         // Tab moves focus elsewhere, a shortcut acts on the window under the menu, and a menu
         // does not outlive its app going to the background.
         let subscriptions = [
-            cx.on_focus_out(&focus, window, |menu, _, window, cx| menu.close(window, cx)),
+            cx.on_focus_out(&focus, window, |menu, _, window, cx| {
+                // Focus left with a panel that closed while it held focus; the menu takes it back.
+                if menu.fallback.contains_focused(window, cx) {
+                    menu.close(window, cx);
+                } else {
+                    window.focus(&menu.focus, cx);
+                }
+            }),
+            // Keys typed into a panel, such as a hex field's, run actions of their own.
             cx.observe_keystrokes(|menu, event, window, cx| {
-                if event.action.is_some() {
+                if event.action.is_some() && !menu.panel_focused(window, cx) {
                     menu.close(window, cx);
                 }
             }),
@@ -196,6 +235,8 @@ impl Menu {
             highlight: None,
             submenu: None,
             closing_submenu: None,
+            panel_row: Rc::new(Cell::new(Bounds::default())),
+            closing_panel: None,
             closed: false,
             _subscriptions: subscriptions,
         }
@@ -208,6 +249,7 @@ impl Menu {
         }
         self.closed = true;
         self.closing_submenu = None;
+        self.closing_panel = None;
         if self.focus.contains_focused(window, cx) {
             // What had focus may be gone, such as a Rename field that ended when the menu took
             // focus from it.
@@ -247,6 +289,15 @@ impl Menu {
                 }
             }
             Kind::Submenu(_) if sub.is_none() => self.open_submenu(ix, from_keyboard, cx),
+            Kind::Panel { focus, .. } => {
+                let focus = focus.clone();
+                if let Some(sub) = sub {
+                    self.open_panel(sub, cx);
+                    if from_keyboard {
+                        window.focus(&focus, cx);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -263,6 +314,7 @@ impl Menu {
             self.submenu = Some(Submenu {
                 parent: ix,
                 highlight: None,
+                panel: None,
             });
         }
         if from_keyboard
@@ -272,6 +324,42 @@ impl Menu {
             submenu.highlight = step(items, None, true);
         }
         cx.notify();
+    }
+
+    /// Opens the panel of submenu row `sub`.
+    fn open_panel(&mut self, sub: usize, cx: &mut Context<Self>) {
+        self.closing_submenu = None;
+        self.closing_panel = None;
+        if let Some(submenu) = self.submenu.as_mut() {
+            submenu.highlight = Some(sub);
+            submenu.panel = Some(sub);
+        }
+        cx.notify();
+    }
+
+    fn close_panel_later(&mut self, cx: &mut Context<Self>) {
+        let open = self
+            .submenu
+            .as_ref()
+            .is_some_and(|submenu| submenu.panel.is_some());
+        if !open || self.closing_panel.is_some() {
+            return;
+        }
+        self.closing_panel = Some(cx.spawn(async move |menu, cx| {
+            cx.background_executor().timer(SUBMENU_CLOSE_DELAY).await;
+            let _ = menu.update(cx, |menu, cx| {
+                if let Some(submenu) = menu.submenu.as_mut() {
+                    submenu.panel = None;
+                }
+                menu.closing_panel = None;
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Whether focus is in the open panel rather than on the menu itself.
+    fn panel_focused(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx) && !self.focus.is_focused(window)
     }
 
     fn close_submenu_later(&mut self, cx: &mut Context<Self>) {
@@ -311,21 +399,50 @@ impl Menu {
         cx.notify();
     }
 
-    /// The pointer entered the open submenu, or entered or left its row `sub`.
+    /// The pointer entered the open submenu, or entered or left its row `sub`. A row with a
+    /// panel opens it, and the others let an open panel close.
     fn hover_submenu(&mut self, sub: Option<usize>, hovered: bool, cx: &mut Context<Self>) {
-        let Some(submenu) = self.submenu.as_mut() else {
+        let Some(parent) = self.submenu.as_ref().map(|submenu| submenu.parent) else {
             return;
         };
         if hovered {
             self.closing_submenu = None;
-            self.highlight = Some(submenu.parent);
-            if sub.is_some() {
-                submenu.highlight = sub;
+            self.highlight = Some(parent);
+            if let Some(sub) = sub {
+                if self.opens_panel(parent, sub) {
+                    self.open_panel(sub, cx);
+                } else {
+                    self.close_panel_later(cx);
+                }
+                if let Some(submenu) = self.submenu.as_mut() {
+                    submenu.highlight = Some(sub);
+                }
             }
-        } else if sub.is_some() && submenu.highlight == sub {
+        } else if let Some(submenu) = self.submenu.as_mut()
+            && sub.is_some()
+            && submenu.highlight == sub
+            && submenu.panel != sub
+        {
             submenu.highlight = None;
         }
         cx.notify();
+    }
+
+    /// Whether row `sub` of row `parent`'s submenu opens a panel.
+    fn opens_panel(&self, parent: usize, sub: usize) -> bool {
+        self.items[parent]
+            .submenu_items()
+            .and_then(|items| items.get(sub))
+            .is_some_and(MenuItem::opens_panel)
+    }
+
+    /// The pointer entered the open panel, which keeps it and the submenu open.
+    fn hover_panel(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            self.closing_submenu = None;
+            self.closing_panel = None;
+            cx.notify();
+        }
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -336,12 +453,30 @@ impl Menu {
             .submenu
             .as_ref()
             .and_then(|submenu| submenu.highlight.map(|sub| (submenu.parent, sub)));
+        let panel_open = self
+            .submenu
+            .as_ref()
+            .is_some_and(|submenu| submenu.panel.is_some());
         match (event.keystroke.key.as_str(), in_submenu) {
+            // From the menu or from inside the panel, which lets only Escape through.
+            ("left" | "escape", _) if panel_open => {
+                if let Some(submenu) = self.submenu.as_mut() {
+                    submenu.panel = None;
+                }
+                self.closing_panel = None;
+                window.focus(&self.focus, cx);
+            }
+            ("right", Some((parent, sub))) => {
+                if self.opens_panel(parent, sub) {
+                    self.choose(parent, Some(sub), true, window, cx);
+                }
+            }
             (key @ ("up" | "down"), Some((parent, sub))) => {
                 if let (Some(submenu), Some(items)) =
                     (self.submenu.as_mut(), self.items[parent].submenu_items())
                 {
                     submenu.highlight = step(items, Some(sub), key == "down");
+                    submenu.panel = None;
                 }
             }
             (key @ ("up" | "down"), None) => {
@@ -414,6 +549,11 @@ impl OpenMenu {
             menu,
             _dismiss: dismiss,
         }
+    }
+
+    /// Closes the menu and hands focus back, as choosing a row does.
+    pub(super) fn close(&self, window: &mut Window, cx: &mut App) {
+        self.menu.update(cx, |menu, cx| menu.close(window, cx));
     }
 
     /// Whether the menu was opened from the element `owner`.

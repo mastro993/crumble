@@ -6,8 +6,9 @@ use std::time::Instant;
 
 use super::NativeView;
 use super::account_alias::{Rename, account_name};
-use super::account_dot::{dot, name};
+use super::account_dot::{dot, name, ring, srgb, tint};
 use super::controls::app_icon;
+use super::custom_color::CustomColor;
 use super::menu::{MenuItem, OpenMenu};
 use super::route::Route;
 use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
@@ -247,6 +248,7 @@ impl NativeView {
         let owner: SharedString = format!("account-{}", account.id).into();
         let menu_open = self.menu.as_ref().is_some_and(|menu| menu.is_for(&owner));
         let (index, len) = (placement.index, placement.len);
+        let recolored = account.id.clone();
         let id = account.id.clone();
         // A drag never ends in a click.
         activate(
@@ -277,7 +279,22 @@ impl NativeView {
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-                let items = account_menu(hidden, color, index, len, act.clone());
+                let id = recolored.clone();
+                let custom = CustomColor::new(
+                    tint(color, cx),
+                    window,
+                    cx,
+                    move |view: &mut NativeView, picked, done, window, cx| {
+                        if let Some(picked) = picked {
+                            let color = AccountColor::Custom(srgb(picked));
+                            view.set_account_color(&id, color, cx);
+                        }
+                        if done && let Some(menu) = view.menu.as_ref() {
+                            menu.close(window, cx);
+                        }
+                    },
+                );
+                let items = account_menu(hidden, color, custom, index, len, act.clone());
                 view.menu = Some(OpenMenu::new(
                     owner.clone(),
                     items,
@@ -419,10 +436,12 @@ fn hint(
     )
 }
 
-/// An Account row's context menu, for the row at `index` of `len`; each choice runs `act`.
+/// An Account row's context menu, for the row at `index` of `len`; each choice runs `act`, and
+/// the Color submenu's Custom row opens `custom` in a panel.
 fn account_menu(
     hidden: bool,
     current: AccountColor,
+    custom: CustomColor,
     index: usize,
     len: usize,
     act: impl Fn(AccountAction, &mut Window, &mut App) + 'static,
@@ -437,8 +456,9 @@ fn account_menu(
     } else {
         ("Hide", "view-off")
     };
-    // Each color leads with its dot, so the current one is checked at the trailing edge.
-    let colors = AccountColor::ALL
+    // Each color leads with its dot, so the current one is checked at the trailing edge. Custom
+    // leads with the custom color once there is one.
+    let mut colors: Vec<MenuItem> = AccountColor::PALETTE
         .into_iter()
         .map(|color| {
             MenuItem::new(format!("color-{}", name(color).to_lowercase()), name(color))
@@ -447,6 +467,23 @@ fn account_menu(
                 .on_select(on(AccountAction::Recolor(color)))
         })
         .collect();
+    let is_custom = matches!(current, AccountColor::Custom(_));
+    colors.extend([
+        MenuItem::separator(),
+        MenuItem::new("color-custom", "Custom")
+            .leading(move |cx| {
+                if is_custom {
+                    dot(current, cx)
+                } else {
+                    ring(cx)
+                }
+                .into_any_element()
+            })
+            .checked(is_custom)
+            .panel(custom.focus().clone(), move |window, cx| {
+                custom.panel(window, cx)
+            }),
+    ]);
     vec![
         MenuItem::new("toggle-hidden", label)
             .icon(icon)
@@ -471,9 +508,14 @@ fn account_menu(
 
 #[cfg(test)]
 mod tests {
+    use super::super::account_dot::{srgb, tint};
+    use super::super::custom_color::CustomColor;
     use super::super::menu::SUBMENU_CLOSE_DELAY;
+    use super::AccountAction::Recolor;
     use super::{Access, AccountAction, AccountColor, OpenMenu, Section, account_menu, section};
+    use crumble_theme::menu::PADDING;
     use crumble_theme::menu::SUBMENU_OVERLAP;
+    use gpui_kit::component::ColorName;
     use gpui_kit::test::{TestSupportExt, TestWindowExt};
     use gpui_kit::{
         AnyWindowHandle, AppContext, Bounds, Context, FocusHandle, FrameObserver,
@@ -514,6 +556,8 @@ mod tests {
     struct Sidebar {
         focus: FocusHandle,
         menu: Option<OpenMenu>,
+        /// The row's color, which its menu checks.
+        color: AccountColor,
         actions: Rc<RefCell<Vec<AccountAction>>>,
         row_clicks: usize,
         /// Runs of a window shortcut.
@@ -523,7 +567,7 @@ mod tests {
 
     impl Render for Sidebar {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let actions = self.actions.clone();
+            let (actions, color) = (self.actions.clone(), self.color);
             div()
                 .id("sidebar")
                 .test_support()
@@ -543,9 +587,25 @@ mod tests {
                             MouseButton::Right,
                             cx.listener(move |sidebar, event: &MouseDownEvent, window, cx| {
                                 let actions = actions.clone();
+                                // Picks as the sidebar's own Custom panel does.
+                                let custom = CustomColor::new(
+                                    tint(color, cx),
+                                    window,
+                                    cx,
+                                    |sidebar: &mut Sidebar, picked, done, window, cx| {
+                                        if let Some(picked) = picked {
+                                            let color = AccountColor::Custom(srgb(picked));
+                                            sidebar.actions.borrow_mut().push(Recolor(color));
+                                        }
+                                        if done && let Some(menu) = sidebar.menu.as_ref() {
+                                            menu.close(window, cx);
+                                        }
+                                    },
+                                );
                                 let items = account_menu(
                                     false,
-                                    AccountColor::Blue,
+                                    color,
+                                    custom,
                                     0,
                                     2,
                                     move |action, _, _| actions.borrow_mut().push(action),
@@ -600,7 +660,7 @@ mod tests {
                         WindowOptions {
                             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                                 Default::default(),
-                                size(px(600.), px(400.)),
+                                size(px(900.), px(700.)),
                             ))),
                             ..Default::default()
                         },
@@ -618,6 +678,7 @@ mod tests {
                                 Sidebar {
                                     focus,
                                     menu: None,
+                                    color: AccountColor::Blue,
                                     actions: Rc::default(),
                                     row_clicks: 0,
                                     shortcuts: 0,
@@ -753,6 +814,145 @@ mod tests {
             harness.actions(cx),
             [AccountAction::Recolor(AccountColor::Red)]
         );
+    }
+
+    #[gpui_kit::test]
+    fn custom_opens_a_panel_beside_the_color_submenu_and_a_shade_picks_it(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-color-custom", cx));
+        harness.check(cx, |window| {
+            let custom = window.find("menu-item-color-custom");
+            assert_eq!(custom.checked(), Some(false));
+            assert_eq!(custom.expanded(), Some(true));
+            // It opens to the right of the submenu, overlapping its edge, level with its row.
+            let (submenu, panel) = (
+                window.find("menu-submenu").bounds(),
+                window.find("menu-panel").bounds(),
+            );
+            assert_eq!(panel.left(), submenu.right() - px(SUBMENU_OVERLAP));
+            assert_eq!(panel.top() + px(PADDING), custom.bounds().top());
+        });
+        // Red's row, the second, at its sixth shade, 500: swatches are 20 pt apart by 4.
+        let red = ColorName::Red.scale(500);
+        let swatch = |index: f32| px(PADDING + index * 24. + 10.);
+        harness.step(cx, |window, cx| {
+            window.click_at("menu-panel", point(swatch(5.), swatch(1.)), cx)
+        });
+
+        harness.assert_closed(cx);
+        assert_eq!(
+            harness.actions(cx),
+            [Recolor(AccountColor::Custom(srgb(red)))]
+        );
+
+        // Once picked, Custom is the checked color.
+        let custom = AccountColor::Custom(0x3366ff);
+        cx.update(|cx| {
+            harness
+                .sidebar
+                .update(cx, |sidebar, _| sidebar.color = custom)
+        });
+        harness.open(cx);
+        harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+        harness.check(cx, |window| {
+            assert_eq!(window.find("menu-item-color-custom").checked(), Some(true));
+            assert_eq!(window.find("menu-item-color-blue").checked(), Some(false));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_keyboard_opens_the_panel_and_a_hex_value_picks_it(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        // Hide, Rename, Color, into the submenu on Gray, up to Custom, the last row, and into
+        // its panel, which focuses the hex field.
+        for key in ["down", "down", "down", "right", "up", "right"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_some())
+        });
+        // The field's own keys stay in it, and editing does not close the menu.
+        for key in ["cmd-a", "backspace", "left", "up"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.step(cx, |window, cx| window.input("#3366FF", cx));
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_some())
+        });
+        harness.step(cx, |window, cx| window.press("enter", cx));
+
+        harness.assert_closed(cx);
+        assert_eq!(
+            harness.actions(cx),
+            [Recolor(AccountColor::Custom(0x3366ff))]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn escape_closes_the_panel_then_the_submenu_then_the_menu(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        for key in ["down", "down", "down", "right", "up", "right"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.step(cx, |window, cx| window.press("escape", cx));
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_none());
+            assert!(window.try_find("menu-submenu").is_some());
+            assert_eq!(window.find("menu").focused(), Some(true));
+        });
+        harness.step(cx, |window, cx| window.press("escape", cx));
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-submenu").is_none());
+            assert!(window.try_find("menu").is_some());
+        });
+        harness.step(cx, |window, cx| window.press("escape", cx));
+        harness.assert_closed(cx);
+        assert!(harness.actions(cx).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn the_menu_keeps_focus_when_the_panel_closes_while_its_field_has_it(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        for key in ["down", "down", "down", "right", "up", "right"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.step(cx, |window, cx| window.hover("menu-item-color-pink", cx));
+        harness.wait(cx);
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_none());
+            assert_eq!(window.find("menu").focused(), Some(true));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_panel_closes_a_moment_after_the_pointer_leaves_its_row(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-color-custom", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-color-pink", cx));
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_some())
+        });
+        harness.wait(cx);
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_none());
+            assert!(window.try_find("menu-submenu").is_some());
+        });
+
+        // Reaching the panel in time keeps it open.
+        harness.step(cx, |window, cx| window.hover("menu-item-color-custom", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-color-pink", cx));
+        harness.step(cx, |window, cx| window.hover("menu-panel", cx));
+        harness.wait(cx);
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-panel").is_some())
+        });
     }
 
     #[gpui_kit::test]

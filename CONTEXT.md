@@ -70,6 +70,7 @@ The sidebar section that lists every Account that is not Disabled. Its title say
 - Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until Crumble quits
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
+- An **Event** is drawn in its **Account**'s color, whatever its **Calendar**'s color is in macOS
 
 ## Example dialogue
 
