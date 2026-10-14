@@ -24,7 +24,9 @@ const ALL_DAY_LINES: usize = 2;
 /// The shortest a Week view block is drawn, in minutes, so short Events stay clickable.
 const MIN_BLOCK_MINUTES: f32 = 22.0;
 /// Blocks shorter than this, in points, show their title on one line and leave out the time.
-const TWO_LINE_HEIGHT: f32 = 46.0;
+const TWO_LINE_HEIGHT: f32 = 36.0;
+/// Line height inside a Week view block, tighter than the theme's so two lines fit in 45 minutes.
+const BLOCK_LINE_HEIGHT: f32 = 15.0;
 const POPOVER_WIDTH: f32 = 280.0;
 
 /// An Event with what drawing it needs from its Calendar.
@@ -102,6 +104,7 @@ impl RenderOnce for EventChip {
         match self.kind {
             ChipKind::Block { one_line } => chip
                 .size_full()
+                .line_height(px(BLOCK_LINE_HEIGHT))
                 .px_1()
                 .rounded(px(4.0))
                 .border_l(px(3.0))
