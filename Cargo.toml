@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/eventkit", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -15,6 +15,7 @@ anyhow = "1.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 dirs = "6.0"
 gpui-kit = "=0.7.0"
+crumble-eventkit = { path = "crates/eventkit" }
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
 serde = { version = "1.0", features = ["derive"] }
