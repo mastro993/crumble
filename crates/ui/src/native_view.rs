@@ -25,7 +25,7 @@ use gpui_kit::{
 use route::{History, Route};
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -39,6 +39,8 @@ pub struct NativeView {
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
     settings: Settings,
+    /// EventKit identifiers of the Hidden Accounts; never saved, so they show again next launch.
+    hidden_accounts: BTreeSet<String>,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: CalendarEvents,
@@ -81,6 +83,7 @@ impl NativeView {
             sidebar_motion: 0,
             sidebar_closing: false,
             settings,
+            hidden_accounts: BTreeSet::new(),
             first_day_select,
             calendar: CalendarPage::default(),
             events: CalendarEvents::default(),

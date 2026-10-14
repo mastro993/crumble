@@ -8,12 +8,13 @@ use chrono::Weekday;
 use crumble_eventkit::{Access, Account};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath, Sizable, StyledExt, h_flex, v_flex,
 };
 use gpui_kit::{
     AppContext, Context, Div, ElementId, Entity, IntoElement, ParentElement, Styled, Window, div,
-    prelude::FluentBuilder, px, rgb,
+    px, rgb,
 };
 
 const WEEKDAYS: [&str; 7] = [
@@ -89,8 +90,8 @@ impl NativeView {
             .children(self.render_calendar_settings(cx))
     }
 
-    /// Each Account and its Calendars, with a checkbox per Calendar. A Disabled Account greys
-    /// its Calendars out but keeps their checkboxes as they were.
+    /// Each Account with a switch, and its Calendars with a checkbox each. A Disabled Account
+    /// greys its Calendars out but keeps their checkboxes as they were.
     fn render_calendar_settings(&self, cx: &Context<Self>) -> Option<Div> {
         let sync = self.calendar_sync.read(cx);
         let accounts = sync.accounts();
@@ -112,7 +113,8 @@ impl NativeView {
     }
 
     fn account_settings(&self, account: &Account, cx: &Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
+        let label = account_label(account).to_owned();
+        let account_id = account.id.clone();
         let disabled = self.settings.disabled_accounts.contains(&account.id);
         let calendars = self
             .calendar_sync
@@ -151,20 +153,21 @@ impl NativeView {
                     .child(dot(self.settings.account_color(&account.id), cx))
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
                             .truncate()
                             .font_medium()
-                            .child(account_label(account).to_owned()),
+                            .child(label.clone()),
                     )
-                    .when(disabled, |header| {
-                        header.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_xs()
-                                .text_color(muted)
-                                .child("Account disabled"),
-                        )
-                    }),
+                    .child(
+                        Switch::new(ElementId::Name(format!("account-{}", account.id).into()))
+                            .checked(!disabled)
+                            .small()
+                            .accessibility_label(label)
+                            .on_click(cx.listener(move |view, _: &bool, _, cx| {
+                                view.toggle_account(&account_id, cx)
+                            })),
+                    ),
             )
             .child(v_flex().gap_2().pl_6().children(calendars))
     }

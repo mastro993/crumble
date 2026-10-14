@@ -46,11 +46,15 @@ One entry synced from a Calendar, whether or not it has other attendees. Crumble
 _Avoid_: meeting, appointment
 
 **Disabled**:
-Said of an Account or a Calendar whose Events Crumble hides. It is Crumble's own choice, kept across restarts, and changes nothing in macOS.
-_Avoid_: hidden, muted, removed
+Said of an Account or a Calendar that Crumble leaves out entirely. It is chosen in Settings, kept across restarts, and changes nothing in macOS.
+_Avoid_: muted, removed, off
+
+**Hidden**:
+Said of an Account whose Events Crumble leaves off the Calendar page until Crumble quits. It is chosen in the Calendars section and changes nothing in macOS.
+_Avoid_: muted, unchecked, toggled off
 
 **Calendars section**:
-The sidebar section that lists every Account. Its title says "Calendars" even though each row is an Account.
+The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
 
 ## Relationships
 
@@ -58,8 +62,10 @@ The sidebar section that lists every Account. Its title says "Calendars" even th
 - **First day of week** decides where a week **Period** begins and ends
 - **Weekend** stays Saturday and Sunday whatever the **First day of week** is
 - An **Account** has one or more **Calendars**; a **Calendar** has many **Events**
-- The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is not **Disabled**, inside the visible **Period**
-- Disabling an **Account** hides all its **Calendars**' **Events** but keeps each **Calendar**'s own setting
+- The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is neither **Disabled** nor **Hidden**, inside the visible **Period**
+- Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
+- **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until Crumble quits
+- Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
 
 ## Example dialogue
 
@@ -71,4 +77,5 @@ The sidebar section that lists every Account. Its title says "Calendars" even th
 - "view" meant both a GPUI view and Week/Month/Year. Resolved: the latter is always a **Calendar view**.
 - "calendar" meant both the page and a synced list of Events. Resolved: the page is the **Calendar page** and a synced list is a **Calendar**.
 - "meeting" meant only Events with attendees. Resolved: every synced entry is an **Event**.
+- "hide" meant both the permanent Settings choice and the sidebar's session-only one. Resolved: the permanent one is **Disabled**, the session-only one is **Hidden**.
 - The **Calendars section** lists **Accounts**, not **Calendars**. Resolved: keep the "Calendars" title for users; in code and conversation its rows are **Accounts**.

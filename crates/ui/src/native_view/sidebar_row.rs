@@ -73,7 +73,7 @@ pub(super) fn row_with(
 pub(super) fn activate(
     row: Stateful<Div>,
     label: impl Into<SharedString>,
-    cx: &mut Context<NativeView>,
+    cx: &Context<NativeView>,
     action: impl Fn(&mut NativeView, &mut Window, &mut Context<NativeView>) + 'static,
 ) -> Stateful<Div> {
     let action = Rc::new(action);

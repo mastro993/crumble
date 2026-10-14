@@ -7,6 +7,7 @@ use std::time::Instant;
 use super::NativeView;
 use super::account_dot::{dot, name};
 use super::controls::app_icon;
+use super::route::Route;
 use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
 use super::sidebar_row::{activate, row, row_with};
 use crate::settings::{self, AccountColor, SidebarSection};
@@ -25,8 +26,8 @@ const PRIVACY_SETTINGS: &str =
 const INTERNET_ACCOUNTS: &str =
     "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension";
 
-/// A Disabled Account's row is dimmed to this opacity.
-const DISABLED_OPACITY: f32 = 0.5;
+/// A Hidden Account's row is dimmed to this opacity.
+const HIDDEN_OPACITY: f32 = 0.5;
 /// Muted copy and menu icons sit a step below their label, as in SkillBinder.
 const MUTED_OPACITY: f32 = 0.65;
 
@@ -41,16 +42,20 @@ enum Section {
     AllowAccess,
     /// A hint that opens Internet Accounts settings.
     AddAccounts,
-    /// One row per Account; none until the first read finishes.
+    /// A hint that opens Settings, where every Account is Disabled.
+    AllDisabled,
+    /// One row per Account that is not Disabled; none until the first read finishes.
     Accounts,
 }
 
-fn section(access: Access, loaded: bool, accounts: usize) -> Section {
+/// `listed` counts the `accounts` that are not Disabled.
+fn section(access: Access, loaded: bool, accounts: usize, listed: usize) -> Section {
     match access {
         Access::Unsupported => Section::Hidden,
         Access::NotDetermined => Section::Connect,
         Access::Denied => Section::AllowAccess,
         Access::Granted if loaded && accounts == 0 => Section::AddAccounts,
+        Access::Granted if listed == 0 && accounts > 0 => Section::AllDisabled,
         Access::Granted => Section::Accounts,
     }
 }
@@ -58,8 +63,8 @@ fn section(access: Access, loaded: bool, accounts: usize) -> Section {
 /// What an Account row's context menu asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AccountAction {
-    /// Disable an enabled Account, or Enable a Disabled one.
-    ToggleDisabled,
+    /// Hide a shown Account, or Show a Hidden one.
+    ToggleHidden,
     /// Give the dot this color.
     Recolor(AccountColor),
     /// Move the row to this index.
@@ -82,64 +87,85 @@ impl NativeView {
             window.request_animation_frame();
         }
         let sync = self.calendar_sync.read(cx);
-        let rows: Vec<AnyElement> =
-            match section(sync.access(), sync.loaded(), sync.accounts().len()) {
-                Section::Hidden => return None,
-                Section::Connect => vec![
-                    activate(
-                        row(
-                            "connect-calendars",
-                            app_icon("calendar"),
-                            "Connect calendars",
-                            false,
-                            cx,
-                        ),
+        let accounts = self.listed_accounts(sync.accounts());
+        let rows: Vec<AnyElement> = match section(
+            sync.access(),
+            sync.loaded(),
+            sync.accounts().len(),
+            accounts.len(),
+        ) {
+            Section::Hidden => return None,
+            Section::Connect => vec![
+                activate(
+                    row(
+                        "connect-calendars",
+                        app_icon("calendar"),
                         "Connect calendars",
+                        false,
                         cx,
-                        |view, _, cx| view.calendar_sync.read(cx).request_access(),
-                    )
-                    .into_any_element(),
-                ],
-                Section::AllowAccess => vec![
-                    activate(
-                        row(
-                            "allow-calendar-access",
-                            app_icon("calendar"),
-                            "Allow calendar access",
-                            false,
-                            cx,
-                        ),
+                    ),
+                    "Connect calendars",
+                    cx,
+                    |view, _, cx| view.calendar_sync.read(cx).request_access(),
+                )
+                .into_any_element(),
+            ],
+            Section::AllowAccess => vec![
+                activate(
+                    row(
+                        "allow-calendar-access",
+                        app_icon("calendar"),
                         "Allow calendar access",
+                        false,
                         cx,
-                        |_, _, cx| cx.open_url(PRIVACY_SETTINGS),
-                    )
-                    .into_any_element(),
-                ],
-                Section::AddAccounts => vec![self.add_accounts_hint(cx).into_any_element()],
-                Section::Accounts => {
-                    let accounts = self.settings.ordered_accounts(sync.accounts());
-                    let stored: Vec<String> =
-                        accounts.iter().map(|account| account.id.clone()).collect();
-                    let (order, floating) = self
-                        .account_reorder
-                        .displayed(&stored, cx.has_active_drag());
-                    let now = Instant::now();
-                    order
-                        .iter()
-                        .filter_map(|id| accounts.iter().find(|account| &account.id == id))
-                        .enumerate()
-                        .map(|(index, account)| {
-                            let placement = Placement {
-                                index,
-                                len: order.len(),
-                                offset: self.account_reorder.offset(&account.id, now),
-                                floating: floating.as_ref() == Some(&account.id),
-                            };
-                            self.account_row(account, placement, cx)
-                        })
-                        .collect()
-                }
-            };
+                    ),
+                    "Allow calendar access",
+                    cx,
+                    |_, _, cx| cx.open_url(PRIVACY_SETTINGS),
+                )
+                .into_any_element(),
+            ],
+            Section::AddAccounts => vec![
+                hint(
+                    "add-accounts",
+                    "Add accounts in System Settings › Internet Accounts",
+                    cx,
+                    |_, _, cx| cx.open_url(INTERNET_ACCOUNTS),
+                )
+                .into_any_element(),
+            ],
+            Section::AllDisabled => vec![
+                hint(
+                    "all-accounts-disabled",
+                    "All accounts disabled · Open Settings",
+                    cx,
+                    |view, _, cx| view.navigate(Route::Settings, cx),
+                )
+                .into_any_element(),
+            ],
+            Section::Accounts => {
+                let stored: Vec<String> =
+                    accounts.iter().map(|account| account.id.clone()).collect();
+                let (order, floating) = self
+                    .account_reorder
+                    .displayed(&stored, cx.has_active_drag());
+                let now = Instant::now();
+                order
+                    .iter()
+                    .filter_map(|id| accounts.iter().find(|account| &account.id == id))
+                    .enumerate()
+                    .map(|(index, account)| {
+                        let placement = Placement {
+                            index,
+                            len: order.len(),
+                            offset: self.account_reorder.offset(&account.id, now),
+                            floating: floating.as_ref() == Some(&account.id),
+                        };
+                        self.account_row(account, placement, cx)
+                    })
+                    .collect()
+            }
+        };
         let items = rows.len().max(1);
         Some(
             div()
@@ -178,58 +204,49 @@ impl NativeView {
         )
     }
 
-    fn add_accounts_hint(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        const HINT: &str = "Add accounts in System Settings › Internet Accounts";
-        let theme = cx.theme();
-        let (muted, hover) = (
-            theme.muted_foreground.opacity(MUTED_OPACITY),
-            theme.foreground,
-        );
-        activate(
-            div()
-                .id("add-accounts")
-                .px(px(ROW_PADDING))
-                .py_1()
-                .cursor_pointer()
-                .text_size(px(DETAIL_SIZE))
-                .text_color(muted)
-                .hover(move |style| style.text_color(hover))
-                .child(HINT),
-            HINT,
-            cx,
-            |_, _, cx| cx.open_url(INTERNET_ACCOUNTS),
-        )
+    /// `accounts` that are not Disabled, in the user's order.
+    fn listed_accounts<'a>(&self, accounts: &'a [Account]) -> Vec<&'a Account> {
+        let mut listed = self.settings.ordered_accounts(accounts);
+        listed.retain(|account| !self.settings.disabled_accounts.contains(&account.id));
+        listed
     }
 
-    /// Clicking the row does nothing; dragging it reorders the Accounts, and right-clicking it
-    /// opens a menu that Disables or Enables the Account, picks its dot color, and moves it.
+    /// Clicking the row Hides or Shows the Account; dragging it reorders the Accounts, and
+    /// right-clicking it opens a menu that Hides or Shows the Account, picks its dot color, and
+    /// moves it.
     fn account_row(
         &self,
         account: &Account,
         placement: Placement,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let disabled = self.settings.disabled_accounts.contains(&account.id);
+        let hidden = self.hidden_accounts.contains(&account.id);
         let color = self.settings.account_color(&account.id);
         let label: SharedString = account_label(account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
         let act = move |action, cx: &mut App| {
             let _ = view.update(cx, |view, cx| match action {
-                AccountAction::ToggleDisabled => view.toggle_account(&id, cx),
+                AccountAction::ToggleHidden => view.toggle_hidden(&id, cx),
                 AccountAction::Recolor(color) => view.set_account_color(&id, color, cx),
                 AccountAction::MoveTo(index) => view.move_account(&id, index, cx),
             });
         };
-        let menu = account_menu(disabled, color, placement.index, placement.len, act);
-        row_with(
-            format!("account-{}", account.id),
-            dot(color, cx),
+        let menu = account_menu(hidden, color, placement.index, placement.len, act);
+        let id = account.id.clone();
+        activate(
+            row_with(
+                format!("account-{}", account.id),
+                dot(color, cx),
+                label.clone(),
+                false,
+                cx,
+            ),
             label.clone(),
-            false,
             cx,
+            // A drag never ends in a click, so reordering leaves the row as it was.
+            move |view, _, cx| view.toggle_hidden(&id, cx),
         )
-        .cursor_default()
-        .when(disabled, |row| row.opacity(DISABLED_OPACITY))
+        .when(hidden, |row| row.opacity(HIDDEN_OPACITY))
         .relative()
         .top(px(placement.offset))
         // The floating preview stands in for the dragged row.
@@ -251,10 +268,9 @@ impl NativeView {
         .into_any_element()
     }
 
-    /// The Account identifiers in their saved order.
+    /// The listed Account identifiers in their saved order.
     fn account_ids(&self, cx: &App) -> Vec<String> {
-        self.settings
-            .ordered_accounts(self.calendar_sync.read(cx).accounts())
+        self.listed_accounts(self.calendar_sync.read(cx).accounts())
             .into_iter()
             .map(|account| account.id.clone())
             .collect()
@@ -276,7 +292,7 @@ impl NativeView {
         let stored = self.account_ids(cx);
         let (released, animate) = (cx.has_active_drag(), !cx.reduce_motion());
         if let Some(order) = self.account_reorder.finish(&stored, released, animate) {
-            self.save_account_order(order);
+            self.save_account_order(order, cx);
         }
         cx.notify();
     }
@@ -289,13 +305,14 @@ impl NativeView {
             .account_reorder
             .move_to(&stored, &id.to_owned(), target, animate)
         {
-            self.save_account_order(order);
+            self.save_account_order(order, cx);
         }
         cx.notify();
     }
 
-    fn save_account_order(&mut self, order: Vec<String>) {
-        self.settings.account_order = order;
+    fn save_account_order(&mut self, order: Vec<String>, cx: &App) {
+        let accounts = self.calendar_sync.read(cx).accounts();
+        self.settings.set_listed_order(accounts, order);
         self.settings.save();
     }
 
@@ -308,6 +325,12 @@ impl NativeView {
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
         settings::toggle(&mut self.settings.disabled_accounts, id);
         self.settings.save();
+        self.refresh_events(false, cx);
+        cx.notify();
+    }
+
+    fn toggle_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
+        settings::toggle(&mut self.hidden_accounts, id);
         self.refresh_events(false, cx);
         cx.notify();
     }
@@ -330,9 +353,37 @@ struct Placement {
     floating: bool,
 }
 
+/// A muted line of copy that runs `action` when clicked.
+fn hint(
+    id: &'static str,
+    text: &'static str,
+    cx: &Context<NativeView>,
+    action: impl Fn(&mut NativeView, &mut Window, &mut Context<NativeView>) + 'static,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (muted, hover) = (
+        theme.muted_foreground.opacity(MUTED_OPACITY),
+        theme.foreground,
+    );
+    activate(
+        div()
+            .id(id)
+            .px(px(ROW_PADDING))
+            .py_1()
+            .cursor_pointer()
+            .text_size(px(DETAIL_SIZE))
+            .text_color(muted)
+            .hover(move |style| style.text_color(hover))
+            .child(text),
+        text,
+        cx,
+        action,
+    )
+}
+
 /// An Account row's context menu, for the row at `index` of `len`; each choice runs `act`.
 fn account_menu(
-    disabled: bool,
+    hidden: bool,
     current: AccountColor,
     index: usize,
     len: usize,
@@ -344,10 +395,10 @@ fn account_menu(
             let act = act.clone();
             move |_: &_, _: &mut Window, cx: &mut App| act(action, cx)
         };
-        let (label, icon) = if disabled {
-            ("Enable", "view")
+        let (label, icon) = if hidden {
+            ("Show", "view")
         } else {
-            ("Disable", "view-off")
+            ("Hide", "view-off")
         };
         let plain = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
         let menu_icon = |name| app_icon(name).text_color(plain).mr(px(ICON_GAP - 4.0));
@@ -355,7 +406,7 @@ fn account_menu(
         menu.item(
             PopupMenuItem::new(label)
                 .icon(menu_icon(icon))
-                .on_click(on(AccountAction::ToggleDisabled)),
+                .on_click(on(AccountAction::ToggleHidden)),
         )
         .submenu_with_icon(
             Some(menu_icon("paint-board")),
@@ -411,13 +462,17 @@ mod tests {
 
     #[test]
     fn each_access_state_picks_its_rows() {
-        assert_eq!(section(Access::Unsupported, false, 0), Section::Hidden);
-        assert_eq!(section(Access::NotDetermined, false, 0), Section::Connect);
-        assert_eq!(section(Access::Denied, true, 2), Section::AllowAccess);
-        assert_eq!(section(Access::Granted, true, 0), Section::AddAccounts);
-        assert_eq!(section(Access::Granted, true, 2), Section::Accounts);
+        assert_eq!(section(Access::Unsupported, false, 0, 0), Section::Hidden);
+        assert_eq!(
+            section(Access::NotDetermined, false, 0, 0),
+            Section::Connect
+        );
+        assert_eq!(section(Access::Denied, true, 2, 2), Section::AllowAccess);
+        assert_eq!(section(Access::Granted, true, 0, 0), Section::AddAccounts);
+        assert_eq!(section(Access::Granted, true, 2, 1), Section::Accounts);
+        assert_eq!(section(Access::Granted, true, 2, 0), Section::AllDisabled);
         // No hint flashes before the first read finishes.
-        assert_eq!(section(Access::Granted, false, 0), Section::Accounts);
+        assert_eq!(section(Access::Granted, false, 0, 0), Section::Accounts);
     }
 
     /// Stands in for the sidebar: the first of two Account rows, recording its menu's choices.
@@ -452,7 +507,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn the_account_menu_disables_and_moves_the_account(cx: &mut TestAppContext) {
+    fn the_account_menu_hides_and_moves_the_account(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let actions = Rc::new(std::cell::RefCell::new(Vec::new()));
         let account = Account {
@@ -492,7 +547,7 @@ mod tests {
             // The menu is built in a deferred callback.
             cx.run_until_parked();
         };
-        // Items: Disable, Color, a separator, Move Up, Move Down.
+        // Items: Hide, Color, a separator, Move Up, Move Down.
         for item in [0usize, 3, 4] {
             step(cx, &|window, cx| window.right_click("sidebar", cx));
             step(cx, &|window, cx| window.click(item, cx));
@@ -501,7 +556,7 @@ mod tests {
         // Move Up is disabled on the first row, so it records nothing.
         assert_eq!(
             *actions.borrow(),
-            [AccountAction::ToggleDisabled, AccountAction::MoveTo(1)]
+            [AccountAction::ToggleHidden, AccountAction::MoveTo(1)]
         );
     }
 }
