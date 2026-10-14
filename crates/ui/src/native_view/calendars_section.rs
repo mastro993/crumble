@@ -8,19 +8,19 @@ use super::NativeView;
 use super::account_alias::{Rename, account_name};
 use super::account_dot::{dot, name};
 use super::controls::app_icon;
+use super::menu::{MenuItem, OpenMenu};
 use super::route::Route;
 use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
-use super::sidebar_row::{activate, row, row_with};
+use super::sidebar_row::{activate, hover_fill, row, row_with};
 use crate::settings::{self, AccountColor, SidebarSection};
 use crumble_eventkit::{Access, Account};
 use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, INSET, ROW_GAP, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Side, Sizable, h_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
-    div, prelude::FluentBuilder, px,
+    MouseButton, MouseDownEvent, ParentElement, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 const PRIVACY_SETTINGS: &str =
@@ -30,7 +30,7 @@ const INTERNET_ACCOUNTS: &str =
 
 /// A Hidden Account's row is dimmed to this opacity.
 const HIDDEN_OPACITY: f32 = 0.5;
-/// Muted copy and menu icons sit a step below their label, as in SkillBinder.
+/// Muted copy sits a step below its label, as in SkillBinder.
 const MUTED_OPACITY: f32 = 0.65;
 
 /// What the Calendars section shows.
@@ -215,9 +215,10 @@ impl NativeView {
         listed
     }
 
-    /// The row shows the Account's Alias, else its label. Clicking it Hides or Shows the
-    /// Account; dragging it reorders the Accounts, and right-clicking it opens a menu that Hides
-    /// or Shows the Account, renames it, picks its dot color, and moves it.
+    /// The row shows the Account's Alias, else its label. Clicking it, or pressing Enter or Space
+    /// while it has focus, Hides or Shows the Account; dragging it reorders the Accounts, and
+    /// right-clicking it opens a menu that Hides or Shows the Account, renames it, picks its dot
+    /// color, and moves it. The row stays highlighted while its menu is open.
     fn account_row(
         &self,
         account: &Account,
@@ -235,7 +236,7 @@ impl NativeView {
         let hidden = self.hidden_accounts.contains(&account.id);
         let label: SharedString = account_name(&self.settings, account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
-        let act = move |action, window: &mut Window, cx: &mut App| {
+        let act = move |action: AccountAction, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| match action {
                 AccountAction::ToggleHidden => view.toggle_hidden(&id, cx),
                 AccountAction::Rename => view.start_rename(&id, window, cx),
@@ -243,19 +244,19 @@ impl NativeView {
                 AccountAction::MoveTo(index) => view.move_account(&id, index, cx),
             });
         };
-        let menu = account_menu(hidden, color, placement.index, placement.len, act);
+        let owner: SharedString = format!("account-{}", account.id).into();
+        let menu_open = self.menu.as_ref().is_some_and(|menu| menu.is_for(&owner));
+        let (index, len) = (placement.index, placement.len);
         let id = account.id.clone();
-        row_with(
-            format!("account-{}", account.id),
-            dot(color, cx),
+        // A drag never ends in a click.
+        activate(
+            row_with(owner.clone(), dot(color, cx), label.clone(), false, cx),
             label.clone(),
-            false,
             cx,
+            move |view, _, cx| view.toggle_hidden(&id, cx),
         )
-        // Not `activate`: a focusable row and its context menu would both claim focus in one
-        // frame, which GPUI's accessibility tree rejects. A drag never ends in a click.
-        .on_click(cx.listener(move |view, _, _, cx| view.toggle_hidden(&id, cx)))
         .when(hidden, |row| row.opacity(HIDDEN_OPACITY))
+        .when(menu_open, |row| row.bg(hover_fill(cx)))
         .relative()
         .top(px(placement.offset))
         // The floating preview stands in for the dragged row.
@@ -273,7 +274,21 @@ impl NativeView {
                 cx.new(|_| RowDragPreview::new(drag))
             },
         )
-        .context_menu(menu)
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                let items = account_menu(hidden, color, index, len, act.clone());
+                view.menu = Some(OpenMenu::new(
+                    owner.clone(),
+                    items,
+                    event.position,
+                    view.focus.clone(),
+                    window,
+                    cx,
+                    |view: &mut NativeView| &mut view.menu,
+                ));
+            }),
+        )
         .into_any_element()
     }
 
@@ -411,84 +426,72 @@ fn account_menu(
     index: usize,
     len: usize,
     act: impl Fn(AccountAction, &mut Window, &mut App) + 'static,
-) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+) -> Vec<MenuItem> {
     let act = Rc::new(act);
-    move |menu, window, cx| {
-        let on = |action| {
-            let act = act.clone();
-            move |_: &_, window: &mut Window, cx: &mut App| act(action, window, cx)
-        };
-        let (label, icon) = if hidden {
-            ("Show", "view")
-        } else {
-            ("Hide", "view-off")
-        };
-        let plain = cx.theme().muted_foreground.opacity(MUTED_OPACITY);
-        let menu_icon = |name| app_icon(name).text_color(plain).mr(px(ICON_GAP - 4.0));
-        let recolor = act.clone();
-        menu.item(
-            PopupMenuItem::new(label)
-                .icon(menu_icon(icon))
-                .on_click(on(AccountAction::ToggleHidden)),
-        )
-        .item(
-            PopupMenuItem::new("Rename…")
-                .icon(menu_icon("pencil"))
-                .on_click(on(AccountAction::Rename)),
-        )
-        .submenu_with_icon(
-            Some(menu_icon("paint-board")),
-            "Color",
-            window,
-            cx,
-            move |menu, _, _| {
-                // Each choice shows its dot, so the check moves to the right.
-                AccountColor::ALL
-                    .into_iter()
-                    .fold(menu.check_side(Side::Right), |menu, color| {
-                        let recolor = recolor.clone();
-                        menu.item(
-                            PopupMenuItem::element(move |_, cx| {
-                                h_flex()
-                                    .gap(px(ICON_GAP - 4.0))
-                                    .child(dot(color, cx))
-                                    .child(name(color))
-                            })
-                            .checked(color == current)
-                            .on_click(move |_, window, cx| {
-                                recolor(AccountAction::Recolor(color), window, cx)
-                            }),
-                        )
-                    })
-            },
-        )
-        .separator()
-        .item(
-            PopupMenuItem::new("Move Up")
-                .icon(menu_icon("arrow-up"))
-                .disabled(index == 0)
-                .on_click(on(AccountAction::MoveTo(index.saturating_sub(1)))),
-        )
-        .item(
-            PopupMenuItem::new("Move Down")
-                .icon(menu_icon("arrow-down"))
-                .disabled(index + 1 >= len)
-                .on_click(on(AccountAction::MoveTo(index + 1))),
-        )
-    }
+    let on = |action| {
+        let act = act.clone();
+        move |window: &mut Window, cx: &mut App| act(action, window, cx)
+    };
+    let (label, icon) = if hidden {
+        ("Show", "view")
+    } else {
+        ("Hide", "view-off")
+    };
+    // Each color leads with its dot, so the current one is checked at the trailing edge.
+    let colors = AccountColor::ALL
+        .into_iter()
+        .map(|color| {
+            MenuItem::new(format!("color-{}", name(color).to_lowercase()), name(color))
+                .leading(move |cx| dot(color, cx).into_any_element())
+                .checked(color == current)
+                .on_select(on(AccountAction::Recolor(color)))
+        })
+        .collect();
+    vec![
+        MenuItem::new("toggle-hidden", label)
+            .icon(icon)
+            .on_select(on(AccountAction::ToggleHidden)),
+        MenuItem::new("rename", "Rename…")
+            .icon("pencil")
+            .on_select(on(AccountAction::Rename)),
+        MenuItem::new("color", "Color")
+            .icon("paint-board")
+            .submenu(colors),
+        MenuItem::separator(),
+        MenuItem::new("move-up", "Move Up")
+            .icon("arrow-up")
+            .disabled(index == 0)
+            .on_select(on(AccountAction::MoveTo(index.saturating_sub(1)))),
+        MenuItem::new("move-down", "Move Down")
+            .icon("arrow-down")
+            .disabled(index + 1 >= len)
+            .on_select(on(AccountAction::MoveTo(index + 1))),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, Account, AccountAction, AccountColor, Section, account_menu, section};
-    use crumble_eventkit::Provider;
-    use gpui_kit::component::menu::ContextMenuExt;
+    use super::super::menu::SUBMENU_CLOSE_DELAY;
+    use super::{Access, AccountAction, AccountColor, OpenMenu, Section, account_menu, section};
+    use crumble_theme::menu::SUBMENU_OVERLAP;
     use gpui_kit::test::{TestSupportExt, TestWindowExt};
     use gpui_kit::{
-        AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Render,
-        Styled, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
+        AnyWindowHandle, AppContext, Bounds, Context, FocusHandle, FrameObserver,
+        InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement,
+        Render, StatefulInteractiveElement, Styled, Subscription, TestAppContext, Window,
+        WindowBounds, WindowOptions, div, point, px, size,
     };
+    use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::Arc;
+
+    gpui_kit::actions!(
+        test,
+        [
+            /// Stands in for a window shortcut such as Toggle Sidebar.
+            Shortcut
+        ]
+    );
 
     #[test]
     fn each_access_state_picks_its_rows() {
@@ -505,92 +508,359 @@ mod tests {
         assert_eq!(section(Access::Granted, false, 0, 0), Section::Accounts);
     }
 
-    /// Stands in for the sidebar: the first of two Account rows, recording its menu's choices.
+    /// Stands in for the sidebar: the first of two Account rows, recording its menu's choices
+    /// and the clicks that reach the row, and a field that goes away when it loses focus, as a
+    /// Rename field does.
     struct Sidebar {
-        account: Account,
-        actions: Rc<std::cell::RefCell<Vec<AccountAction>>>,
+        focus: FocusHandle,
+        menu: Option<OpenMenu>,
+        actions: Rc<RefCell<Vec<AccountAction>>>,
+        row_clicks: usize,
+        /// Runs of a window shortcut.
+        shortcuts: usize,
+        field: Option<(FocusHandle, Subscription)>,
     }
 
     impl Render for Sidebar {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let actions = self.actions.clone();
             div()
                 .id("sidebar")
+                .test_support()
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|sidebar, _: &Shortcut, _, _| sidebar.shortcuts += 1))
                 .size_full()
                 .child(
-                    // Fills the window: wrapped in its context menu, the row is no longer
-                    // observable by ID, so the test right-clicks the window's centre.
                     div()
                         .id("row")
-                        .size_full()
-                        .child(self.account.name.clone())
-                        .context_menu(account_menu(
-                            false,
-                            AccountColor::Blue,
-                            0,
-                            2,
-                            move |action, _, _| actions.borrow_mut().push(action),
-                        )),
+                        .test_support()
+                        .tab_index(0)
+                        .h(px(32.))
+                        .w(px(200.))
+                        .child("Work")
+                        .on_click(cx.listener(|sidebar, _, _, _| sidebar.row_clicks += 1))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |sidebar, event: &MouseDownEvent, window, cx| {
+                                let actions = actions.clone();
+                                let items = account_menu(
+                                    false,
+                                    AccountColor::Blue,
+                                    0,
+                                    2,
+                                    move |action, _, _| actions.borrow_mut().push(action),
+                                );
+                                sidebar.menu = Some(OpenMenu::new(
+                                    "row",
+                                    items,
+                                    event.position,
+                                    sidebar.focus.clone(),
+                                    window,
+                                    cx,
+                                    |sidebar: &mut Sidebar| &mut sidebar.menu,
+                                ));
+                            }),
+                        ),
                 )
-                .test_support()
+                .children(self.field.as_ref().map(|(focus, _)| {
+                    div()
+                        .id("field")
+                        .test_support()
+                        .track_focus(focus)
+                        .h(px(32.))
+                        .w(px(200.))
+                }))
+                .children(self.menu.as_ref().map(OpenMenu::render))
         }
     }
 
-    #[gpui_kit::test]
-    fn the_account_menu_hides_and_moves_the_account(cx: &mut TestAppContext) {
-        cx.update(gpui_kit::init);
-        let actions = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let account = Account {
-            id: "source-1".into(),
-            name: "Work".into(),
-            email: None,
-            provider: Provider::Google,
-        };
-        let sidebar_actions = actions.clone();
-        let (handle, _) = cx
-            .update(|cx| {
-                gpui_kit::open_window(
-                    WindowOptions {
-                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                            Default::default(),
-                            size(px(400.), px(300.)),
-                        ))),
-                        ..Default::default()
-                    },
-                    cx,
-                    |_, cx| {
-                        cx.new(|_| Sidebar {
-                            account,
-                            actions: sidebar_actions,
-                        })
-                    },
-                )
-            })
-            .unwrap_or_else(|error| panic!("open test window: {error}"));
+    /// Turns on the window's accessibility tree, which panics in debug builds when two elements
+    /// claim focus, or two rows claim the highlight, in one frame.
+    struct Accessibility;
+    impl FrameObserver for Accessibility {}
 
-        let step = |cx: &mut TestAppContext, act: &dyn Fn(&mut Window, &mut gpui_kit::App)| {
-            cx.update_window(handle, |_, window, cx| {
+    struct Harness {
+        handle: AnyWindowHandle,
+        sidebar: gpui_kit::Entity<Sidebar>,
+        _accessibility: Arc<Accessibility>,
+    }
+
+    impl Harness {
+        fn new(cx: &mut TestAppContext) -> Self {
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                // The opening fade would otherwise stop at its first frame, as tests draw no
+                // frames on their own.
+                cx.set_reduce_motion(true);
+                cx.bind_keys([KeyBinding::new("cmd-b", Shortcut, None)]);
+            });
+            let (handle, sidebar) = cx
+                .update(|cx| {
+                    gpui_kit::open_window(
+                        WindowOptions {
+                            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                                Default::default(),
+                                size(px(600.), px(400.)),
+                            ))),
+                            ..Default::default()
+                        },
+                        cx,
+                        |window, cx| {
+                            cx.new(|cx| {
+                                let focus = cx.focus_handle();
+                                window.focus(&focus, cx);
+                                let field = cx.focus_handle();
+                                let ends =
+                                    cx.on_blur(&field, window, |sidebar: &mut Sidebar, _, cx| {
+                                        sidebar.field = None;
+                                        cx.notify();
+                                    });
+                                Sidebar {
+                                    focus,
+                                    menu: None,
+                                    actions: Rc::default(),
+                                    row_clicks: 0,
+                                    shortcuts: 0,
+                                    field: Some((field, ends)),
+                                }
+                            })
+                        },
+                    )
+                })
+                .unwrap_or_else(|error| panic!("open test window: {error}"));
+            let accessibility = Arc::new(Accessibility);
+            let harness = Self {
+                handle,
+                sidebar,
+                _accessibility: accessibility.clone(),
+            };
+            // Focus events only reach an active window.
+            harness.step(cx, move |window, _| {
+                window.observe_frames(&accessibility);
+                window.activate_window();
+            });
+            harness
+        }
+
+        /// Draws a frame, runs `act`, then lets deferred work such as the menu's focus finish.
+        fn step(&self, cx: &mut TestAppContext, act: impl FnOnce(&mut Window, &mut gpui_kit::App)) {
+            cx.update_window(self.handle, |_, window, cx| {
                 window.render_frame(cx);
                 act(window, cx);
             })
             .unwrap_or_else(|error| panic!("update test window: {error}"));
-            // The menu is built in a deferred callback.
             cx.run_until_parked();
-        };
-        // Items: Hide, Rename, Color, a separator, Move Up, Move Down.
-        for item in [0usize, 1, 4, 5] {
-            step(cx, &|window, cx| window.right_click("sidebar", cx));
-            step(cx, &|window, cx| window.click(item, cx));
+            cx.update_window(self.handle, |_, window, cx| window.render_frame(cx))
+                .unwrap_or_else(|error| panic!("update test window: {error}"));
         }
 
-        // Move Up is disabled on the first row, so it records nothing.
+        fn check(&self, cx: &mut TestAppContext, check: impl FnOnce(&mut Window)) {
+            cx.update_window(self.handle, |_, window, _| check(window))
+                .unwrap_or_else(|error| panic!("read test window: {error}"));
+        }
+
+        fn actions(&self, cx: &mut TestAppContext) -> Vec<AccountAction> {
+            cx.update(|cx| self.sidebar.read(cx).actions.borrow().clone())
+        }
+
+        fn wait(&self, cx: &mut TestAppContext) {
+            cx.executor().advance_clock(SUBMENU_CLOSE_DELAY);
+            self.step(cx, |_, _| {});
+        }
+
+        fn submenu_open(&self, cx: &mut TestAppContext) -> bool {
+            let mut open = false;
+            self.check(cx, |window| {
+                open = window.try_find("menu-submenu").is_some()
+            });
+            open
+        }
+
+        fn open(&self, cx: &mut TestAppContext) {
+            self.step(cx, |window, cx| window.right_click("row", cx));
+            self.check(cx, |window| {
+                assert_eq!(window.find("menu").focused(), Some(true));
+            });
+        }
+
+        /// The menu is gone and focus is back where it was before the menu opened.
+        fn assert_closed(&self, cx: &mut TestAppContext) {
+            self.check(cx, |window| {
+                assert!(window.try_find("menu").is_none());
+                assert_eq!(window.find("sidebar").focused(), Some(true));
+            });
+        }
+    }
+
+    #[gpui_kit::test]
+    fn choosing_a_row_closes_the_menu_and_runs_it(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        for item in ["toggle-hidden", "rename", "move-down"] {
+            harness.open(cx);
+            harness.step(cx, |window, cx| {
+                window.click(format!("menu-item-{item}"), cx)
+            });
+            harness.assert_closed(cx);
+        }
+
+        // Move Up is disabled on the first row, so choosing it does nothing.
+        harness.open(cx);
+        harness.check(cx, |window| {
+            assert_eq!(window.find("menu-item-move-up").disabled(), Some(true));
+        });
+        harness.step(cx, |window, cx| window.click("menu-item-move-up", cx));
+        harness.check(cx, |window| assert!(window.try_find("menu").is_some()));
+
         assert_eq!(
-            *actions.borrow(),
+            harness.actions(cx),
             [
                 AccountAction::ToggleHidden,
                 AccountAction::Rename,
                 AccountAction::MoveTo(1)
             ]
         );
+    }
+
+    #[gpui_kit::test]
+    fn the_color_submenu_opens_on_hover_and_checks_the_current_color(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-submenu").is_none())
+        });
+
+        harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+        harness.check(cx, |window| {
+            assert_eq!(window.find("menu-item-color").expanded(), Some(true));
+            assert_eq!(window.find("menu-item-color-blue").checked(), Some(true));
+            assert_eq!(window.find("menu-item-color-red").checked(), Some(false));
+            // It opens to the right, overlapping the menu's edge, with its first row lined up
+            // with the row it opened from.
+            let (menu, submenu) = (
+                window.find("menu").bounds(),
+                window.find("menu-submenu").bounds(),
+            );
+            assert_eq!(submenu.left(), menu.right() - px(SUBMENU_OVERLAP));
+            assert_eq!(
+                window.find("menu-item-color-gray").bounds().top(),
+                window.find("menu-item-color").bounds().top()
+            );
+        });
+        harness.step(cx, |window, cx| window.click("menu-item-color-red", cx));
+
+        harness.assert_closed(cx);
+        assert_eq!(
+            harness.actions(cx),
+            [AccountAction::Recolor(AccountColor::Red)]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn the_keyboard_walks_the_menu_and_its_submenu(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        // Hide, Rename, Color, then into the submenu, which highlights Gray; one down is Red.
+        for key in ["down", "down", "down", "right", "down", "enter"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.assert_closed(cx);
+
+        // Going up wraps to Move Down and skips the disabled Move Up to reach Color. Left and
+        // Escape close the submenu, and Escape then the menu, choosing nothing.
+        harness.open(cx);
+        for key in ["up", "up", "right"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+        }
+        harness.check(cx, |window| {
+            assert!(window.try_find("menu-submenu").is_some())
+        });
+        // Escape closes only the submenu while one is open.
+        for key in ["left", "escape"] {
+            harness.step(cx, |window, cx| window.press(key, cx));
+            harness.check(cx, |window| {
+                assert!(window.try_find("menu-submenu").is_none());
+                assert!(window.try_find("menu").is_some());
+            });
+            harness.step(cx, |window, cx| window.press("right", cx));
+        }
+        for _ in 0..2 {
+            harness.step(cx, |window, cx| window.press("escape", cx));
+        }
+        harness.assert_closed(cx);
+
+        assert_eq!(
+            harness.actions(cx),
+            [AccountAction::Recolor(AccountColor::Red)]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_press_outside_the_menu_only_closes_it(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        // Over the row, left of the menu, which opened at the row's centre.
+        harness.step(cx, |window, cx| {
+            window.click_at("menu-backdrop", point(px(20.), px(16.)), cx)
+        });
+
+        harness.assert_closed(cx);
+        assert!(harness.actions(cx).is_empty());
+        let row_clicks = cx.update(|cx| harness.sidebar.read(cx).row_clicks);
+        assert_eq!(row_clicks, 0);
+    }
+
+    #[gpui_kit::test]
+    fn the_submenu_closes_a_moment_after_the_pointer_leaves_its_row(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        // Onto an enabled row, then onto the disabled Move Up.
+        for row in ["menu-item-rename", "menu-item-move-up"] {
+            harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+            harness.step(cx, |window, cx| window.hover(row, cx));
+            assert!(harness.submenu_open(cx));
+            harness.wait(cx);
+            assert!(!harness.submenu_open(cx));
+        }
+
+        // Reaching the submenu in time keeps it open.
+        harness.step(cx, |window, cx| window.hover("menu-item-color", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-rename", cx));
+        harness.step(cx, |window, cx| window.hover("menu-item-color-red", cx));
+        harness.wait(cx);
+        assert!(harness.submenu_open(cx));
+    }
+
+    #[gpui_kit::test]
+    fn a_shortcut_runs_and_closes_the_menu(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        harness.step(cx, |window, cx| window.press("cmd-b", cx));
+
+        harness.assert_closed(cx);
+        let shortcuts = cx.update(|cx| harness.sidebar.read(cx).shortcuts);
+        assert_eq!(shortcuts, 1);
+    }
+
+    #[gpui_kit::test]
+    fn tab_closes_the_menu(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.open(cx);
+        harness.step(cx, |window, cx| window.press("tab", cx));
+        harness.check(cx, |window| assert!(window.try_find("menu").is_none()));
+    }
+
+    #[gpui_kit::test]
+    fn focus_returns_to_the_view_when_what_had_it_is_gone(cx: &mut TestAppContext) {
+        let harness = Harness::new(cx);
+        harness.step(cx, |window, cx| window.click("field", cx));
+        harness.check(cx, |window| {
+            assert_eq!(window.find("field").focused(), Some(true))
+        });
+        // Taking focus ends the field.
+        harness.open(cx);
+        harness.check(cx, |window| assert!(window.try_find("field").is_none()));
+
+        harness.step(cx, |window, cx| window.press("escape", cx));
+        harness.assert_closed(cx);
     }
 }

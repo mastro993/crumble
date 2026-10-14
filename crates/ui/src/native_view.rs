@@ -3,6 +3,7 @@ mod account_dot;
 mod calendar;
 mod calendars_section;
 mod controls;
+mod menu;
 mod route;
 mod settings_page;
 mod shell;
@@ -24,6 +25,7 @@ use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollHandle, Styled, Window, div, prelude::FluentBuilder,
 };
+use menu::OpenMenu;
 use route::{History, Route};
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
@@ -63,6 +65,8 @@ pub struct NativeView {
     alias_fields: AliasFields,
     /// The Account row being renamed in the sidebar.
     renaming: Option<Rename>,
+    /// The open context menu.
+    menu: Option<OpenMenu>,
 }
 
 impl NativeView {
@@ -103,6 +107,7 @@ impl NativeView {
             account_reorder: RowReorder::default(),
             alias_fields: AliasFields::default(),
             renaming: None,
+            menu: None,
         }
     }
 
@@ -156,5 +161,6 @@ impl Render for NativeView {
             .bg(colors.background)
             .text_color(colors.foreground)
             .child(self.render_shell(page, window, cx))
+            .children(self.menu.as_ref().map(OpenMenu::render))
     }
 }
