@@ -12,7 +12,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     App, Div, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px, relative, rgb,
+    SharedString, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px, relative,
 };
 
 /// Height of a Month view line and an all-day bar.
@@ -29,16 +29,22 @@ const TWO_LINE_HEIGHT: f32 = 36.0;
 const BLOCK_LINE_HEIGHT: f32 = 15.0;
 const POPOVER_WIDTH: f32 = 280.0;
 
-/// An Event with what drawing it needs from its Calendar.
+/// An Event with what drawing it needs from its Calendar and Account.
 #[derive(Clone)]
 pub(super) struct Shown {
     pub(super) event: Event,
+    /// The Account's color.
     pub(super) color: Hsla,
     pub(super) calendar: SharedString,
 }
 
-/// The Events paired with their Calendars; an Event whose Calendar is gone is dropped.
-pub(super) fn shown(events: &[Event], calendars: &[Calendar]) -> Vec<Shown> {
+/// The Events paired with their Calendars, each in the color `account_color` gives its
+/// Account; an Event whose Calendar is gone is dropped.
+pub(super) fn shown(
+    events: &[Event],
+    calendars: &[Calendar],
+    account_color: impl Fn(&str) -> Hsla,
+) -> Vec<Shown> {
     events
         .iter()
         .filter_map(|event| {
@@ -47,7 +53,7 @@ pub(super) fn shown(events: &[Event], calendars: &[Calendar]) -> Vec<Shown> {
                 .find(|calendar| calendar.id == event.calendar_id)?;
             Some(Shown {
                 event: event.clone(),
-                color: rgb(calendar.color).into(),
+                color: account_color(&calendar.account_id),
                 calendar: calendar.name.clone().into(),
             })
         })
@@ -343,4 +349,70 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown]) -> Div {
                     ))
             },
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shown;
+    use chrono::NaiveDate;
+    use crumble_eventkit::{Calendar, Event, When};
+    use gpui_kit::{Hsla, rgb};
+
+    fn calendar(id: &str, account_id: &str, color: u32) -> Calendar {
+        Calendar {
+            id: id.into(),
+            account_id: account_id.into(),
+            name: id.into(),
+            color,
+        }
+    }
+
+    fn event(id: &str, calendar_id: &str) -> Event {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap_or_default();
+        Event {
+            id: id.into(),
+            calendar_id: calendar_id.into(),
+            title: id.into(),
+            when: When::AllDay {
+                first: day,
+                last: day,
+            },
+            location: None,
+            join_url: None,
+        }
+    }
+
+    #[test]
+    fn events_take_their_account_color_not_their_calendar_color() {
+        let calendars = [
+            calendar("work", "google", 0x00ff00),
+            calendar("holidays", "google", 0x0000ff),
+            calendar("family", "icloud", 0x00ff00),
+        ];
+        let events = [
+            event("standup", "work"),
+            event("party", "family"),
+            event("ferragosto", "holidays"),
+            event("orphan", "deleted"),
+        ];
+        let account_color = |account: &str| -> Hsla {
+            rgb(if account == "google" {
+                0xff0000
+            } else {
+                0x333333
+            })
+            .into()
+        };
+        let shown = shown(&events, &calendars, account_color);
+        let colors: Vec<(&str, Hsla)> = shown
+            .iter()
+            .map(|shown| (shown.event.id.as_str(), shown.color))
+            .collect();
+        let red: Hsla = rgb(0xff0000).into();
+        let gray: Hsla = rgb(0x333333).into();
+        assert_eq!(
+            colors,
+            [("standup", red), ("party", gray), ("ferragosto", red)]
+        );
+    }
 }

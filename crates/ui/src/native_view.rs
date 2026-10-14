@@ -3,6 +3,7 @@ mod account_dot;
 mod calendar;
 mod calendars_section;
 mod controls;
+mod custom_color;
 mod menu;
 mod route;
 mod settings_page;

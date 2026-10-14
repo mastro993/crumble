@@ -27,8 +27,8 @@ pub(crate) struct Settings {
     pub(crate) account_aliases: BTreeMap<String, String>,
 }
 
-/// The dot that marks an Account in the sidebar and in Settings. The palette is SkillBinder's
-/// folder colors.
+/// The color of an Account's dot in the sidebar and in Settings, and of its Events: one of
+/// SkillBinder's folder colors, or any color the user picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum AccountColor {
     Gray,
@@ -39,10 +39,13 @@ pub(crate) enum AccountColor {
     Blue,
     Purple,
     Pink,
+    /// sRGB color as `0xRRGGBB`.
+    Custom(u32),
 }
 
 impl AccountColor {
-    pub(crate) const ALL: [Self; 8] = [
+    /// SkillBinder's folder colors.
+    pub(crate) const PALETTE: [Self; 8] = [
         Self::Gray,
         Self::Red,
         Self::Orange,
@@ -60,7 +63,7 @@ impl AccountColor {
         let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
         });
-        let colorful = &Self::ALL[1..];
+        let colorful = &Self::PALETTE[1..];
         colorful[(hash % colorful.len() as u64) as usize]
     }
 }
@@ -216,6 +219,9 @@ mod tests {
         settings
             .account_colors
             .insert("source-1".into(), AccountColor::Pink);
+        settings
+            .account_colors
+            .insert("source-2".into(), AccountColor::Custom(0x3366ff));
         settings.set_account_alias("source-1", "Work", "me@example.com");
         let json = serde_json::to_string(&settings).unwrap_or_default();
         assert_eq!(Settings::parse(&json), settings);
@@ -232,6 +238,9 @@ mod tests {
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
         assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
         assert!(old.account_order.is_empty() && old.account_aliases.is_empty());
+        // Files saved before custom colors keep their palette colors.
+        let old = Settings::parse(r#"{"account_colors":{"source-1":"Pink"}}"#);
+        assert_eq!(old.account_color("source-1"), AccountColor::Pink);
     }
 
     fn account(id: &str) -> Account {
