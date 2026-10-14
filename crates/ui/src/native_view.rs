@@ -16,7 +16,7 @@ pub use shell::{GoBack, GoForward, ToggleSidebar};
 
 use crate::calendar_sync::CalendarSync;
 use crate::settings::{Settings, SidebarSection};
-use calendar::CalendarPage;
+use calendar::{CalendarEvents, CalendarPage};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -41,6 +41,7 @@ pub struct NativeView {
     settings: Settings,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
+    events: CalendarEvents,
     calendar_sync: Entity<CalendarSync>,
     /// Scroll position of the sidebar's sections.
     sidebar_scroll: ScrollHandle,
@@ -65,7 +66,12 @@ impl NativeView {
         let settings = Settings::load();
         let first_day_select = settings_page::first_day_select(&settings, window, cx);
         let calendar_sync = cx.new(CalendarSync::new);
-        cx.observe(&calendar_sync, |_, _, cx| cx.notify()).detach();
+        // A sync change can also mean EventKit changed its Events.
+        cx.observe(&calendar_sync, |view, _, cx| {
+            view.refresh_events(true, cx);
+            cx.notify();
+        })
+        .detach();
         Self {
             focus,
             route: Route::Home,
@@ -77,6 +83,7 @@ impl NativeView {
             settings,
             first_day_select,
             calendar: CalendarPage::default(),
+            events: CalendarEvents::default(),
             calendar_sync,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_hovered: false,

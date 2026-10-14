@@ -138,10 +138,6 @@ impl Settings {
 
     /// Identifiers of the `calendars` whose Events show: neither they nor their Account is
     /// Disabled.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the Calendar page reads it once it shows Events")
-    )]
     pub(crate) fn enabled_calendar_ids(&self, calendars: &[Calendar]) -> Vec<String> {
         calendars
             .iter()

@@ -34,6 +34,27 @@ impl CalendarView {
         shifted.unwrap_or(focused)
     }
 
+    /// The dates this view draws Events on, from the first to the day after the last; `None`
+    /// for Year view, which draws none.
+    pub(super) fn event_range(
+        self,
+        focused: NaiveDate,
+        first_day: Weekday,
+    ) -> Option<(NaiveDate, NaiveDate)> {
+        let (first, last_week) = match self {
+            Self::Week => {
+                let start = week_start(focused, first_day);
+                (start, start)
+            }
+            Self::Month => {
+                let weeks = month_weeks(focused, first_day);
+                (*weeks.first()?, *weeks.last()?)
+            }
+            Self::Year => return None,
+        };
+        Some((first, last_week + Days::new(7)))
+    }
+
     /// Header title of the Period containing `focused`.
     pub(super) fn title(self, focused: NaiveDate, first_day: Weekday) -> String {
         match self {
@@ -154,6 +175,24 @@ mod tests {
         assert_eq!(weeks.len(), 6);
         assert_eq!(weeks.first(), Some(&date(2026, 7, 27)));
         assert_eq!(weeks.last(), Some(&date(2026, 8, 31)));
+    }
+
+    #[test]
+    fn events_are_read_for_the_dates_on_screen() {
+        let monday = Weekday::Mon;
+        assert_eq!(
+            CalendarView::Week.event_range(date(2026, 10, 13), monday),
+            Some((date(2026, 10, 12), date(2026, 10, 19)))
+        );
+        // Month view includes the neighbouring months' days in its first and last rows.
+        assert_eq!(
+            CalendarView::Month.event_range(date(2026, 8, 20), monday),
+            Some((date(2026, 7, 27), date(2026, 9, 7)))
+        );
+        assert_eq!(
+            CalendarView::Year.event_range(date(2026, 8, 20), monday),
+            None
+        );
     }
 
     #[test]

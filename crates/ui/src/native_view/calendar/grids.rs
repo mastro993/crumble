@@ -1,6 +1,7 @@
 //! Week, Month, and Year grids. Weekends are shaded in every Calendar view.
 
 use super::NativeView;
+use super::event_views::{Shown, all_day_strip, day_blocks, month_day};
 use super::period::{is_weekend, month_weeks, week_days, week_start, weekdays, year_months};
 use crate::native_view::controls::button;
 use chrono::{Datelike, Days, NaiveDate, Weekday};
@@ -10,12 +11,12 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, App, Context, Corners, Div, Hsla, InteractiveElement, IntoElement, ParentElement,
-    Pixels, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
+    Pixels, ScrollHandle, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
 };
 
 /// Width of the Week view's hour labels.
 const HOUR_GUTTER: f32 = 56.0;
-const HOUR_HEIGHT: f32 = 48.0;
+pub(super) const HOUR_HEIGHT: f32 = 48.0;
 /// Week rows in every Year view month, so the months in each grid row end level.
 const YEAR_WEEKS: u64 = 6;
 const YEAR_DAY_HEIGHT: f32 = 20.0;
@@ -92,6 +93,7 @@ pub(super) fn month(
     first_day: Weekday,
     today: NaiveDate,
     hairline: Pixels,
+    shown: &[Shown],
     cx: &App,
 ) -> AnyElement {
     let (border, radius) = (cx.theme().border, px(SURFACE_RADIUS));
@@ -104,10 +106,13 @@ pub(super) fn month(
             .children(week_days(start).enumerate().map(|(column, date)| {
                 let (top, bottom) = (row == 0, row == last_row);
                 let (left, right) = (column == 0, column == 6);
-                div()
+                v_flex()
                     .flex_1()
+                    .min_w_0()
                     .h_full()
+                    .gap_1()
                     .p_1()
+                    .overflow_hidden()
                     .text_sm()
                     .border_color(border)
                     .when(!right, |cell| cell.border_r(hairline))
@@ -121,6 +126,7 @@ pub(super) fn month(
                         date.month() != focused.month(),
                         cx,
                     ))
+                    .child(month_day(date, shown, cx))
             }))
     });
     v_flex()
@@ -135,6 +141,8 @@ pub(super) fn week(
     first_day: Weekday,
     today: NaiveDate,
     hairline: Pixels,
+    hours_scroll: &ScrollHandle,
+    shown: &[Shown],
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -198,16 +206,44 @@ pub(super) fn week(
                     .when(hour < 23, |line| line.border_b(hairline)),
             )
     });
+    // All-day Events sit in a strip between the day names and the hours.
+    let all_day = all_day_strip(&days, shown, cx).map(|cells| {
+        // A plain flex row, so every cell stretches to the tallest one.
+        div()
+            .flex()
+            .pl(px(HOUR_GUTTER))
+            .border_b(hairline)
+            .border_color(theme.border)
+            .children(cells.into_iter().zip(&days).map(|(cell, &date)| {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .p(px(2.0))
+                    .border_l(hairline)
+                    .border_color(theme.border)
+                    .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
+                    .child(cell)
+            }))
+    });
+    // Timed Events scroll with the hours, over their day's column.
+    let blocks = h_flex()
+        .absolute()
+        .top_0()
+        .left(px(HOUR_GUTTER))
+        .right_0()
+        .h(px(24.0 * HOUR_HEIGHT))
+        .children(days.iter().map(|&date| day_blocks(date, shown)));
     v_flex()
         .size_full()
         .child(
-            frame(hairline, cx).child(header).child(
+            frame(hairline, cx).child(header).children(all_day).child(
                 div().relative().flex_1().min_h_0().child(columns).child(
                     div()
                         .id("week-hours")
                         .size_full()
                         .overflow_y_scroll()
-                        .children(hours),
+                        .track_scroll(hours_scroll)
+                        .child(div().relative().children(hours).child(blocks)),
                 ),
             ),
         )

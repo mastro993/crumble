@@ -1,16 +1,19 @@
 //! Calendar page: a Week, Month, or Year view of the Period containing the Focused date.
 
+mod event_views;
+mod events;
 mod grids;
 mod period;
 
 use super::NativeView;
 use super::controls::{app_icon, button};
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
+use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, Styled, Window, div,
-    px,
+    AnyElement, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
+    ScrollHandle, Styled, Task, Window, div, point, px,
 };
 use period::CalendarView;
 
@@ -30,15 +33,63 @@ gpui_kit::actions!(
 pub(super) struct CalendarPage {
     view: CalendarView,
     focused: NaiveDate,
+    /// Week view's scrolling hours, kept across Periods and Calendar views.
+    week_hours: ScrollHandle,
 }
 
 impl Default for CalendarPage {
     fn default() -> Self {
+        let week_hours = ScrollHandle::new();
+        // Week view opens on the working day rather than on midnight.
+        week_hours.set_offset(point(px(0.0), px(-WEEK_OPENS_AT * grids::HOUR_HEIGHT)));
         Self {
             view: CalendarView::Month,
             focused: today(),
+            week_hours,
         }
     }
+}
+
+/// The hour Week view shows at the top when the app starts.
+const WEEK_OPENS_AT: f32 = 8.0;
+
+/// What an Event read covers: a range of dates and the enabled Calendars.
+#[derive(Clone, PartialEq, Eq)]
+struct EventsRead {
+    first: NaiveDate,
+    /// The day after the last.
+    end: NaiveDate,
+    calendar_ids: Vec<String>,
+}
+
+/// The Events of the dates on screen, read again when those dates, the enabled Calendars, or
+/// EventKit change.
+pub(super) struct CalendarEvents {
+    events: Vec<Event>,
+    /// The read the shown Events answer, or will once `read` finishes.
+    wanted: Option<EventsRead>,
+    read: Task<()>,
+}
+
+impl Default for CalendarEvents {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            wanted: None,
+            read: Task::ready(()),
+        }
+    }
+}
+
+/// The start of `date`. Where clocks skip midnight for daylight saving, as in Chile, the day
+/// starts an hour later; the extra Events read are drawn only on their own dates.
+fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
+    let midnight = date.and_time(NaiveTime::MIN);
+    Local.from_local_datetime(&midnight).earliest().or_else(|| {
+        Local
+            .from_local_datetime(&(midnight + TimeDelta::hours(1)))
+            .earliest()
+    })
 }
 
 /// Read on every use, so a window left open past midnight catches up on its next render.
@@ -47,28 +98,77 @@ fn today() -> NaiveDate {
 }
 
 impl NativeView {
+    /// Reads the Events of the dates on screen in the enabled Calendars, unless they are already
+    /// read; `force` reads again anyway, as after EventKit reports a change. A failed read is
+    /// logged and the last Events stay.
+    pub(super) fn refresh_events(&mut self, force: bool, cx: &mut Context<Self>) {
+        let CalendarPage { view, focused, .. } = self.calendar;
+        let sync = self.calendar_sync.read(cx);
+        let wanted = (sync.access() == Access::Granted)
+            .then(|| view.event_range(focused, self.settings.first_day_of_week))
+            .flatten()
+            .map(|(first, end)| EventsRead {
+                first,
+                end,
+                calendar_ids: self.settings.enabled_calendar_ids(sync.calendars()),
+            });
+        if !force && wanted == self.events.wanted {
+            return;
+        }
+        self.events.wanted = wanted.clone();
+        let Some(range) = wanted.and_then(|read| {
+            Some((
+                local_midnight(read.first)?,
+                local_midnight(read.end)?,
+                read.calendar_ids,
+            ))
+        }) else {
+            self.events.events.clear();
+            self.events.read = Task::ready(());
+            cx.notify();
+            return;
+        };
+        // Apple advises reading off the main thread.
+        let read = cx.background_spawn(async move {
+            let (start, end, calendar_ids) = range;
+            eventkit::events(start, end, &calendar_ids)
+        });
+        self.events.read = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |view, cx| match result {
+                Ok(events) => {
+                    view.events.events = events;
+                    cx.notify();
+                }
+                Err(error) => eprintln!("Could not read events: {error}"),
+            });
+        });
+    }
+
     fn step_period(&mut self, forward: bool, cx: &mut Context<Self>) {
         let calendar = &mut self.calendar;
         calendar.focused = calendar.view.step(calendar.focused, forward);
+        self.refresh_events(false, cx);
         cx.notify();
     }
 
     fn show_today(&mut self, cx: &mut Context<Self>) {
         self.calendar.focused = today();
+        self.refresh_events(false, cx);
         cx.notify();
     }
 
     fn show_calendar_view(&mut self, view: CalendarView, cx: &mut Context<Self>) {
         self.calendar.view = view;
+        self.refresh_events(false, cx);
         cx.notify();
     }
 
     /// Opens Month view on the month starting at `first`.
     fn open_month(&mut self, first: NaiveDate, cx: &mut Context<Self>) {
-        self.calendar = CalendarPage {
-            view: CalendarView::Month,
-            focused: first,
-        };
+        self.calendar.view = CalendarView::Month;
+        self.calendar.focused = first;
+        self.refresh_events(false, cx);
         cx.notify();
     }
 
@@ -81,7 +181,7 @@ impl NativeView {
 
     /// Today, Previous, Next, the Period title, and the Calendar view switcher.
     pub(super) fn render_calendar_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let CalendarPage { view, focused } = self.calendar;
+        let CalendarPage { view, focused, .. } = self.calendar;
         let arrow = |id: &'static str, icon: &str, label: &'static str| {
             button(id)
                 .ghost()
@@ -144,14 +244,24 @@ impl NativeView {
     }
 
     pub(super) fn render_calendar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let CalendarPage { view, focused } = self.calendar;
+        let CalendarPage { view, focused, .. } = self.calendar;
         let first_day = self.settings.first_day_of_week;
         // One device pixel, matching the sidebar's hairline.
         let hairline = px(1.0 / window.scale_factor());
         let today = today();
+        let shown =
+            event_views::shown(&self.events.events, self.calendar_sync.read(cx).calendars());
         match view {
-            CalendarView::Week => grids::week(focused, first_day, today, hairline, cx),
-            CalendarView::Month => grids::month(focused, first_day, today, hairline, cx),
+            CalendarView::Week => grids::week(
+                focused,
+                first_day,
+                today,
+                hairline,
+                &self.calendar.week_hours,
+                &shown,
+                cx,
+            ),
+            CalendarView::Month => grids::month(focused, first_day, today, hairline, &shown, cx),
             CalendarView::Year => grids::year(focused, first_day, today, hairline, cx),
         }
     }

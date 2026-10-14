@@ -54,6 +54,8 @@ pub(super) fn first_day_select(
         if let Ok(day) = day.parse::<Weekday>() {
             view.settings.first_day_of_week = day;
             view.settings.save();
+            // The week now starts elsewhere, so other dates are on screen.
+            view.refresh_events(false, cx);
             cx.notify();
         }
     })

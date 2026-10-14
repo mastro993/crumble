@@ -308,12 +308,14 @@ impl NativeView {
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
         settings::toggle(&mut self.settings.disabled_accounts, id);
         self.settings.save();
+        self.refresh_events(false, cx);
         cx.notify();
     }
 
     pub(super) fn toggle_calendar(&mut self, id: &str, cx: &mut Context<Self>) {
         settings::toggle(&mut self.settings.disabled_calendars, id);
         self.settings.save();
+        self.refresh_events(false, cx);
         cx.notify();
     }
 }
