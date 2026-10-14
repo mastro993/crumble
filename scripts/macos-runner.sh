@@ -21,6 +21,10 @@ cp "$(dirname "$0")/../apps/desktop/Info.plist" "$app/Contents/Info.plist"
 # signature: a certificate identity (CRUMBLE_SIGNING_IDENTITY) keeps it across rebuilds, while
 # the ad-hoc fallback changes with every build, so macOS asks again after each code change.
 identity=${CRUMBLE_SIGNING_IDENTITY:--}
+if [ "$identity" = - ]; then
+	echo "Signing Crumble.app ad hoc: macOS asks for calendar access again after this rebuild." >&2
+	echo "Set CRUMBLE_SIGNING_IDENTITY to keep it (see README)." >&2
+fi
 if ! output=$(codesign --force --sign "$identity" "$app" 2>&1); then
 	echo "$output" >&2
 	exit 1
