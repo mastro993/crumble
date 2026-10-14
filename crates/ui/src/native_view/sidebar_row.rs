@@ -1,13 +1,10 @@
 //! The sidebar row: icon, truncated label, and a selection fill.
 
-use std::rc::Rc;
-
-use super::NativeView;
 use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, LABEL_SIZE, RADIUS, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::{ActiveTheme, Icon};
 use gpui_kit::{
-    App, Context, Div, ElementId, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
+    App, Context, Div, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px,
 };
 
@@ -49,7 +46,7 @@ pub(super) fn row_with(
     } else {
         theme.muted_foreground
     };
-    let hover = theme.sidebar_accent.opacity(0.5);
+    let hover = hover_fill(cx);
     div()
         .id(id.into())
         .flex()
@@ -69,22 +66,78 @@ pub(super) fn row_with(
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
 }
 
-/// Runs `action` on click, and on Enter or Space while the row has keyboard focus.
-pub(super) fn activate(
+/// The fill of a row under the pointer, or whose context menu is open.
+pub(super) fn hover_fill(cx: &App) -> Hsla {
+    cx.theme().sidebar_accent.opacity(0.5)
+}
+
+/// Runs `action` on click, and on Enter or Space while the row has keyboard focus, which GPUI
+/// turns into a click on a focusable element.
+pub(super) fn activate<V: 'static>(
     row: Stateful<Div>,
     label: impl Into<SharedString>,
-    cx: &Context<NativeView>,
-    action: impl Fn(&mut NativeView, &mut Window, &mut Context<NativeView>) + 'static,
+    cx: &Context<V>,
+    action: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
 ) -> Stateful<Div> {
-    let action = Rc::new(action);
-    let click = action.clone();
     row.tab_index(0)
         .aria_label(label)
-        .on_click(cx.listener(move |view, _, window, cx| click(view, window, cx)))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                action(view, window, cx);
-                cx.stop_propagation();
-            }
-        }))
+        .on_click(cx.listener(move |view, _, window, cx| action(view, window, cx)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::activate;
+    use gpui_kit::test::{TestSupportExt, TestWindowExt};
+    use gpui_kit::{
+        AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Render,
+        Styled, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
+    };
+
+    #[derive(Default)]
+    struct Row {
+        activations: usize,
+    }
+
+    impl Render for Row {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            activate(
+                div().id("row").size_full().child("Work"),
+                "Work",
+                cx,
+                |row: &mut Row, _, _| row.activations += 1,
+            )
+            .test_support()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn each_click_or_key_on_a_focused_row_runs_it_once(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (handle, row) = cx
+            .update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Default::default(),
+                            size(px(200.), px(32.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| cx.new(|_| Row::default()),
+                )
+            })
+            .unwrap_or_else(|error| panic!("open test window: {error}"));
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // The click also focuses the row.
+            window.click("row", cx);
+            window.press("enter", cx);
+            window.press("space", cx);
+        })
+        .unwrap_or_else(|error| panic!("update test window: {error}"));
+
+        cx.update(|cx| assert_eq!(row.read(cx).activations, 3));
+    }
 }
