@@ -7,7 +7,9 @@ use crate::settings::Settings;
 use chrono::Weekday;
 use crumble_eventkit::{Access, Account};
 use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::Input;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath, Sizable, StyledExt, h_flex, v_flex,
 };
@@ -27,6 +29,7 @@ const WEEKDAYS: [&str; 7] = [
 ];
 
 const SELECT_WIDTH: f32 = 160.0;
+const ALIAS_WIDTH: f32 = 160.0;
 /// Diameter of a Calendar's color dot.
 const DOT_SIZE: f32 = 10.0;
 
@@ -89,8 +92,8 @@ impl NativeView {
             .children(self.render_calendar_settings(cx))
     }
 
-    /// Each Account and its Calendars, with a checkbox per Calendar. A Disabled Account greys
-    /// its Calendars out but keeps their checkboxes as they were.
+    /// Each Account with a switch, and its Calendars with a checkbox each. A Disabled Account
+    /// greys its Calendars out but keeps their checkboxes as they were.
     fn render_calendar_settings(&self, cx: &Context<Self>) -> Option<Div> {
         let sync = self.calendar_sync.read(cx);
         let accounts = sync.accounts();
@@ -112,7 +115,11 @@ impl NativeView {
     }
 
     fn account_settings(&self, account: &Account, cx: &Context<Self>) -> Div {
+        let label = account_label(account).to_owned();
+        let alias = self.settings.account_alias(&account.id);
+        let name = alias.unwrap_or(&label).to_owned();
         let muted = cx.theme().muted_foreground;
+        let account_id = account.id.clone();
         let disabled = self.settings.disabled_accounts.contains(&account.id);
         let calendars = self
             .calendar_sync
@@ -150,21 +157,36 @@ impl NativeView {
                     .gap_2()
                     .child(dot(self.settings.account_color(&account.id), cx))
                     .child(
-                        div()
+                        h_flex()
+                            .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .font_medium()
-                            .child(account_label(account).to_owned()),
+                            .gap_1()
+                            .child(div().min_w_0().truncate().font_medium().child(name.clone()))
+                            // The Account's own name follows its Alias in brackets.
+                            .when(alias.is_some(), |names| {
+                                names.child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(muted)
+                                        .child(format!("({label})")),
+                                )
+                            }),
                     )
-                    .when(disabled, |header| {
-                        header.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_xs()
-                                .text_color(muted)
-                                .child("Account disabled"),
-                        )
-                    }),
+                    .children(
+                        self.alias_fields
+                            .get(&account.id)
+                            .map(|field| Input::new(field).small().w(px(ALIAS_WIDTH))),
+                    )
+                    .child(
+                        Switch::new(ElementId::Name(format!("account-{}", account.id).into()))
+                            .checked(!disabled)
+                            .small()
+                            .accessibility_label(name)
+                            .on_click(cx.listener(move |view, _: &bool, _, cx| {
+                                view.toggle_account(&account_id, cx)
+                            })),
+                    ),
             )
             .child(v_flex().gap_2().pl_6().children(calendars))
     }

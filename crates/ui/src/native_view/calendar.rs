@@ -53,7 +53,7 @@ impl Default for CalendarPage {
 /// The hour Week view shows at the top when the app starts.
 const WEEK_OPENS_AT: f32 = 8.0;
 
-/// What an Event read covers: a range of dates and the enabled Calendars.
+/// What an Event read covers: a range of dates and the shown Calendars.
 #[derive(Clone, PartialEq, Eq)]
 struct EventsRead {
     first: NaiveDate,
@@ -62,7 +62,7 @@ struct EventsRead {
     calendar_ids: Vec<String>,
 }
 
-/// The Events of the dates on screen, read again when those dates, the enabled Calendars, or
+/// The Events of the dates on screen, read again when those dates, the shown Calendars, or
 /// EventKit change.
 pub(super) struct CalendarEvents {
     events: Vec<Event>,
@@ -98,7 +98,7 @@ fn today() -> NaiveDate {
 }
 
 impl NativeView {
-    /// Reads the Events of the dates on screen in the enabled Calendars, unless they are already
+    /// Reads the Events of the dates on screen in the shown Calendars, unless they are already
     /// read; `force` reads again anyway, as after EventKit reports a change. A failed read is
     /// logged and the last Events stay.
     pub(super) fn refresh_events(&mut self, force: bool, cx: &mut Context<Self>) {
@@ -110,7 +110,9 @@ impl NativeView {
             .map(|(first, end)| EventsRead {
                 first,
                 end,
-                calendar_ids: self.settings.enabled_calendar_ids(sync.calendars()),
+                calendar_ids: self
+                    .settings
+                    .shown_calendar_ids(sync.calendars(), &self.hidden_accounts),
             });
         if !force && wanted == self.events.wanted {
             return;

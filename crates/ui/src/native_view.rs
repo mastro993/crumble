@@ -1,3 +1,4 @@
+mod account_alias;
 mod account_dot;
 mod calendar;
 mod calendars_section;
@@ -16,6 +17,7 @@ pub use shell::{GoBack, GoForward, ToggleSidebar};
 
 use crate::calendar_sync::CalendarSync;
 use crate::settings::{Settings, SidebarSection};
+use account_alias::{AliasFields, Rename};
 use calendar::{CalendarEvents, CalendarPage};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
@@ -25,7 +27,7 @@ use gpui_kit::{
 use route::{History, Route};
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -39,6 +41,8 @@ pub struct NativeView {
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
     settings: Settings,
+    /// EventKit identifiers of the Hidden Accounts; never saved, so they show again next launch.
+    hidden_accounts: BTreeSet<String>,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: CalendarEvents,
@@ -55,6 +59,10 @@ pub struct NativeView {
     sections_moving: HashSet<SidebarSection>,
     /// Drag and slide state of the Account rows.
     account_reorder: RowReorder<String>,
+    /// The Alias field of each Account in Settings.
+    alias_fields: AliasFields,
+    /// The Account row being renamed in the sidebar.
+    renaming: Option<Rename>,
 }
 
 impl NativeView {
@@ -66,9 +74,10 @@ impl NativeView {
         let settings = Settings::load();
         let first_day_select = settings_page::first_day_select(&settings, window, cx);
         let calendar_sync = cx.new(CalendarSync::new);
-        // A sync change can also mean EventKit changed its Events.
-        cx.observe(&calendar_sync, |view, _, cx| {
+        // A sync change can also mean EventKit changed its Events or Accounts.
+        cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
             view.refresh_events(true, cx);
+            view.sync_alias_fields(window, cx);
             cx.notify();
         })
         .detach();
@@ -81,6 +90,7 @@ impl NativeView {
             sidebar_motion: 0,
             sidebar_closing: false,
             settings,
+            hidden_accounts: BTreeSet::new(),
             first_day_select,
             calendar: CalendarPage::default(),
             events: CalendarEvents::default(),
@@ -91,6 +101,8 @@ impl NativeView {
             section_motion: HashMap::new(),
             sections_moving: HashSet::new(),
             account_reorder: RowReorder::default(),
+            alias_fields: AliasFields::default(),
+            renaming: None,
         }
     }
 
