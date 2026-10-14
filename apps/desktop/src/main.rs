@@ -2,6 +2,9 @@
 
 use crumble_ui::{GoBack, GoForward, NextPeriod, PreviousPeriod, ShowToday, ToggleSidebar};
 use gpui_kit::component::TitleBar;
+#[cfg(feature = "mcp")]
+mod mcp;
+
 use gpui_kit::{
     App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
     WindowOptions, actions, point, px, size,
@@ -59,6 +62,8 @@ fn run() -> anyhow::Result<()> {
         .with_assets(crumble_ui::Assets)
         .run(|cx: &mut App| {
             crumble_ui::init(cx);
+            #[cfg(feature = "mcp")]
+            let bridge = mcp::Bridge::new(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             let modifier = if cfg!(target_os = "macos") {
                 "cmd"
@@ -113,6 +118,8 @@ fn run() -> anyhow::Result<()> {
             };
             if let Err(error) = gpui_kit::open_window(options, cx, |window, cx| {
                 crumble_theme::follow_window(window, cx);
+                #[cfg(feature = "mcp")]
+                bridge.install(window, cx);
                 cx.new(|cx| crumble_ui::NativeView::new(window, cx))
             }) {
                 eprintln!("Could not open Crumble: {error}");

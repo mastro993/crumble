@@ -5,12 +5,12 @@ use std::{rc::Rc, time::Duration};
 use super::controls::{Inactive, app_icon, button};
 use super::sidebar_row::{activate, row};
 use super::{NativeView, Route};
-use crumble_theme::sidebar::{INSET, ROW_GAP};
+use crumble_theme::sidebar::{INSET, ROW_GAP, SECTION_GAP};
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
     Animation, AnimationExt, AnyElement, AppContext, Axis, Context, Div, ElementId, EmptyView,
     InteractiveElement, IntoElement, ParentElement, Stateful, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    Window, div, prelude::FluentBuilder, px,
 };
 
 pub(super) const DEFAULT_WIDTH: f32 = 232.0;
@@ -97,6 +97,26 @@ impl NativeView {
 
     fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme();
+        let (background, foreground, border) = (
+            theme.sidebar,
+            theme.sidebar_foreground,
+            theme.sidebar_border,
+        );
+        // One device pixel: a hairline on Retina instead of 1pt's two pixels.
+        let hairline = px(1.0 / window.scale_factor());
+        let sections = self.render_calendars_section(window, cx);
+        let (above, below) = match sections {
+            Some(_) => super::sidebar_scroll::scrolled_edges(&self.sidebar_scroll),
+            None => (false, false),
+        };
+        // The dividers show only while sections are scrolled out of view behind them.
+        let divider = |shown: bool| {
+            if shown {
+                border
+            } else {
+                gpui_kit::transparent_black()
+            }
+        };
         div()
             .id("sidebar")
             .relative()
@@ -108,23 +128,35 @@ impl NativeView {
             .pt(px(crumble_theme::HEADER_HEIGHT))
             .px(px(INSET))
             .pb(px(INSET))
-            .bg(theme.sidebar)
-            .text_color(theme.sidebar_foreground)
-            // One device pixel: a hairline on Retina instead of 1pt's two pixels.
-            .border_r(px(1.0 / window.scale_factor()))
-            .border_color(theme.sidebar_border)
+            .bg(background)
+            .text_color(foreground)
+            .border_r(hairline)
+            .border_color(border)
+            .on_hover(cx.listener(|view, hovered: &bool, _, cx| view.hover_sidebar(*hovered, cx)))
             .child(self.render_history_controls(cx))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(ROW_GAP))
+                    .pb(px(SECTION_GAP / 2.0))
+                    .border_b(hairline)
+                    .border_color(divider(above))
                     .child(self.nav_row(Route::Home, "home", cx))
                     .child(self.nav_row(Route::Calendar, "calendar", cx))
                     .child(self.nav_row(Route::Chat, "chat", cx)),
             )
-            .child(div().flex_1())
-            .child(self.nav_row(Route::Settings, "settings", cx))
+            .map(|sidebar| match sections {
+                Some(sections) => sidebar.child(self.render_sections(sections, cx)),
+                None => sidebar.child(div().flex_1()),
+            })
+            .child(
+                div()
+                    .pt(px(SECTION_GAP / 2.0))
+                    .border_t(hairline)
+                    .border_color(divider(below))
+                    .child(self.nav_row(Route::Settings, "settings", cx)),
+            )
     }
 
     fn nav_row(&self, route: Route, icon: &str, cx: &mut Context<Self>) -> Stateful<Div> {

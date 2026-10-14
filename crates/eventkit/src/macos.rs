@@ -1,6 +1,7 @@
 //! The EventKit bridge. Every objc2-event-kit call is `unsafe`; each block says why it holds.
 #![allow(unsafe_code)]
 
+use std::cell::OnceCell;
 use std::panic::AssertUnwindSafe;
 use std::ptr::NonNull;
 use std::sync::{Mutex, OnceLock};
@@ -87,9 +88,32 @@ pub fn accounts() -> anyhow::Result<Vec<Account>> {
             })
             .map(|source| {
                 let name = unsafe { source.title() }.to_string();
+                let kind = source_kind(&source);
+                let calendar_names: Vec<String> =
+                    unsafe { source.calendarsForEntityType(EKEntityType::Event) }
+                        .iter()
+                        .map(|calendar| unsafe { calendar.title() }.to_string())
+                        .collect();
+                // Read at most once, and only for the services that sync Events with people.
+                let events = OnceCell::new();
+                let recent = || {
+                    events.get_or_init(|| match kind {
+                        SourceKind::CalDav | SourceKind::Exchange => recent_events(&source),
+                        SourceKind::Other => Vec::new(),
+                    })
+                };
                 Account {
                     id: unsafe { source.sourceIdentifier() }.to_string(),
-                    provider: classify::provider(source_kind(&source), &name),
+                    email: classify::account_email(
+                        own_address(recent()),
+                        calendar_names.iter().map(String::as_str),
+                    ),
+                    provider: classify::provider(kind, &name, || {
+                        recent().iter().any(|event| {
+                            unsafe { event.calendarItemExternalIdentifier() }
+                                .is_some_and(|id| classify::is_google_event_id(&id.to_string()))
+                        })
+                    }),
                     name,
                 }
             })
@@ -97,6 +121,54 @@ pub fn accounts() -> anyhow::Result<Vec<Account>> {
         accounts.sort_by_key(|account| account.name.to_lowercase());
         accounts
     })
+}
+
+/// How far around today Events are read to learn about an Account.
+const PROBE_SPAN: TimeDelta = TimeDelta::days(90);
+
+/// The Events within [`PROBE_SPAN`] of today in `source`.
+// ponytail: an Account with no Events in that span keeps its title and stays Other; widen the
+// span if that bites.
+fn recent_events(source: &EKSource) -> Vec<Retained<EKEvent>> {
+    let now = Local::now();
+    // SAFETY: getters on live EventKit objects, and a predicate built by the same store.
+    unsafe {
+        let calendars = source
+            .calendarsForEntityType(EKEntityType::Event)
+            .allObjects();
+        // An empty list would make the predicate search every Calendar.
+        if calendars.is_empty() {
+            return Vec::new();
+        }
+        let predicate = store().predicateForEventsWithStartDate_endDate_calendars(
+            &ns_date(now - PROBE_SPAN),
+            &ns_date(now + PROBE_SPAN),
+            Some(&calendars),
+        );
+        store().eventsMatchingPredicate(&predicate).to_vec()
+    }
+}
+
+/// The user's own address among the organizers and attendees of `events`.
+fn own_address(events: &[Retained<EKEvent>]) -> Option<String> {
+    // SAFETY: getters on live EventKit objects.
+    unsafe {
+        events.iter().find_map(|event| {
+            let attendees = event
+                .attendees()
+                .map(|list| list.to_vec())
+                .unwrap_or_default();
+            event
+                .organizer()
+                .into_iter()
+                .chain(attendees)
+                .filter(|participant| participant.isCurrentUser())
+                .find_map(|participant| {
+                    let url = participant.URL().absoluteString()?.to_string();
+                    classify::mailto_address(&url)
+                })
+        })
+    }
 }
 
 fn source_kind(source: &EKSource) -> SourceKind {

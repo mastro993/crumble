@@ -6,8 +6,8 @@ use super::NativeView;
 use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, LABEL_SIZE, RADIUS, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::{ActiveTheme, Icon};
 use gpui_kit::{
-    App, Context, Div, ElementId, FontWeight, InteractiveElement, KeyDownEvent, ParentElement,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
+    App, Context, Div, ElementId, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px,
 };
 
@@ -23,15 +23,31 @@ pub(super) fn row(
     cx: &App,
 ) -> Stateful<Div> {
     let theme = cx.theme();
+    let icon_color = if selected {
+        theme.sidebar_accent_foreground
+    } else {
+        theme.muted_foreground.opacity(ICON_OPACITY)
+    };
+    let icon = icon
+        .size(px(ICON_SIZE))
+        .flex_shrink_0()
+        .text_color(icon_color);
+    row_with(id, icon, label, selected, cx)
+}
+
+/// A row with any `leading` element in the icon slot.
+pub(super) fn row_with(
+    id: impl Into<ElementId>,
+    leading: impl IntoElement,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    let theme = cx.theme();
     let text = if selected {
         theme.sidebar_accent_foreground
     } else {
         theme.muted_foreground
-    };
-    let icon_color = if selected {
-        text
-    } else {
-        theme.muted_foreground.opacity(ICON_OPACITY)
     };
     let hover = theme.sidebar_accent.opacity(0.5);
     div()
@@ -49,11 +65,7 @@ pub(super) fn row(
         .text_color(text)
         .when(selected, |row| row.bg(theme.sidebar_accent))
         .when(!selected, |row| row.hover(move |style| style.bg(hover)))
-        .child(
-            icon.size(px(ICON_SIZE))
-                .flex_shrink_0()
-                .text_color(icon_color),
-        )
+        .child(leading)
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
 }
 

@@ -33,8 +33,16 @@ pub mod sidebar {
     pub const ICON_GAP: f32 = 8.0;
     /// Row label size.
     pub const LABEL_SIZE: f32 = 14.0;
+    /// Section title size.
+    pub const DETAIL_SIZE: f32 = 12.0;
+    /// Height of a section title row.
+    pub const SECTION_HEIGHT: f32 = 28.0;
+    /// Space above a section title.
+    pub const SECTION_GAP: f32 = 8.0;
     /// Corner radius of the selection fill.
     pub const RADIUS: f32 = 8.0;
+    /// Diameter of an Account's color dot, centred in the icon slot.
+    pub const DOT_SIZE: f32 = 8.0;
 }
 
 /// Applies the system font.

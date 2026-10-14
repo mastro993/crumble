@@ -1,6 +1,7 @@
 //! Native application views and framework integration.
 
 mod assets;
+mod calendar_sync;
 mod native_view;
 mod settings;
 
