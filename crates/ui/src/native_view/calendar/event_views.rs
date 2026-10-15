@@ -103,6 +103,9 @@ impl RenderOnce for EventChip {
         let chip = div()
             .id(self.id.clone())
             .test_support()
+            // Focusable, so Tab reaches it and Enter or Space opens it as a click does.
+            .tab_index(0)
+            .aria_label(title.clone())
             .cursor_pointer()
             .overflow_hidden()
             .text_xs()
@@ -468,11 +471,14 @@ mod tests {
             );
             assert!(card.left() > trigger.right(), "{card:?} covers {trigger:?}");
             window.click(chip, cx);
+            // The click also focuses the Event, which the keyboard then opens.
+            window.press("enter", cx);
+            window.press("space", cx);
         })
         .unwrap_or_else(|error| panic!("update test window: {error}"));
 
-        // The click opens the Event and stops before the day, which would open its week.
-        assert_eq!(*opened.borrow(), ["standup"]);
+        // Each opens the Event and stops before the day, which would open its week.
+        assert_eq!(*opened.borrow(), ["standup"; 3]);
         cx.update(|cx| assert_eq!(day.read(cx).day_clicks, 0));
     }
 }
