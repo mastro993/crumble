@@ -121,14 +121,14 @@ impl NativeView {
     }
 
     fn go_back(&mut self, cx: &mut Context<Self>) {
-        if let Some(route) = self.history.back(self.route) {
+        if let Some(route) = self.history.back(self.route.clone()) {
             self.route = route;
             cx.notify();
         }
     }
 
     fn go_forward(&mut self, cx: &mut Context<Self>) {
-        if let Some(route) = self.history.forward(self.route) {
+        if let Some(route) = self.history.forward(self.route.clone()) {
             self.route = route;
             cx.notify();
         }
@@ -143,9 +143,10 @@ impl Focusable for NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let page = match self.route {
+        let page = match &self.route {
             Route::Calendar => self.render_calendar(window, cx),
             Route::Settings => self.render_settings(cx).into_any_element(),
+            Route::Event(event) => self.render_event_page(event, cx),
             route => div().text_xl().child(route.title()).into_any_element(),
         };
         let colors = cx.theme().colors;

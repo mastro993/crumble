@@ -159,7 +159,9 @@ mod tests {
                 end: at(end_day, end_hour, end_minute),
             },
             location: None,
-            join_url: None,
+            description: None,
+            join: None,
+            participants: Vec::new(),
         }
     }
 

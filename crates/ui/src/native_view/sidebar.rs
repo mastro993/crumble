@@ -166,12 +166,12 @@ impl NativeView {
                 format!("nav-{}", label.to_lowercase()),
                 app_icon(icon),
                 label,
-                self.route == route,
+                self.route.sidebar_row() == route,
                 cx,
             ),
             label,
             cx,
-            move |view, _, cx| view.navigate(route, cx),
+            move |view, _, cx| view.navigate(route.clone(), cx),
         )
     }
 

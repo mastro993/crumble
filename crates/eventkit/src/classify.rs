@@ -1,6 +1,6 @@
 //! Guesses EventKit leaves to Crumble: an Account's provider and an Event's join link.
 
-use crate::Provider;
+use crate::{Join, Provider};
 
 /// The EventKit source types that matter for guessing a [`Provider`].
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -73,31 +73,44 @@ pub(crate) fn is_google_event_id(external_id: &str) -> bool {
     external_id.ends_with("@google.com")
 }
 
-/// Hosts whose links open a video meeting. Subdomains match too, such as `us02web.zoom.us`.
-const MEETING_HOSTS: [&str; 5] = [
-    "meet.google.com",
-    "teams.microsoft.com",
-    "teams.live.com",
-    "zoom.us",
-    "webex.com",
+/// Hosts whose links open a video meeting, with the service's name. Subdomains match too, such
+/// as `us02web.zoom.us`.
+const MEETING_HOSTS: [(&str, &str); 10] = [
+    ("meet.google.com", "Google Meet"),
+    ("teams.microsoft.com", "Microsoft Teams"),
+    ("teams.live.com", "Microsoft Teams"),
+    ("zoom.us", "Zoom"),
+    ("webex.com", "Webex"),
+    ("facetime.apple.com", "FaceTime"),
+    ("whereby.com", "Whereby"),
+    ("meet.jit.si", "Jitsi Meet"),
+    ("meet.goto.com", "GoTo Meeting"),
+    ("chime.aws", "Amazon Chime"),
 ];
+
+/// The words of `text` that could be links, without the brackets and punctuation around them.
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || "<>\"'()[]".contains(c))
+        .map(|word| word.trim_end_matches(['.', ',', ';']))
+}
 
 /// First meeting link in `fields`, searched in order. Unknown hosts never match.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn join_link<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+pub(crate) fn join_link<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -> Option<Join> {
     fields
         .into_iter()
         .flatten()
-        .flat_map(|text| text.split(|c: char| c.is_whitespace() || "<>\"'()[]".contains(c)))
-        .map(|word| word.trim_end_matches(['.', ',', ';']))
-        .find(|word| is_meeting_link(word))
-        .map(str::to_owned)
+        .flat_map(words)
+        .find_map(|word| {
+            Some(Join {
+                url: word.to_owned(),
+                service: meeting_service(word)?,
+            })
+        })
 }
 
-fn is_meeting_link(word: &str) -> bool {
-    let Some(rest) = word.strip_prefix("https://") else {
-        return false;
-    };
+fn meeting_service(word: &str) -> Option<&'static str> {
+    let rest = word.strip_prefix("https://")?;
     let host = rest
         .split(['/', '?', '#', ':'])
         .next()
@@ -105,15 +118,137 @@ fn is_meeting_link(word: &str) -> bool {
         .to_ascii_lowercase();
     MEETING_HOSTS
         .iter()
-        .any(|known| host == *known || host.ends_with(&format!(".{known}")))
+        .find(|(known, _)| host == *known || host.ends_with(&format!(".{known}")))
+        .map(|&(_, service)| service)
+}
+
+/// `notes` as plain text for the details, or `None` when nothing is left: HTML, as Google sends
+/// a description edited on the web, becomes text; the meeting details Google and Teams add
+/// between marker lines go; so does every meeting link, since the Join button stands for them.
+// ponytail: Zoom and Webex invitations have no markers, so their dial-in text stays.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn description(notes: &str) -> Option<String> {
+    let text = html_to_text(notes);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if !is_marker(line) {
+            kept.push(line);
+            continue;
+        }
+        // A block that holds a meeting link goes, up to its closing marker or the end.
+        let mut block = vec![line];
+        for line in lines.by_ref() {
+            block.push(line);
+            if is_marker(line) {
+                break;
+            }
+        }
+        if !block
+            .iter()
+            .any(|line| words(line).any(|w| meeting_service(w).is_some()))
+        {
+            kept.extend(block);
+        }
+    }
+    let mut out = String::new();
+    let mut blank = true;
+    for line in kept {
+        let line = without_meeting_links(line);
+        let line = line.trim_end();
+        if line.trim().is_empty() {
+            blank = true;
+            continue;
+        }
+        if blank && !out.is_empty() {
+            out.push('\n');
+        }
+        blank = false;
+        out.push_str(line);
+        out.push('\n');
+    }
+    let out = out.trim_end();
+    (!out.is_empty()).then(|| out.to_owned())
+}
+
+/// Google's `-::~:~::~…::-` and Teams' `____…` lines around the meeting details they add.
+fn is_marker(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with("-::~") || (line.len() >= 20 && line.chars().all(|c| c == '_'))
+}
+
+/// `line` with its meeting links removed, along with the angle brackets Teams puts around them.
+fn without_meeting_links(line: &str) -> String {
+    words(line)
+        .filter(|word| meeting_service(word).is_some())
+        .fold(line.to_owned(), |line, link| {
+            line.replace(&format!("<{link}>"), "").replace(link, "")
+        })
+}
+
+/// HTML tags dropped, line-breaking ones turned into newlines, and common entities decoded.
+/// Text without tags, such as Teams' `<https://…>` links, is returned as it is.
+fn html_to_text(html: &str) -> String {
+    const BREAKS: [&str; 6] = ["br", "p", "div", "li", "ul", "ol"];
+    let mut text = String::with_capacity(html.len());
+    let mut rest = html;
+    let mut tagged = false;
+    while let Some(open) = rest.find('<') {
+        text.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let name: String = after
+            .trim_start_matches('/')
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect();
+        let tag_end = after.find('>');
+        let is_tag = !name.is_empty()
+            && name.starts_with(|c: char| c.is_ascii_alphabetic())
+            && after
+                .trim_start_matches('/')
+                .chars()
+                .nth(name.len())
+                .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace());
+        match tag_end {
+            Some(end) if is_tag => {
+                tagged = true;
+                if BREAKS.contains(&name.to_ascii_lowercase().as_str()) {
+                    text.push('\n');
+                }
+                rest = &after[end + 1..];
+            }
+            _ => {
+                text.push('<');
+                rest = after;
+            }
+        }
+    }
+    text.push_str(rest);
+    if !tagged {
+        return html.to_owned();
+    }
+    [
+        ("&nbsp;", " "),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#39;", "'"),
+        ("&amp;", "&"),
+    ]
+    .into_iter()
+    .fold(text, |text, (entity, char)| text.replace(entity, char))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Provider, SourceKind, account_email, is_google_event_id, join_link, mailto_address,
-        provider,
+        Join, Provider, SourceKind, account_email, description, is_google_event_id, join_link,
+        mailto_address, provider,
     };
+
+    fn join_url<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+        join_link(fields).map(|join| join.url)
+    }
 
     #[test]
     fn the_own_address_wins_then_a_single_calendar_named_like_one() {
@@ -183,28 +318,75 @@ mod tests {
     fn join_link_takes_the_first_meeting_link_in_field_order() {
         let notes = "Agenda\n<https://teams.microsoft.com/l/meetup-join/abc>\nhttps://zoom.us/j/1";
         assert_eq!(
-            join_link([None, Some("Room 4"), Some(notes)]).as_deref(),
-            Some("https://teams.microsoft.com/l/meetup-join/abc")
+            join_url([None, Some("Room 4"), Some(notes)]),
+            Some("https://teams.microsoft.com/l/meetup-join/abc".to_owned())
         );
         assert_eq!(
-            join_link([Some("https://meet.google.com/abc-defg-hij"), Some(notes)]).as_deref(),
-            Some("https://meet.google.com/abc-defg-hij")
+            join_url([Some("https://meet.google.com/abc-defg-hij"), Some(notes)]),
+            Some("https://meet.google.com/abc-defg-hij".to_owned())
         );
     }
 
     #[test]
     fn join_link_matches_subdomains_and_drops_trailing_punctuation() {
         assert_eq!(
-            join_link([Some("Join: https://us02web.zoom.us/j/123?pwd=x.")]).as_deref(),
-            Some("https://us02web.zoom.us/j/123?pwd=x")
+            join_url([Some("Join: https://us02web.zoom.us/j/123?pwd=x.")]),
+            Some("https://us02web.zoom.us/j/123?pwd=x".to_owned())
         );
     }
 
     #[test]
     fn join_link_ignores_unknown_hosts_and_lookalikes() {
-        assert_eq!(join_link([Some("https://example.com/zoom.us")]), None);
-        assert_eq!(join_link([Some("https://notzoom.us/j/1")]), None);
-        assert_eq!(join_link([Some("http://zoom.us/j/1")]), None);
-        assert_eq!(join_link([None, None]), None);
+        assert_eq!(join_url([Some("https://example.com/zoom.us")]), None);
+        assert_eq!(join_url([Some("https://notzoom.us/j/1")]), None);
+        assert_eq!(join_url([Some("http://zoom.us/j/1")]), None);
+        assert_eq!(join_url([None, None]), None);
+    }
+
+    #[test]
+    fn join_links_name_their_service() {
+        assert_eq!(
+            join_link([Some("https://meet.google.com/abc-defg-hij")]),
+            Some(Join {
+                url: "https://meet.google.com/abc-defg-hij".into(),
+                service: "Google Meet",
+            })
+        );
+        assert_eq!(
+            join_link([Some("https://facetime.apple.com/join#v=1")]).map(|join| join.service),
+            Some("FaceTime")
+        );
+    }
+
+    #[test]
+    fn descriptions_drop_google_meeting_details_and_html() {
+        let notes = "<b>Agenda</b><br>Review &amp; plan<br><br>\
+                     <a href=\"https://docs.example.com/x\">https://docs.example.com/x</a>\n\n\
+                     -::~:~::~:~:~:~::-\n\
+                     Join with Google Meet: https://meet.google.com/abc-defg-hij\n\
+                     Please do not edit this section.\n\
+                     -::~:~::~:~:~:~::-";
+        assert_eq!(
+            description(notes).as_deref(),
+            Some("Agenda\nReview & plan\n\nhttps://docs.example.com/x")
+        );
+    }
+
+    #[test]
+    fn descriptions_drop_teams_blocks_and_bare_meeting_links() {
+        let underline = "_".repeat(30);
+        let notes = format!(
+            "Weekly sync\n{underline}\nMicrosoft Teams meeting\n\
+             Click here to join<https://teams.microsoft.com/l/meetup-join/abc>\n{underline}"
+        );
+        assert_eq!(description(&notes).as_deref(), Some("Weekly sync"));
+        assert_eq!(
+            description("Call at https://zoom.us/j/1 then lunch").as_deref(),
+            Some("Call at  then lunch")
+        );
+        assert_eq!(description("https://zoom.us/j/1"), None);
+        // Underlines without a meeting link and comparisons that only look like tags stay.
+        let kept = format!("{underline}\nif a < b and c > d\n{underline}");
+        assert_eq!(description(&kept).as_deref(), Some(kept.as_str()));
     }
 }

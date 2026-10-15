@@ -106,6 +106,46 @@ pub struct Event {
     pub when: When,
     /// Free-text location.
     pub location: Option<String>,
-    /// Link to a known meeting service, found in the URL, location, or notes.
-    pub join_url: Option<String>,
+    /// The notes as plain text, without meeting links or the meeting details Google and Teams
+    /// add, since [`Event::join`] stands for them.
+    pub description: Option<String>,
+    /// Meeting link of a known service, found in the URL, location, or notes.
+    pub join: Option<Join>,
+    /// The organizer first, then the other attendees; empty when the Event has no attendees.
+    pub participants: Vec<Participant>,
+}
+
+/// A link that opens a video meeting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Join {
+    /// The link, starting with `https://`.
+    pub url: String,
+    /// The service's name, such as "Google Meet".
+    pub service: &'static str,
+}
+
+/// Someone invited to an Event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Participant {
+    /// Their name, else their email address.
+    pub name: String,
+    /// Their answer to the invitation.
+    pub response: Response,
+    /// Whether they organize the Event.
+    pub organizer: bool,
+    /// Whether they are the user.
+    pub you: bool,
+}
+
+/// A participant's answer to an invitation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Response {
+    /// Going.
+    Accepted,
+    /// Maybe going.
+    Tentative,
+    /// Not going.
+    Declined,
+    /// No answer yet.
+    Pending,
 }

@@ -11,17 +11,14 @@ use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::base::{Align, Placement, Positioner, TestSupportExt};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
-    Anchor, Animation, AnimationExt, AnyElement, App, Bounds, Context, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, Role, SharedString, StatefulInteractiveElement,
-    Styled, Toggled, Window, canvas, div, point, prelude::FluentBuilder, px, size,
+    Anchor, Animation, AnimationElement, AnimationExt, AnyElement, App, Bounds, Context,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Role, SharedString,
+    StatefulInteractiveElement, Styled, Toggled, Window, canvas, div, point,
+    prelude::FluentBuilder, px, size,
 };
 
 impl Render for Menu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let motion = &cx.theme().motion;
-        let (duration, easing) = (motion.duration_fast, motion.easing_enter.clone());
-        let travel = f32::from(motion.distance_short.to_pixels(window.rem_size()));
-        let ring = cx.theme().foreground.alpha(LINE_INK);
         let has_leading = self.items.iter().any(|item| item.leading.is_some());
         let rows: Vec<AnyElement> = self
             .items
@@ -29,23 +26,13 @@ impl Render for Menu {
             .enumerate()
             .map(|(ix, item)| self.row(ix, None, item, has_leading, cx))
             .collect();
-        // Fades in while sliding down onto its place; the shadow ramps up late, as it would
-        // otherwise show through the half-transparent surface.
         let menu = panel(div().id("menu").test_support(), cx)
             .role(Role::Menu)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .children(rows)
-            .children(self.render_submenu(window, cx))
-            .with_animation(
-                "menu-open",
-                Animation::new(duration).with_easing(move |delta| easing.sample(delta)),
-                move |menu, delta| {
-                    menu.top(px(-travel * (1. - delta)))
-                        .opacity(delta)
-                        .shadow(shadow(ring, delta.powi(3)))
-                },
-            );
+            .children(self.render_submenu(window, cx));
+        let menu = opening(menu, "menu-open", window, cx);
         // Over the whole window, so a press outside the menu closes it instead of reaching
         // what is underneath.
         div()
@@ -310,8 +297,32 @@ fn beside(row: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
     ))
 }
 
-/// The surface shared by a menu, its submenu, and a panel.
-fn panel<E: Styled>(panel: E, cx: &App) -> E {
+/// `surface` fading in while it slides down onto its place, as a menu opens; the shadow ramps
+/// up late, as it would otherwise show through the half-transparent surface.
+pub(in crate::native_view) fn opening<E: Styled + IntoElement + 'static>(
+    surface: E,
+    id: &'static str,
+    window: &Window,
+    cx: &App,
+) -> AnimationElement<E> {
+    let motion = &cx.theme().motion;
+    let (duration, easing) = (motion.duration_fast, motion.easing_enter.clone());
+    let travel = f32::from(motion.distance_short.to_pixels(window.rem_size()));
+    let ring = cx.theme().foreground.alpha(LINE_INK);
+    surface.with_animation(
+        id,
+        Animation::new(duration).with_easing(move |delta| easing.sample(delta)),
+        move |surface, delta| {
+            surface
+                .top(px(-travel * (1. - delta)))
+                .opacity(delta)
+                .shadow(shadow(ring, delta.powi(3)))
+        },
+    )
+}
+
+/// The surface shared by a menu, its submenu, a panel, and an Event's hover card.
+pub(in crate::native_view) fn panel<E: Styled>(panel: E, cx: &App) -> E {
     let theme = cx.theme();
     panel
         .flex()

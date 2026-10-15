@@ -1,19 +1,21 @@
-//! How Events are drawn: a block in Week view, a line or bar in Month view, and the details
-//! popover any of them opens.
+//! How Events are drawn: a block in Week view, a line or bar in Month view. Hovering one shows
+//! its details card; clicking one opens its page.
 
-use super::events::{columns, day_order, minutes_on, on_day, when_text};
+use super::NativeView;
+use super::event_details;
+use super::events::{columns, day_order, minutes_on, on_day};
 use super::grids::HOUR_HEIGHT;
 use chrono::NaiveDate;
 use crumble_eventkit::{Calendar, Event, When};
-use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{
-    ActiveTheme, Selectable, Sizable, StyledExt, button::Button, button::ButtonVariants, h_flex,
-    v_flex,
-};
+use gpui_kit::base::TestSupportExt;
+use gpui_kit::component::hover_card::HoverCard;
+use gpui_kit::component::{ActiveTheme, StyledExt, v_flex};
 use gpui_kit::{
-    App, Div, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px, relative,
+    Anchor, App, Context, Div, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px, relative,
 };
+use std::rc::Rc;
 
 /// Height of a Month view line and an all-day bar.
 const LINE_HEIGHT: f32 = 18.0;
@@ -27,7 +29,17 @@ const MIN_BLOCK_MINUTES: f32 = 22.0;
 const TWO_LINE_HEIGHT: f32 = 36.0;
 /// Line height inside a Week view block, tighter than the theme's so two lines fit in 45 minutes.
 const BLOCK_LINE_HEIGHT: f32 = 15.0;
-const POPOVER_WIDTH: f32 = 280.0;
+
+/// Opens an Event's page when its chip is clicked.
+pub(super) type OpenEvent = Rc<dyn Fn(&Event, &mut App)>;
+
+/// Opens the clicked Event's page in `cx`'s view.
+pub(super) fn open_in(cx: &Context<NativeView>) -> OpenEvent {
+    let view = cx.weak_entity();
+    Rc::new(move |event, cx| {
+        let _ = view.update(cx, |view, cx| view.open_event(event.clone(), cx));
+    })
+}
 
 /// An Event with what drawing it needs from its Calendar and Account.
 #[derive(Clone)]
@@ -60,17 +72,18 @@ pub(super) fn shown(
         .collect()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum ChipKind {
-    /// A Week view block for a timed Event; a short one shows only its title.
-    Block { one_line: bool },
+    /// A Week view block for a timed Event, `height` points tall; a short one shows only its
+    /// title.
+    Block { one_line: bool, height: f32 },
     /// A Month view line for a timed Event: dot, start time, title.
     Line,
     /// A tinted bar for an all-day Event.
     Bar,
 }
 
-/// One Event's clickable shape; it is the trigger of the details popover.
+/// One Event's clickable shape; it is the trigger of the details card.
 #[derive(IntoElement)]
 struct EventChip {
     id: ElementId,
@@ -78,24 +91,13 @@ struct EventChip {
     title: SharedString,
     time: Option<SharedString>,
     color: Hsla,
-    selected: bool,
-}
-
-impl Selectable for EventChip {
-    fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
-    }
+    open: Box<dyn Fn(&mut App)>,
 }
 
 impl RenderOnce for EventChip {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let tint = self.color.opacity(if self.selected { 0.4 } else { 0.22 });
+        let tint = self.color.opacity(0.22);
         let title = if self.title.is_empty() {
             "(No title)".into()
         } else {
@@ -103,13 +105,21 @@ impl RenderOnce for EventChip {
         };
         let chip = div()
             .id(self.id)
+            .test_support()
             .cursor_pointer()
             .overflow_hidden()
             .text_xs()
-            .text_color(theme.foreground);
+            .text_color(theme.foreground)
+            // The day under a Month view Event opens its week; the Event opens its own page.
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                (self.open)(cx);
+            });
         match self.kind {
-            ChipKind::Block { one_line } => chip
-                .size_full()
+            // The card's trigger is not sized, so the block cannot fill it by percentage.
+            ChipKind::Block { one_line, height } => chip
+                .w_full()
+                .h(px(height))
                 .line_height(px(BLOCK_LINE_HEIGHT))
                 .px_1()
                 .rounded(px(4.0))
@@ -143,10 +153,9 @@ impl RenderOnce for EventChip {
                 .items_center()
                 .gap_1()
                 .rounded(px(4.0))
-                .when(self.selected, |line| line.bg(tint))
-                .when(!self.selected, |line| {
+                .hover({
                     let hover = theme.muted;
-                    line.hover(move |style| style.bg(hover))
+                    move |style| style.bg(hover)
                 })
                 .child(
                     div()
@@ -166,87 +175,39 @@ impl RenderOnce for EventChip {
     }
 }
 
-/// The chip of `shown` on `date`, opening the Event's details when clicked.
-fn event(shown: &Shown, date: NaiveDate, kind: ChipKind) -> Popover {
+/// The chip of `shown` on `date`: hovering shows its details card, clicking opens its page.
+fn event(shown: &Shown, date: NaiveDate, kind: ChipKind, open: &OpenEvent) -> HoverCard {
     let event = &shown.event;
     let id = format!("event-{}-{date}", event.id);
     let time = match (kind, event.when) {
         (ChipKind::Bar, _) | (_, When::AllDay { .. }) => None,
         (_, When::Timed { start, .. }) => Some(start.format("%H:%M").to_string().into()),
     };
+    let (open, opened) = (open.clone(), event.clone());
     let chip = EventChip {
         id: ElementId::Name(format!("{id}-chip").into()),
         kind,
         title: event.title.clone().into(),
         time,
         color: shown.color,
-        selected: false,
+        open: Box::new(move |cx| open(&opened, cx)),
     };
     let details = shown.clone();
-    Popover::new(ElementId::Name(id.into()))
-        .trigger_style(StyleRefinement::default().size_full())
+    HoverCard::new(ElementId::Name(id.into()))
+        .appearance(false)
+        .anchor(Anchor::TopLeft)
         .trigger(chip)
-        .content(move |_, _, cx| details_view(&details, cx))
-}
-
-/// Title, when, Calendar, location, and a Join button for a meeting link. Read-only: Crumble
-/// never changes Events.
-fn details_view(shown: &Shown, cx: &App) -> Div {
-    let theme = cx.theme();
-    let event = &shown.event;
-    let join = event.join_url.clone();
-    v_flex()
-        .w(px(POPOVER_WIDTH))
-        .gap_2()
-        .text_sm()
-        .child(
-            div()
-                .text_base()
-                .font_semibold()
-                .child(if event.title.is_empty() {
-                    "(No title)".to_owned()
-                } else {
-                    event.title.clone()
-                }),
-        )
-        .child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child(when_text(&event.when)),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .size(px(8.0))
-                        .flex_shrink_0()
-                        .rounded_full()
-                        .bg(shown.color),
-                )
-                .child(div().min_w_0().truncate().child(shown.calendar.clone())),
-        )
-        .children(
-            event
-                .location
-                .clone()
-                .map(|location| div().text_color(theme.muted_foreground).child(location)),
-        )
-        .children(join.map(|url| {
-            h_flex().child(
-                Button::new("event-join")
-                    .primary()
-                    .small()
-                    .label("Join")
-                    .cursor_pointer()
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-            )
-        }))
+        .content(move |_, window, cx| event_details::card(&details, window, cx))
 }
 
 /// The all-day Events of each of `days`, in Week view's strip above the hours; `None` when the
 /// week has none.
-pub(super) fn all_day_strip(days: &[NaiveDate], shown: &[Shown], cx: &App) -> Option<Vec<Div>> {
+pub(super) fn all_day_strip(
+    days: &[NaiveDate],
+    shown: &[Shown],
+    open: &OpenEvent,
+    cx: &App,
+) -> Option<Vec<Div>> {
     let all_day: Vec<&Shown> = shown
         .iter()
         .filter(|shown| matches!(shown.event.when, When::AllDay { .. }))
@@ -261,17 +222,17 @@ pub(super) fn all_day_strip(days: &[NaiveDate], shown: &[Shown], cx: &App) -> Op
         days.iter()
             .map(|&date| {
                 let day = day_order(all_day.iter().map(|shown| &shown.event), date);
-                stacked(day, &all_day, date, ChipKind::Bar, ALL_DAY_LINES, cx)
+                stacked(day, &all_day, date, ChipKind::Bar, ALL_DAY_LINES, open, cx)
             })
             .collect(),
     )
 }
 
 /// A Month view day's Events, all-day first.
-pub(super) fn month_day(date: NaiveDate, shown: &[Shown], cx: &App) -> Div {
+pub(super) fn month_day(date: NaiveDate, shown: &[Shown], open: &OpenEvent, cx: &App) -> Div {
     let day = day_order(shown.iter().map(|shown| &shown.event), date);
     let all: Vec<&Shown> = shown.iter().collect();
-    stacked(day, &all, date, ChipKind::Line, MONTH_LINES, cx)
+    stacked(day, &all, date, ChipKind::Line, MONTH_LINES, open, cx)
 }
 
 /// The first `limit` of `day` as chips, then "+N more" for the rest.
@@ -281,6 +242,7 @@ fn stacked(
     date: NaiveDate,
     timed_kind: ChipKind,
     limit: usize,
+    open: &OpenEvent,
     cx: &App,
 ) -> Div {
     // ponytail: a fixed number of lines per day, whatever the cell's height; measure the
@@ -300,7 +262,7 @@ fn stacked(
             Some(
                 div()
                     .h(px(LINE_HEIGHT))
-                    .child(self::event(shown, date, kind)),
+                    .child(self::event(shown, date, kind, open)),
             )
         }))
         .when(more > 0, |list| {
@@ -316,7 +278,7 @@ fn stacked(
 
 /// Week view's timed Events of one day, placed by time over the hour grid. Overlapping ones
 /// share the width side by side.
-pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown]) -> Div {
+pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown], open: &OpenEvent) -> Div {
     let timed: Vec<(&Shown, (f32, f32))> = shown
         .iter()
         .filter_map(|shown| Some((shown, minutes_on(&shown.event, date)?)))
@@ -333,10 +295,11 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown]) -> Div {
         .h_full()
         .children(timed.iter().zip(spans).zip(placed).map(
             |((&(shown, _), (start, end)), (column, width))| {
+                let height = to_px(end - start) - 1.0;
                 div()
                     .absolute()
                     .top(px(to_px(start)))
-                    .h(px(to_px(end - start) - 1.0))
+                    .h(px(height))
                     .left(relative(column as f32 / width as f32))
                     .w(relative(1.0 / width as f32))
                     .pr(px(2.0))
@@ -345,7 +308,9 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown]) -> Div {
                         date,
                         ChipKind::Block {
                             one_line: to_px(end - start) < TWO_LINE_HEIGHT,
+                            height,
                         },
+                        open,
                     ))
             },
         ))
@@ -353,10 +318,19 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown]) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::shown;
+    use super::{OpenEvent, Shown, month_day, shown};
     use chrono::NaiveDate;
-    use crumble_eventkit::{Calendar, Event, When};
-    use gpui_kit::{Hsla, rgb};
+    use crumble_eventkit::{Calendar, Event, Join, Participant, Response, When};
+    use gpui_kit::base::TestSupportExt;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        AppContext, Bounds, Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+        StatefulInteractiveElement, Styled, TestAppContext, Window, WindowBounds, WindowOptions,
+        div, px, rgb, size,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::Duration;
 
     fn calendar(id: &str, account_id: &str, color: u32) -> Calendar {
         Calendar {
@@ -378,7 +352,9 @@ mod tests {
                 last: day,
             },
             location: None,
-            join_url: None,
+            description: None,
+            join: None,
+            participants: Vec::new(),
         }
     }
 
@@ -414,5 +390,95 @@ mod tests {
             colors,
             [("standup", red), ("party", gray), ("ferragosto", red)]
         );
+    }
+
+    /// A Month view day holding one Event, recording which Events open and the clicks that
+    /// reach the day.
+    struct Day {
+        shown: Vec<Shown>,
+        opened: Rc<RefCell<Vec<String>>>,
+        day_clicks: usize,
+    }
+
+    impl Render for Day {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let opened = self.opened.clone();
+            let open: OpenEvent =
+                Rc::new(move |event, _| opened.borrow_mut().push(event.id.clone()));
+            let date = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap_or_default();
+            div()
+                .id("day")
+                .test_support()
+                .size_full()
+                .on_click(cx.listener(|day, _, _, _| day.day_clicks += 1))
+                .child(month_day(date, &self.shown, &open, cx))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_event_shows_its_details_on_hover_and_opens_on_click(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let standup = Event {
+            description: Some("Agenda".into()),
+            join: Some(Join {
+                url: "https://meet.google.com/abc-defg-hij".into(),
+                service: "Google Meet",
+            }),
+            participants: vec![Participant {
+                name: "Ada".into(),
+                response: Response::Accepted,
+                organizer: true,
+                you: false,
+            }],
+            ..event("standup", "work")
+        };
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let (handle, day) = cx
+            .update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Default::default(),
+                            size(px(400.), px(600.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        cx.new(|_| Day {
+                            shown: vec![Shown {
+                                event: standup,
+                                color: rgb(0xff0000).into(),
+                                calendar: "Work".into(),
+                            }],
+                            opened: opened.clone(),
+                            day_clicks: 0,
+                        })
+                    },
+                )
+            })
+            .unwrap_or_else(|error| panic!("open test window: {error}"));
+        let chip = "event-standup-2026-10-14-chip";
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.hover(chip, cx);
+            window.render_frame(cx);
+            assert!(window.try_find("event-card").is_none(), "opened at once");
+        })
+        .unwrap_or_else(|error| panic!("update test window: {error}"));
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.try_find("event-card").is_some(), "no details card");
+            window.click(chip, cx);
+        })
+        .unwrap_or_else(|error| panic!("update test window: {error}"));
+
+        // The click opens the Event and stops before the day, which would open its week.
+        assert_eq!(*opened.borrow(), ["standup"]);
+        cx.update(|cx| assert_eq!(day.read(cx).day_clicks, 0));
     }
 }

@@ -7,6 +7,8 @@
 
 mod render;
 
+pub(super) use render::{opening, panel};
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;

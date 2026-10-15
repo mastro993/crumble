@@ -1,5 +1,6 @@
 //! Calendar page: a Week, Month, or Year view of the Period containing the Focused date.
 
+mod event_details;
 mod event_views;
 mod events;
 mod grids;
@@ -8,15 +9,17 @@ mod period;
 use super::NativeView;
 use super::account_dot::tint;
 use super::controls::{app_icon, button};
+use super::route::Route;
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
 use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
     ScrollHandle, Styled, Task, Window, div, point, px,
 };
 use period::CalendarView;
+use std::rc::Rc;
 
 gpui_kit::actions!(
     crumble,
@@ -173,6 +176,35 @@ impl NativeView {
         self.calendar.focused = date;
         self.refresh_events(false, cx);
         cx.notify();
+    }
+
+    /// Opens the page of `event`, recording the Calendar page for Back.
+    fn open_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.navigate(Route::Event(Rc::new(event)), cx);
+    }
+
+    /// The page of `event`, as EventKit last read it when it is still on screen, in its
+    /// Account's color.
+    pub(super) fn render_event_page(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
+        let app: &App = cx;
+        let event = self
+            .events
+            .events
+            .iter()
+            .find(|read| read.id == event.id)
+            .unwrap_or(event);
+        let calendars = self.calendar_sync.read(app).calendars();
+        let shown = event_views::shown(std::slice::from_ref(event), calendars, |account| {
+            tint(self.settings.account_color(account), app)
+        })
+        .pop()
+        // A Calendar gone since the Event was opened leaves it uncolored and unnamed.
+        .unwrap_or_else(|| event_views::Shown {
+            event: event.clone(),
+            color: app.theme().muted_foreground,
+            calendar: "".into(),
+        });
+        event_details::page(&shown, app).into_any_element()
     }
 
     /// Calendar shortcuts, registered only while the Calendar page is open.
