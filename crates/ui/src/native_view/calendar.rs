@@ -10,7 +10,7 @@ use super::NativeView;
 use super::account_dot::tint;
 use super::controls::{app_icon, button};
 use super::route::Route;
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike};
 use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
@@ -20,6 +20,7 @@ use gpui_kit::{
 };
 pub(crate) use period::CalendarView;
 use std::rc::Rc;
+use std::time::Duration;
 
 gpui_kit::actions!(
     crumble,
@@ -103,6 +104,26 @@ fn today() -> NaiveDate {
     Local::now().date_naive()
 }
 
+/// Redraws Week view at the start of every minute, so its current time line keeps up.
+pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
+    cx.spawn(async move |view, cx| {
+        loop {
+            let wait = 60 - u64::from(Local::now().second());
+            cx.background_executor()
+                .timer(Duration::from_secs(wait))
+                .await;
+            let redrawn = view.update(cx, |view, cx| {
+                if view.route == Route::Calendar && view.calendar.view == CalendarView::Week {
+                    cx.notify();
+                }
+            });
+            if redrawn.is_err() {
+                break;
+            }
+        }
+    })
+}
+
 impl NativeView {
     /// Reads the Events of the dates on screen in the shown Calendars, unless they are already
     /// read; `force` reads again anyway, as after EventKit reports a change. A failed read is
@@ -116,9 +137,7 @@ impl NativeView {
             .map(|(first, end)| EventsRead {
                 first,
                 end,
-                calendar_ids: self
-                    .settings
-                    .shown_calendar_ids(sync.calendars(), &self.hidden_accounts),
+                calendar_ids: self.settings.shown_calendar_ids(sync.calendars()),
             });
         if !force && wanted == self.events.wanted {
             return;
@@ -278,7 +297,8 @@ impl NativeView {
         let first_day = self.settings.first_day_of_week;
         // One device pixel, matching the sidebar's hairline.
         let hairline = px(1.0 / window.scale_factor());
-        let today = today();
+        let now = Local::now().naive_local();
+        let today = now.date();
         let app: &App = cx;
         let shown = event_views::shown(
             &self.events.events,
@@ -289,7 +309,7 @@ impl NativeView {
             CalendarView::Week => grids::week(
                 focused,
                 first_day,
-                today,
+                now,
                 hairline,
                 &self.calendar.week_hours,
                 &shown,

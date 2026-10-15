@@ -1,13 +1,37 @@
-//! The color dot that marks an Account, and the names and tones of its colors.
+//! The color dot and checkbox that mark an Account, and the names and tones of its colors.
 
 use crate::settings::AccountColor;
-use crumble_theme::sidebar::{DOT_SIZE, ICON_SIZE};
-use gpui_kit::component::ActiveTheme;
-use gpui_kit::{App, Div, Hsla, ParentElement, Rgba, Styled, div, px, rgb};
+use crumble_theme::sidebar::{CHECK_RADIUS, CHECK_SIZE, DOT_SIZE, ICON_SIZE};
+use gpui_kit::component::{ActiveTheme, Icon, IconName};
+use gpui_kit::{App, Div, Hsla, ParentElement, Rgba, Styled, div, prelude::FluentBuilder, px, rgb};
 
 /// The dot centred in an icon-sized slot, so labels line up with icon rows.
 pub(super) fn dot(color: AccountColor, cx: &App) -> Div {
     slot().child(div().size(px(DOT_SIZE)).rounded_full().bg(tint(color, cx)))
+}
+
+/// A checkbox filled with the Account's color while `checked`, else outlined in it, centred in
+/// an icon-sized slot as the dot is. It only draws the box; the caller owns the toggle.
+pub(super) fn check(color: AccountColor, checked: bool, cx: &App) -> Div {
+    let tint = tint(color, cx);
+    slot().child(
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(CHECK_SIZE))
+            .rounded(px(CHECK_RADIUS))
+            .border_1()
+            .border_color(tint)
+            .when(checked, |check| {
+                // The mark takes the sidebar's color, so it reads as cut out of the fill.
+                check.bg(tint).child(
+                    Icon::new(IconName::Check)
+                        .size(px(CHECK_SIZE - 4.0))
+                        .text_color(cx.theme().sidebar),
+                )
+            }),
+    )
 }
 
 /// An empty ring in the dot's place, for a color not picked yet.

@@ -19,6 +19,8 @@ pub(crate) struct Settings {
     pub(crate) disabled_accounts: BTreeSet<String>,
     /// EventKit identifiers of the Disabled Calendars, kept while their Account is Disabled.
     pub(crate) disabled_calendars: BTreeSet<String>,
+    /// EventKit identifiers of the Hidden Accounts.
+    pub(crate) hidden_accounts: BTreeSet<String>,
     /// Sidebar sections whose rows are folded away.
     pub(crate) folded_sections: BTreeSet<SidebarSection>,
     /// Account identifiers in the order the user dragged them into; Accounts not listed follow,
@@ -85,6 +87,7 @@ impl Default for Settings {
             calendar_view: CalendarView::default(),
             disabled_accounts: BTreeSet::new(),
             disabled_calendars: BTreeSet::new(),
+            hidden_accounts: BTreeSet::new(),
             folded_sections: BTreeSet::new(),
             account_colors: BTreeMap::new(),
             account_aliases: BTreeMap::new(),
@@ -179,17 +182,13 @@ impl Settings {
     }
 
     /// Identifiers of the `calendars` whose Events show: the Calendar is not Disabled, and its
-    /// Account is neither Disabled nor in `hidden_accounts`.
-    pub(crate) fn shown_calendar_ids(
-        &self,
-        calendars: &[Calendar],
-        hidden_accounts: &BTreeSet<String>,
-    ) -> Vec<String> {
+    /// Account is neither Disabled nor Hidden.
+    pub(crate) fn shown_calendar_ids(&self, calendars: &[Calendar]) -> Vec<String> {
         calendars
             .iter()
             .filter(|calendar| {
                 !self.disabled_accounts.contains(&calendar.account_id)
-                    && !hidden_accounts.contains(&calendar.account_id)
+                    && !self.hidden_accounts.contains(&calendar.account_id)
                     && !self.disabled_calendars.contains(&calendar.id)
             })
             .map(|calendar| calendar.id.clone())
@@ -197,10 +196,10 @@ impl Settings {
     }
 }
 
-/// Disables `id` if it is enabled and enables it otherwise.
-pub(crate) fn toggle(disabled: &mut BTreeSet<String>, id: &str) {
-    if !disabled.remove(id) {
-        disabled.insert(id.to_owned());
+/// Adds `id` to `set`, or removes it when it is already there.
+pub(crate) fn toggle(set: &mut BTreeSet<String>, id: &str) {
+    if !set.remove(id) {
+        set.insert(id.to_owned());
     }
 }
 
@@ -210,7 +209,6 @@ mod tests {
         Account, AccountColor, Calendar, CalendarView, Settings, SidebarSection, Weekday, toggle,
     };
     use crumble_eventkit::Provider;
-    use std::collections::BTreeSet;
 
     #[test]
     fn saved_settings_read_back() {
@@ -221,6 +219,7 @@ mod tests {
         };
         settings.disabled_accounts.insert("source-1".into());
         settings.disabled_calendars.insert("calendar-1".into());
+        settings.hidden_accounts.insert("source-2".into());
         settings.folded_sections.insert(SidebarSection::Calendars);
         settings.account_order = vec!["source-2".into(), "source-1".into()];
         settings
@@ -243,6 +242,7 @@ mod tests {
         let old = Settings::parse(r#"{"first_day_of_week":"Sun"}"#);
         assert_eq!(old.first_day_of_week, Weekday::Sun);
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
+        assert!(old.hidden_accounts.is_empty());
         assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
         assert!(old.account_order.is_empty() && old.account_aliases.is_empty());
         // Files saved before the Calendar view was remembered open on Month view.
@@ -277,35 +277,28 @@ mod tests {
             calendar("holidays", "google"),
             calendar("family", "icloud"),
         ];
-        let none = BTreeSet::new();
         let mut settings = Settings::default();
         toggle(&mut settings.disabled_calendars, "holidays");
-        assert_eq!(
-            settings.shown_calendar_ids(&calendars, &none),
-            ["work", "family"]
-        );
+        assert_eq!(settings.shown_calendar_ids(&calendars), ["work", "family"]);
 
         toggle(&mut settings.disabled_accounts, "google");
-        assert_eq!(settings.shown_calendar_ids(&calendars, &none), ["family"]);
+        assert_eq!(settings.shown_calendar_ids(&calendars), ["family"]);
 
         toggle(&mut settings.disabled_accounts, "google");
-        assert_eq!(
-            settings.shown_calendar_ids(&calendars, &none),
-            ["work", "family"]
-        );
+        assert_eq!(settings.shown_calendar_ids(&calendars), ["work", "family"]);
     }
 
     #[test]
     fn a_hidden_account_hides_its_calendars_whether_or_not_it_is_disabled() {
         let calendars = [calendar("work", "google"), calendar("family", "icloud")];
-        let hidden = BTreeSet::from(["google".to_owned()]);
         let mut settings = Settings::default();
-        assert_eq!(settings.shown_calendar_ids(&calendars, &hidden), ["family"]);
+        toggle(&mut settings.hidden_accounts, "google");
+        assert_eq!(settings.shown_calendar_ids(&calendars), ["family"]);
 
         // Disabling and Enabling it again leaves it Hidden.
         toggle(&mut settings.disabled_accounts, "google");
         toggle(&mut settings.disabled_accounts, "google");
-        assert_eq!(settings.shown_calendar_ids(&calendars, &hidden), ["family"]);
+        assert_eq!(settings.shown_calendar_ids(&calendars), ["family"]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use super::event_views::{Shown, all_day_strip, day_blocks, month_day, open_in};
 use super::period::{
     CalendarView, is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
 };
-use chrono::{Datelike, Days, NaiveDate, Weekday};
+use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use crumble_theme::SURFACE_RADIUS;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
@@ -21,9 +21,22 @@ const YEAR_WEEKS: u64 = 6;
 const YEAR_DAY_HEIGHT: f32 = 20.0;
 /// Keeps Year view day columns compact on wide windows.
 const YEAR_MAX_WIDTH: f32 = 1200.0;
+/// Thickness of the current time line on today's column; the other days get a hairline.
+const NOW_LINE: f32 = 2.0;
+/// Diameter of the dot that starts the current time line on today's column.
+const NOW_DOT: f32 = 8.0;
+/// Height of the current time's label in the hour gutter, centred on its line.
+const NOW_LABEL: f32 = 16.0;
 
+/// A step between the background and the hairlines, so the grid lines stay visible on weekends.
+/// The dark muted color is the border color, so dark mode halves it.
 fn weekend_fill(cx: &App) -> Hsla {
-    cx.theme().muted
+    let theme = cx.theme();
+    if theme.mode.is_dark() {
+        theme.muted.opacity(0.5)
+    } else {
+        theme.muted
+    }
 }
 
 /// Day number, circled in the accent color when it is today.
@@ -145,7 +158,7 @@ pub(super) fn month(
 pub(super) fn week(
     focused: NaiveDate,
     first_day: Weekday,
-    today: NaiveDate,
+    now: NaiveDateTime,
     hairline: Pixels,
     hours_scroll: &ScrollHandle,
     shown: &[Shown],
@@ -155,6 +168,7 @@ pub(super) fn week(
     let cx: &App = cx;
     let theme = cx.theme();
     let radius = px(SURFACE_RADIUS);
+    let today = now.date();
     let days: Vec<NaiveDate> = week_days(week_start(focused, first_day)).collect();
     let header = h_flex()
         .pl(px(HOUR_GUTTER))
@@ -191,6 +205,17 @@ pub(super) fn week(
                 .corner_radii(frame_corners(radius, false, true, false, column == 6))
                 .when(is_weekend(date), |cell| cell.bg(weekend_fill(cx)))
         }));
+    // The current time is labelled in the hour gutter, in the week it falls in, and hides an
+    // hour label it would overlap; hour labels hang below their line.
+    let now_minutes = days
+        .contains(&today)
+        .then(|| (now.hour() * 60 + now.minute()) as f32);
+    let covered = |hour: u32| {
+        now_minutes.is_some_and(|minutes| {
+            let line = (hour * 60) as f32;
+            (line - 10.0..line + 30.0).contains(&minutes)
+        })
+    };
     let hours = (0..24).map(|hour| {
         h_flex()
             .h(px(HOUR_HEIGHT))
@@ -204,7 +229,7 @@ pub(super) fn week(
                     .text_right()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(format!("{hour:02}:00")),
+                    .when(!covered(hour), |label| label.child(format!("{hour:02}:00"))),
             )
             .child(
                 div()
@@ -241,6 +266,51 @@ pub(super) fn week(
         .right_0()
         .h(px(24.0 * HOUR_HEIGHT))
         .children(days.iter().map(|&date| day_blocks(date, shown, open)));
+    // The current time crosses the week it falls in, over the Events, starting from a dot on
+    // today's column.
+    let now_line = now_minutes.map(|minutes| {
+        h_flex()
+            .absolute()
+            .top(px(minutes / 60.0 * HOUR_HEIGHT - NOW_LABEL / 2.0))
+            .left_0()
+            .right_0()
+            .h(px(NOW_LABEL))
+            .child(
+                div()
+                    .w(px(HOUR_GUTTER))
+                    .flex_shrink_0()
+                    .pr_2()
+                    .text_right()
+                    .text_xs()
+                    .line_height(px(NOW_LABEL))
+                    .text_color(theme.danger)
+                    .child(now.format("%H:%M").to_string()),
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h_full()
+                    .children(days.iter().map(|&date| {
+                        let today = date == today;
+                        div()
+                            .relative()
+                            .flex_1()
+                            .h(if today { px(NOW_LINE) } else { hairline })
+                            .bg(theme.danger)
+                            .when(today, |line| {
+                                line.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(-NOW_DOT / 2.0))
+                                        .top(px((NOW_LINE - NOW_DOT) / 2.0))
+                                        .size(px(NOW_DOT))
+                                        .rounded_full()
+                                        .bg(theme.danger),
+                                )
+                            })
+                    })),
+            )
+    });
     v_flex()
         .size_full()
         .child(
@@ -251,7 +321,13 @@ pub(super) fn week(
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(hours_scroll)
-                        .child(div().relative().children(hours).child(blocks)),
+                        .child(
+                            div()
+                                .relative()
+                                .children(hours)
+                                .child(blocks)
+                                .children(now_line),
+                        ),
                 ),
             ),
         )

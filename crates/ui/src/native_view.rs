@@ -26,13 +26,13 @@ use calendar::{CalendarEvents, CalendarPage};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, ScrollHandle, Styled, Window, div, prelude::FluentBuilder,
+    ParentElement, Render, ScrollHandle, Styled, Task, Window, div, prelude::FluentBuilder,
 };
 use menu::OpenMenu;
 use route::{History, Route};
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -46,8 +46,6 @@ pub struct NativeView {
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
     settings: Settings,
-    /// EventKit identifiers of the Hidden Accounts; never saved, so they show again next launch.
-    hidden_accounts: BTreeSet<String>,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: CalendarEvents,
@@ -70,6 +68,8 @@ pub struct NativeView {
     renaming: Option<Rename>,
     /// The open context menu.
     menu: Option<OpenMenu>,
+    /// Redraws Week view each minute for its current time line.
+    _minute_tick: Task<()>,
 }
 
 impl NativeView {
@@ -98,7 +98,6 @@ impl NativeView {
             sidebar_motion: 0,
             sidebar_closing: false,
             settings,
-            hidden_accounts: BTreeSet::new(),
             first_day_select,
             calendar,
             events: CalendarEvents::default(),
@@ -112,6 +111,7 @@ impl NativeView {
             alias_fields: AliasFields::default(),
             renaming: None,
             menu: None,
+            _minute_tick: calendar::tick_minutes(cx),
         }
     }
 

@@ -43,6 +43,10 @@ pub mod sidebar {
     pub const RADIUS: f32 = 8.0;
     /// Diameter of an Account's color dot, centred in the icon slot.
     pub const DOT_SIZE: f32 = 8.0;
+    /// Side of an Account's checkbox, centred in the icon slot.
+    pub const CHECK_SIZE: f32 = 14.0;
+    /// Corner radius of an Account's checkbox.
+    pub const CHECK_RADIUS: f32 = 4.0;
 }
 
 /// Context menu metrics in points. Rows reuse the [`sidebar`] row height, padding, and icon
