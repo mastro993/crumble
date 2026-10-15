@@ -312,7 +312,8 @@ fn convert(event: &EKEvent) -> Option<Event> {
         let notes = event.notes().map(|notes| notes.to_string());
         let join = classify::join_link([url.as_deref(), location.as_deref(), notes.as_deref()]);
         Some(Event {
-            // Occurrences of a repeating Event share an identifier, so the start makes it unique.
+            // Occurrences of a repeating Event share an identifier, so the start makes it unique;
+            // `Event::item_id` reads the identifier back.
             id: format!("{item_id}@{}", start.timestamp()),
             calendar_id: event.calendar()?.calendarIdentifier().to_string(),
             title: event.title().to_string(),

@@ -96,7 +96,8 @@ pub enum When {
 /// One occurrence of an entry in a Calendar. Declined and cancelled Events are never returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
-    /// Unique per occurrence, so each instance of a repeating Event has its own.
+    /// Unique per occurrence, so each instance of a repeating Event has its own: the calendar
+    /// item's identifier, `@`, then the start as a Unix timestamp.
     pub id: String,
     /// Identifier of the owning [`Calendar`].
     pub calendar_id: String,
@@ -114,6 +115,14 @@ pub struct Event {
     pub join: Option<Join>,
     /// The organizer first, then the other attendees; empty when the Event has no attendees.
     pub participants: Vec<Participant>,
+}
+
+impl Event {
+    /// The calendar item this occurrence belongs to: every occurrence of a repeating Event
+    /// shares it, and it stays when the Event moves, while [`Event::id`] also holds the start.
+    pub fn item_id(&self) -> &str {
+        self.id.rsplit_once('@').map_or(&self.id, |(item, _)| item)
+    }
 }
 
 /// A link that opens a video meeting.

@@ -194,16 +194,11 @@ impl NativeView {
         self.navigate(Route::Event(Rc::new(event)), cx);
     }
 
-    /// The Event page's header for `event`, as EventKit last read it when it is still on
-    /// screen.
+    /// The Event page's header for `event`, as EventKit last read it when it, or its calendar
+    /// item after a move, is still in the Calendar page's dates.
     pub(super) fn render_event_toolbar(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
         let open_calendar = cx.listener(|view, _, _, cx| view.navigate(Route::Calendar, cx));
-        let event = self
-            .events
-            .events
-            .iter()
-            .find(|read| read.id == event.id)
-            .unwrap_or(event);
+        let event = events::latest(&self.events.events, event);
         event_details::toolbar(event, open_calendar, cx).into_any_element()
     }
 
