@@ -2,6 +2,7 @@ mod account_alias;
 mod account_dot;
 mod calendar;
 mod calendars_section;
+mod card;
 mod controls;
 mod custom_color;
 mod menu;
@@ -14,6 +15,7 @@ mod sidebar_reorder;
 mod sidebar_row;
 mod sidebar_scroll;
 
+pub(crate) use calendar::CalendarView;
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
@@ -78,6 +80,7 @@ impl NativeView {
         window.focus(&focus, cx);
         let settings = Settings::load();
         let first_day_select = settings_page::first_day_select(&settings, window, cx);
+        let calendar = CalendarPage::new(settings.calendar_view);
         let calendar_sync = cx.new(CalendarSync::new);
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
@@ -97,7 +100,7 @@ impl NativeView {
             settings,
             hidden_accounts: BTreeSet::new(),
             first_day_select,
-            calendar: CalendarPage::default(),
+            calendar,
             events: CalendarEvents::default(),
             calendar_sync,
             sidebar_scroll: ScrollHandle::new(),
@@ -121,14 +124,14 @@ impl NativeView {
     }
 
     fn go_back(&mut self, cx: &mut Context<Self>) {
-        if let Some(route) = self.history.back(self.route) {
+        if let Some(route) = self.history.back(self.route.clone()) {
             self.route = route;
             cx.notify();
         }
     }
 
     fn go_forward(&mut self, cx: &mut Context<Self>) {
-        if let Some(route) = self.history.forward(self.route) {
+        if let Some(route) = self.history.forward(self.route.clone()) {
             self.route = route;
             cx.notify();
         }
@@ -143,9 +146,11 @@ impl Focusable for NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let page = match self.route {
+        let page = match &self.route {
             Route::Calendar => self.render_calendar(window, cx),
             Route::Settings => self.render_settings(cx).into_any_element(),
+            // The Event's details are in the header for now.
+            Route::Event(_) => div().into_any_element(),
             route => div().text_xl().child(route.title()).into_any_element(),
         };
         let colors = cx.theme().colors;

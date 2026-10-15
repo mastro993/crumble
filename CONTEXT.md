@@ -49,6 +49,18 @@ _Avoid_: meeting, appointment
 Said of an Account or a Calendar that Crumble leaves out entirely. It is chosen in Settings, kept across restarts, and changes nothing in macOS.
 _Avoid_: muted, removed, off
 
+**Event page**:
+The page that shows everything about one Event. Clicking an Event opens it.
+_Avoid_: event detail view, event screen
+
+**Details card**:
+The short summary of an Event shown while the pointer rests on it.
+_Avoid_: tooltip, popover, preview
+
+**Participant**:
+Someone invited to an Event, including its organizer, with their answer to the invitation.
+_Avoid_: attendee, guest, invitee
+
 **Hidden**:
 Said of an Account whose Events Crumble leaves off the Calendar page until Crumble quits. It is chosen in the Calendars section and changes nothing in macOS.
 _Avoid_: muted, unchecked, toggled off

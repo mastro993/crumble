@@ -103,6 +103,21 @@ pub(super) fn day_order<'a>(
     day
 }
 
+/// `opened` as last read in `events`: the same occurrence, else the one occurrence of its
+/// calendar item, as after the Event moved and its start changed; else `opened` as it was.
+pub(super) fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
+    if let Some(same) = events.iter().find(|event| event.id == opened.id) {
+        return same;
+    }
+    let mut moved = events
+        .iter()
+        .filter(|event| event.item_id() == opened.item_id());
+    match (moved.next(), moved.next()) {
+        (Some(only), None) => only,
+        _ => opened,
+    }
+}
+
 /// When an Event happens, as the details show it: `Mon 13 Oct · 09:00 – 10:00`.
 pub(super) fn when_text(when: &When) -> String {
     const DAY: &str = "%a %-d %b";
@@ -131,7 +146,7 @@ pub(super) fn when_text(when: &When) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{columns, day_order, minutes_on, on_day, when_text};
+    use super::{columns, day_order, latest, minutes_on, on_day, when_text};
     use chrono::{Local, NaiveDate, TimeZone};
     use crumble_eventkit::{Event, When};
 
@@ -159,7 +174,9 @@ mod tests {
                 end: at(end_day, end_hour, end_minute),
             },
             location: None,
-            join_url: None,
+            description: None,
+            join: None,
+            participants: Vec::new(),
         }
     }
 
@@ -232,6 +249,22 @@ mod tests {
             .map(|event| event.title.as_str())
             .collect();
         assert_eq!(titles, ["Holiday", "Standup", "Lunch"]);
+    }
+
+    #[test]
+    fn an_opened_event_follows_its_calendar_item_when_it_moves() {
+        let with_id = |id: &str, event: Event| Event {
+            id: id.into(),
+            ..event
+        };
+        let opened = with_id("item@1", timed("Standup", (13, 9, 0), (13, 9, 15)));
+        let moved = with_id("item@2", timed("Standup", (13, 10, 0), (13, 10, 15)));
+        let other = with_id("other@1", timed("Lunch", (13, 12, 0), (13, 13, 0)));
+        assert_eq!(latest(&[other.clone(), moved.clone()], &opened), &moved);
+        // Two occurrences of a repeating Event are ambiguous, so the opened one stays.
+        let next_week = with_id("item@3", timed("Standup", (20, 9, 0), (20, 9, 15)));
+        assert_eq!(latest(&[moved, next_week], &opened), &opened);
+        assert_eq!(latest(&[other], &opened), &opened);
     }
 
     #[test]

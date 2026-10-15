@@ -96,7 +96,8 @@ pub enum When {
 /// One occurrence of an entry in a Calendar. Declined and cancelled Events are never returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
-    /// Unique per occurrence, so each instance of a repeating Event has its own.
+    /// Unique per occurrence, so each instance of a repeating Event has its own: the calendar
+    /// item's identifier, `@`, then the start as a Unix timestamp.
     pub id: String,
     /// Identifier of the owning [`Calendar`].
     pub calendar_id: String,
@@ -106,6 +107,57 @@ pub struct Event {
     pub when: When,
     /// Free-text location.
     pub location: Option<String>,
-    /// Link to a known meeting service, found in the URL, location, or notes.
-    pub join_url: Option<String>,
+    /// The notes as plain text, without meeting links or the meeting details Google and Teams
+    /// add, since [`Event::join`] stands for them. A link whose text is not its address, as
+    /// Google sends one from the web, is written `[text](address)`.
+    pub description: Option<String>,
+    /// Meeting link of a known service, found in the URL, location, or notes.
+    pub join: Option<Join>,
+    /// The organizer first, then the other attendees; empty when the Event has no attendees.
+    pub participants: Vec<Participant>,
+}
+
+impl Event {
+    /// The calendar item this occurrence belongs to: every occurrence of a repeating Event
+    /// shares it, and it stays when the Event moves, while [`Event::id`] also holds the start.
+    pub fn item_id(&self) -> &str {
+        self.id.rsplit_once('@').map_or(&self.id, |(item, _)| item)
+    }
+}
+
+/// A link that opens a video meeting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Join {
+    /// The link, starting with `https://`.
+    pub url: String,
+    /// The service's name, such as "Google Meet".
+    pub service: &'static str,
+}
+
+/// Someone invited to an Event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Participant {
+    /// Their name, else their email address.
+    pub name: String,
+    /// Their answer to the invitation.
+    pub response: Response,
+    /// Whether they organize the Event.
+    pub organizer: bool,
+    /// Whether they are the user.
+    pub you: bool,
+}
+
+/// A participant's answer to an invitation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Response {
+    /// Going.
+    Accepted,
+    /// Maybe going.
+    Tentative,
+    /// Not going.
+    Declined,
+    /// Passed the invitation on to someone else.
+    Delegated,
+    /// No answer yet.
+    Pending,
 }

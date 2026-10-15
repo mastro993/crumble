@@ -39,8 +39,28 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/ArrowRight01Icon.svg"),
     ),
     (
+        "icons/clock.svg",
+        include_bytes!("../../../assets/hugeicons/Clock01Icon.svg"),
+    ),
+    (
+        "icons/close.svg",
+        include_bytes!("../../../assets/hugeicons/Cancel01Icon.svg"),
+    ),
+    (
+        "icons/forward.svg",
+        include_bytes!("../../../assets/hugeicons/ArrowTurnForwardIcon.svg"),
+    ),
+    (
+        "icons/help-circle.svg",
+        include_bytes!("../../../assets/hugeicons/HelpCircleIcon.svg"),
+    ),
+    (
         "icons/home.svg",
         include_bytes!("../../../assets/hugeicons/Home01Icon.svg"),
+    ),
+    (
+        "icons/notes.svg",
+        include_bytes!("../../../assets/hugeicons/AppleReminderIcon.svg"),
     ),
     (
         "icons/paint-board.svg",
@@ -61,6 +81,14 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/settings.svg",
         include_bytes!("../../../assets/hugeicons/Settings01Icon.svg"),
+    ),
+    (
+        "icons/user-group.svg",
+        include_bytes!("../../../assets/hugeicons/UserGroup02Icon.svg"),
+    ),
+    (
+        "icons/video.svg",
+        include_bytes!("../../../assets/hugeicons/Video01Icon.svg"),
     ),
     (
         "icons/view.svg",
@@ -105,7 +133,11 @@ mod tests {
     /// checkbox with no tick.
     #[test]
     fn component_icons_the_app_uses_are_mapped() {
-        for icon in [IconName::Check, IconName::ChevronDown] {
+        for icon in [
+            IconName::Check,
+            IconName::ChevronDown,
+            IconName::ChevronRight,
+        ] {
             let path = icon.path();
             assert!(
                 matches!(Assets.load(&path), Ok(Some(_))),

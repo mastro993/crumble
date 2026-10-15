@@ -1,21 +1,35 @@
 //! Navigable routes and the in-memory back/forward history between them.
 
-/// A sidebar destination.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use crumble_eventkit::Event;
+use std::rc::Rc;
+
+/// A sidebar destination, or an Event's page.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Route {
     Home,
     Calendar,
     Chat,
     Settings,
+    /// The Event as it was when it was opened.
+    Event(Rc<Event>),
 }
 
 impl Route {
-    pub(super) fn title(self) -> &'static str {
+    pub(super) fn title(&self) -> &'static str {
         match self {
             Route::Home => "Home",
             Route::Calendar => "Calendar",
             Route::Chat => "Chat",
             Route::Settings => "Settings",
+            Route::Event(_) => "Event",
+        }
+    }
+
+    /// The sidebar row that stays selected: an Event's page belongs to the Calendar.
+    pub(super) fn sidebar_row(&self) -> Route {
+        match self {
+            Route::Event(_) => Route::Calendar,
+            route => route.clone(),
         }
     }
 }

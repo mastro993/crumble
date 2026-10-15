@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 use std::sync::{Mutex, OnceLock};
 
 use crate::classify::{self, SourceKind};
-use crate::{Access, Account, Calendar, Event, When};
+use crate::{Access, Account, Calendar, Event, Participant, Response, When};
 use block2::RcBlock;
 use chrono::{DateTime, Local, TimeDelta};
 use objc2::rc::Retained;
@@ -15,7 +15,7 @@ use objc2::runtime::{Bool, ProtocolObject};
 use objc2_core_graphics::{CGColor, CGColorRenderingIntent, CGColorSpace, kCGColorSpaceSRGB};
 use objc2_event_kit::{
     EKAuthorizationStatus, EKCalendar, EKEntityType, EKEvent, EKEventStatus, EKEventStore,
-    EKEventStoreChangedNotification, EKParticipantStatus, EKSource, EKSourceType,
+    EKEventStoreChangedNotification, EKParticipant, EKParticipantStatus, EKSource, EKSourceType,
 };
 use objc2_foundation::{
     NSArray, NSDate, NSError, NSNotification, NSNotificationCenter, NSObjectProtocol,
@@ -310,16 +310,79 @@ fn convert(event: &EKEvent) -> Option<Event> {
             .map(|location| location.to_string())
             .filter(|location| !location.trim().is_empty());
         let notes = event.notes().map(|notes| notes.to_string());
-        let join_url = classify::join_link([url.as_deref(), location.as_deref(), notes.as_deref()]);
+        let join = classify::join_link([url.as_deref(), location.as_deref(), notes.as_deref()]);
         Some(Event {
-            // Occurrences of a repeating Event share an identifier, so the start makes it unique.
+            // Occurrences of a repeating Event share an identifier, so the start makes it unique;
+            // `Event::item_id` reads the identifier back.
             id: format!("{item_id}@{}", start.timestamp()),
             calendar_id: event.calendar()?.calendarIdentifier().to_string(),
             title: event.title().to_string(),
             when,
             location,
-            join_url,
+            description: notes.as_deref().and_then(classify::description),
+            join,
+            participants: participants(event),
         })
+    }
+}
+
+/// The organizer first, then the other attendees. EventKit often lists the organizer among the
+/// attendees too, with their answer, so that entry is moved first rather than repeated.
+fn participants(event: &EKEvent) -> Vec<Participant> {
+    // SAFETY: getters on live EventKit objects.
+    unsafe {
+        let Some(attendees) = event.attendees().filter(|list| !list.is_empty()) else {
+            return Vec::new();
+        };
+        let url = |participant: &EKParticipant| {
+            participant
+                .URL()
+                .absoluteString()
+                .map(|url| url.to_string())
+        };
+        let organizer = event.organizer();
+        let organizer_url = organizer.as_deref().and_then(url);
+        let entry = |participant: &EKParticipant, organizer: bool| Participant {
+            name: participant
+                .name()
+                .map(|name| name.to_string())
+                .filter(|name| !name.trim().is_empty())
+                .or_else(|| url(participant).and_then(|url| classify::mailto_address(&url)))
+                .or_else(|| url(participant))
+                .unwrap_or_default(),
+            response: match participant.participantStatus() {
+                EKParticipantStatus::Accepted => Response::Accepted,
+                EKParticipantStatus::Tentative => Response::Tentative,
+                EKParticipantStatus::Declined => Response::Declined,
+                EKParticipantStatus::Delegated => Response::Delegated,
+                _ => Response::Pending,
+            },
+            organizer,
+            you: participant.isCurrentUser(),
+        };
+        let mut list: Vec<Participant> = attendees
+            .iter()
+            .map(|attendee| {
+                let organizer = organizer_url.is_some() && url(&attendee) == organizer_url;
+                entry(&attendee, organizer)
+            })
+            .collect();
+        match list.iter().position(|participant| participant.organizer) {
+            Some(ix) => list[..=ix].rotate_right(1),
+            None => {
+                if let Some(organizer) = organizer {
+                    // The organizer goes, whatever EventKit reports for them.
+                    list.insert(
+                        0,
+                        Participant {
+                            response: Response::Accepted,
+                            ..entry(&organizer, true)
+                        },
+                    );
+                }
+            }
+        }
+        list
     }
 }
 

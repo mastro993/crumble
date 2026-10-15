@@ -1,7 +1,7 @@
 //! Week, Month, and Year grids. Weekends are shaded in every Calendar view.
 
 use super::NativeView;
-use super::event_views::{Shown, all_day_strip, day_blocks, month_day};
+use super::event_views::{Shown, all_day_strip, day_blocks, month_day, open_in};
 use super::period::{
     CalendarView, is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
 };
@@ -96,6 +96,7 @@ pub(super) fn month(
     cx: &mut Context<NativeView>,
 ) -> AnyElement {
     let (border, radius) = (cx.theme().border, px(SURFACE_RADIUS));
+    let open = open_in(cx);
     let weeks = month_weeks(focused, first_day);
     let last_row = weeks.len() - 1;
     let rows = weeks.into_iter().enumerate().map(|(row, start)| {
@@ -105,7 +106,7 @@ pub(super) fn month(
             .children(week_days(start).enumerate().map(|(column, date)| {
                 let (top, bottom) = (row == 0, row == last_row);
                 let (left, right) = (column == 0, column == 6);
-                // Clicking a day opens its week; an Event's own popover keeps its click.
+                // Clicking a day opens its week; clicking an Event opens its own page.
                 v_flex()
                     .id(("month-day", row * 7 + column))
                     .cursor_pointer()
@@ -131,7 +132,7 @@ pub(super) fn month(
                         date.month() != focused.month(),
                         cx,
                     ))
-                    .child(month_day(date, shown, cx))
+                    .child(month_day(date, shown, &open, cx))
             }))
     });
     v_flex()
@@ -148,8 +149,10 @@ pub(super) fn week(
     hairline: Pixels,
     hours_scroll: &ScrollHandle,
     shown: &[Shown],
-    cx: &App,
+    cx: &mut Context<NativeView>,
 ) -> AnyElement {
+    let open = &open_in(cx);
+    let cx: &App = cx;
     let theme = cx.theme();
     let radius = px(SURFACE_RADIUS);
     let days: Vec<NaiveDate> = week_days(week_start(focused, first_day)).collect();
@@ -212,7 +215,7 @@ pub(super) fn week(
             )
     });
     // All-day Events sit in a strip between the day names and the hours.
-    let all_day = all_day_strip(&days, shown, cx).map(|cells| {
+    let all_day = all_day_strip(&days, shown, open, cx).map(|cells| {
         // A plain flex row, so every cell stretches to the tallest one.
         div()
             .flex()
@@ -237,7 +240,7 @@ pub(super) fn week(
         .left(px(HOUR_GUTTER))
         .right_0()
         .h(px(24.0 * HOUR_HEIGHT))
-        .children(days.iter().map(|&date| day_blocks(date, shown)));
+        .children(days.iter().map(|&date| day_blocks(date, shown, open)));
     v_flex()
         .size_full()
         .child(
