@@ -147,6 +147,8 @@ pub enum Response {
     Tentative,
     /// Not going.
     Declined,
+    /// Passed the invitation on to someone else.
+    Delegated,
     /// No answer yet.
     Pending,
 }

@@ -353,6 +353,7 @@ fn participants(event: &EKEvent) -> Vec<Participant> {
                 EKParticipantStatus::Accepted => Response::Accepted,
                 EKParticipantStatus::Tentative => Response::Tentative,
                 EKParticipantStatus::Declined => Response::Declined,
+                EKParticipantStatus::Delegated => Response::Delegated,
                 _ => Response::Pending,
             },
             organizer,

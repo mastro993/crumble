@@ -53,12 +53,13 @@ fn join_button(id: impl Into<ElementId>, join: &Join) -> Button {
 
 /// A participant's name after an icon for their answer, then whether they organize or are the
 /// user.
-fn participant_row(participant: &Participant, cx: &App) -> Stateful<Div> {
+fn participant_row(ix: usize, participant: &Participant, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let (icon, color, answer) = match participant.response {
         Response::Accepted => ("check", theme.success, "Accepted"),
         Response::Tentative => ("help-circle", theme.warning, "Maybe"),
         Response::Declined => ("close", theme.danger, "Declined"),
+        Response::Delegated => ("forward", theme.muted_foreground, "Delegated"),
         Response::Pending => ("clock", theme.muted_foreground, "Awaiting response"),
     };
     let role = match (participant.organizer, participant.you) {
@@ -68,10 +69,7 @@ fn participant_row(participant: &Participant, cx: &App) -> Stateful<Div> {
         (false, false) => None,
     };
     h_flex()
-        .id(SharedString::from(format!(
-            "participant-{}",
-            participant.name
-        )))
+        .id(("participant", ix))
         .gap_2()
         .min_w_0()
         .tooltip(move |window, cx| {
@@ -247,7 +245,8 @@ pub(super) fn card(shown: &Shown, cx: &App) -> Div {
                             .participants
                             .iter()
                             .take(CARD_PARTICIPANTS)
-                            .map(|participant| participant_row(participant, cx)),
+                            .enumerate()
+                            .map(|(ix, participant)| participant_row(ix, participant, cx)),
                     )
                     .when(more > 0, |list| {
                         list.child(
@@ -311,7 +310,8 @@ pub(super) fn toolbar(
                     .child(participants_heading(list.len(), cx))
                     .children(
                         list.iter()
-                            .map(|participant| participant_row(participant, cx)),
+                            .enumerate()
+                            .map(|(ix, participant)| participant_row(ix, participant, cx)),
                     )
                     .into_any_element()
             },
