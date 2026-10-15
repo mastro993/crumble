@@ -8,7 +8,7 @@ use super::account_dot::tint;
 use super::calendar::{local_midnight, today};
 use super::route::Route;
 use chrono::{DateTime, Days, Local, Months, NaiveDate, Timelike};
-use crumble_eventkit::{self as eventkit, Access, Event};
+use crumble_eventkit::{self as eventkit, Access, Event, When};
 use crumble_theme::CONTENT_PADDING;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 use rows::{Row, day_label, start_day, time_label};
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -56,6 +56,9 @@ pub(super) struct AgendaPage {
     stale: bool,
     reading: bool,
     read: Task<()>,
+    /// The last read that failed and whether it was older; it is not tried again until
+    /// EventKit reports a change or another read is wanted.
+    failed: Option<(Span, bool)>,
     /// Finished reads, so the rows are built again after each.
     reads: u64,
     rows: Rc<Vec<Row>>,
@@ -82,6 +85,7 @@ impl Default for AgendaPage {
             stale: false,
             reading: false,
             read: Task::ready(()),
+            failed: None,
             reads: 0,
             rows: Rc::default(),
             built: None,
@@ -96,6 +100,7 @@ impl AgendaPage {
     /// Reads the covered days again the next time the Agenda shows.
     pub(super) fn mark_stale(&mut self) {
         self.stale = true;
+        self.failed = None;
     }
 
     /// Replaces the rows, splicing only those that changed, so the list keeps its measured
@@ -128,8 +133,11 @@ fn horizon(today: NaiveDate) -> NaiveDate {
 }
 
 /// The Events starting from `from` up to the day before `to`, in pieces EventKit accepts.
-/// Each piece keeps only the Events starting inside it, so none is read twice.
+/// Each piece keeps the Events starting inside it, and the piece holding today also the timed
+/// ones still In progress, however long ago they started. Each Event is kept once.
 fn read_span(from: NaiveDate, to: NaiveDate, ids: &[String]) -> anyhow::Result<Vec<Event>> {
+    let now = Local::now();
+    let mut seen = HashSet::new();
     let mut events = Vec::new();
     let mut first = from;
     while first < to {
@@ -140,7 +148,12 @@ fn read_span(from: NaiveDate, to: NaiveDate, ids: &[String]) -> anyhow::Result<V
             events.extend(
                 eventkit::events(start, stop, ids)?
                     .into_iter()
-                    .filter(|event| (first..end).contains(&start_day(event))),
+                    .filter(|event| {
+                        (first..end).contains(&start_day(event))
+                            || ((first..end).contains(&now.date_naive())
+                                && matches!(event.when, When::Timed { end, .. } if end > now))
+                    })
+                    .filter(|event| seen.insert(event.id.clone())),
             );
         }
         first = end;
@@ -150,7 +163,8 @@ fn read_span(from: NaiveDate, to: NaiveDate, ids: &[String]) -> anyhow::Result<V
 
 impl NativeView {
     /// Starts reading `span`; `older` adds its Events to those already read instead of
-    /// replacing them. A failed read is logged and the last Events stay.
+    /// replacing them. A failed read is logged, and the last Events and the days they cover
+    /// stay.
     fn read_agenda(&mut self, span: Span, older: bool, cx: &mut Context<Self>) {
         let agenda = &mut self.agenda;
         let previous = agenda.span.replace(span.clone());
@@ -160,6 +174,7 @@ impl NativeView {
             Some(previous) if older => previous.from,
             _ => span.to,
         };
+        let requested = span.clone();
         // Apple advises reading off the main thread.
         let read = cx.background_spawn(async move { read_span(span.from, to, &span.calendar_ids) });
         agenda.read = cx.spawn(async move |this, cx| {
@@ -168,7 +183,17 @@ impl NativeView {
                 let agenda = &mut view.agenda;
                 agenda.reading = false;
                 match result {
-                    Ok(events) => {
+                    Ok(mut events) => {
+                        agenda.failed = None;
+                        if older {
+                            // A long In progress Event was read with Today already.
+                            let known: HashSet<&str> = agenda
+                                .events
+                                .iter()
+                                .map(|event| event.id.as_str())
+                                .collect();
+                            events.retain(|event| !known.contains(event.id.as_str()));
+                        }
                         let events: Vec<Rc<Event>> = events.into_iter().map(Rc::new).collect();
                         if older {
                             // An empty stretch reads on while the end is still in view.
@@ -183,9 +208,8 @@ impl NativeView {
                     }
                     Err(error) => {
                         eprintln!("Could not read the Agenda: {error}");
-                        if older {
-                            agenda.span = previous;
-                        }
+                        agenda.span = previous;
+                        agenda.failed = Some((requested, older));
                     }
                 }
                 cx.notify();
@@ -217,7 +241,8 @@ impl NativeView {
             )),
             Some(span) if agenda.stale || span.to != to || span.calendar_ids != ids => Some((
                 Span {
-                    from: span.from,
+                    // The horizon moves with the day, so the oldest days fall out.
+                    from: span.from.max(horizon),
                     to,
                     calendar_ids: ids,
                 },
@@ -242,7 +267,8 @@ impl NativeView {
             }
             Some(_) => None,
         };
-        if let Some((span, older)) = wanted {
+        if let Some((span, older)) = wanted.filter(|wanted| agenda.failed.as_ref() != Some(wanted))
+        {
             agenda.stale = false;
             self.read_agenda(span, older, cx);
         }
@@ -260,7 +286,7 @@ impl NativeView {
                     .span
                     .as_ref()
                     .is_some_and(|span| span.from <= horizon);
-            let rows = rows::rows(&agenda.events, minute, end);
+            let rows = rows::rows(&agenda.events, now, end);
             agenda.set_rows(rows);
         }
 
