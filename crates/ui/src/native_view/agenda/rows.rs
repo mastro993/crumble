@@ -40,12 +40,20 @@ fn in_progress(event: &Event, now: DateTime<Local>) -> bool {
 
 /// The rows for `events` at `now`. In progress Events sit under Today whatever day they
 /// started, then the Now line, then all-day Events, then the ended ones; other days list their
-/// all-day Events first, then the rest newest first. `end` adds the footer.
-pub(super) fn rows(events: &[Rc<Event>], now: DateTime<Local>, end: bool) -> Vec<Row> {
+/// all-day Events first, then the rest newest first. Only days from `from` on are listed, but
+/// an In progress Event shows however long ago it started. `end` adds the footer.
+pub(super) fn rows(
+    events: &[Rc<Event>],
+    now: DateTime<Local>,
+    from: NaiveDate,
+    end: bool,
+) -> Vec<Row> {
     let today = now.date_naive();
     let mut listed: Vec<(NaiveDate, u8, &Rc<Event>)> = events
         .iter()
-        .filter(|event| started(event, now))
+        .filter(|event| {
+            started(event, now) && (start_day(event) >= from || in_progress(event, now))
+        })
         .map(|event| match event.when {
             _ if in_progress(event, now) => (today, 0, event),
             When::AllDay { first, .. } => (first, 1, event),
@@ -184,7 +192,7 @@ mod tests {
             all_day("Trip", 13, 14),
         ];
         assert_eq!(
-            labels(&rows(&events, now, true)),
+            labels(&rows(&events, now, date(1), true)),
             [
                 "15",
                 "--",
@@ -211,27 +219,48 @@ mod tests {
             timed("Dinner", at(14, 19, 0), at(14, 20, 0)),
         ];
         assert_eq!(
-            labels(&rows(&events, now, false)),
+            labels(&rows(&events, now, date(1), false)),
             ["15", "Workshop", "Flight", "--", "Call", "14", "Dinner"]
         );
 
         // Only In progress Events today: the line closes Today's group.
         let only = [timed("Workshop", at(15, 9, 0), at(15, 12, 0))];
-        assert_eq!(labels(&rows(&only, now, false)), ["15", "Workshop", "--"]);
+        assert_eq!(
+            labels(&rows(&only, now, date(1), false)),
+            ["15", "Workshop", "--"]
+        );
 
         // An Event ends at its end time: it is no longer In progress then.
         let ended = [timed("Workshop", at(15, 9, 0), at(15, 10, 0))];
-        assert_eq!(labels(&rows(&ended, now, false)), ["15", "--", "Workshop"]);
+        assert_eq!(
+            labels(&rows(&ended, now, date(1), false)),
+            ["15", "--", "Workshop"]
+        );
+    }
+
+    #[test]
+    fn days_before_the_read_ones_show_only_while_in_progress() {
+        let flight = [timed("Flight", at(9, 22, 0), at(15, 11, 0))];
+        assert_eq!(
+            labels(&rows(&flight, at(15, 10, 0), date(10), false)),
+            ["15", "Flight", "--"]
+        );
+        // Once it ends, its start day is not among those read, so it leaves the list.
+        assert!(rows(&flight, at(15, 12, 0), date(10), false).is_empty());
+        assert_eq!(
+            labels(&rows(&flight, at(15, 12, 0), date(9), false)),
+            ["09", "Flight"]
+        );
     }
 
     #[test]
     fn days_without_today_have_no_now_line() {
         let events = [timed("Dinner", at(14, 19, 0), at(14, 20, 0))];
         assert_eq!(
-            labels(&rows(&events, at(15, 10, 0), false)),
+            labels(&rows(&events, at(15, 10, 0), date(1), false)),
             ["14", "Dinner"]
         );
-        assert_eq!(labels(&rows(&[], at(15, 10, 0), true)), ["end"]);
+        assert_eq!(labels(&rows(&[], at(15, 10, 0), date(1), true)), ["end"]);
     }
 
     #[test]

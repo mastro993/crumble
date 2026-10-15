@@ -281,12 +281,9 @@ impl NativeView {
             .unwrap_or(now);
         if agenda.built != Some((minute, agenda.reads)) {
             agenda.built = Some((minute, agenda.reads));
-            let end = !agenda.reading
-                && agenda
-                    .span
-                    .as_ref()
-                    .is_some_and(|span| span.from <= horizon);
-            let rows = rows::rows(&agenda.events, now, end);
+            let from = agenda.span.as_ref().map_or(today, |span| span.from);
+            let end = !agenda.reading && from <= horizon;
+            let rows = rows::rows(&agenda.events, now, from, end);
             agenda.set_rows(rows);
         }
 
