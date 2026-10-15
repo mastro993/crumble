@@ -180,12 +180,11 @@ fn href(tag: &str) -> Option<String> {
 }
 
 /// Ends the link whose text starts at `start` in `text`: a web link whose text is not its
-/// address becomes `[text](address)`, one whose text is its address stays the address, and a
-/// meeting link keeps its text alone.
+/// address becomes `[text](address)`, and one whose text is its address stays the address.
 fn close_anchor(text: &mut String, start: usize, href: &str) {
     let label = text[start..].trim();
     let web = href.starts_with("https://") || href.starts_with("http://");
-    if !web || meeting_service(href).is_some() || label == href {
+    if !web || label == href {
         return;
     }
     if label.is_empty() || label.contains(['[', ']']) {
@@ -204,19 +203,34 @@ fn is_marker(line: &str) -> bool {
     line.starts_with("-::~") || (line.len() >= 20 && line.chars().all(|c| c == '_'))
 }
 
-/// `line` with its meeting links removed, along with the angle brackets Teams puts around them.
+/// `line` with its meeting links removed, along with the angle brackets Teams puts around them;
+/// a `[text](meeting link)` keeps its text.
 fn without_meeting_links(line: &str) -> String {
     words(line)
         .filter(|word| meeting_service(word).is_some())
         .fold(line.to_owned(), |line, link| {
-            line.replace(&format!("<{link}>"), "").replace(link, "")
+            unwrap_labelled(line, link)
+                .replace(&format!("<{link}>"), "")
+                .replace(link, "")
         })
 }
 
+/// `line` with each `[text](link)` written as its text.
+fn unwrap_labelled(mut line: String, link: &str) -> String {
+    let tail = format!("]({link})");
+    while let Some(close) = line.find(&tail) {
+        let Some(open) = line[..close].rfind('[') else {
+            break;
+        };
+        let label = line[open + 1..close].to_owned();
+        line.replace_range(open..close + tail.len(), &label);
+    }
+    line
+}
+
 /// HTML tags dropped, line-breaking ones turned into newlines, and common entities decoded. A
-/// link whose text is not its address is kept as `[text](address)`, so its address is not lost;
-/// a meeting link keeps only its text, since the Join button stands for it. Text without tags,
-/// such as Teams' `<https://…>` links, is returned as it is.
+/// link whose text is not its address is kept as `[text](address)`, so its address is not lost.
+/// Text without tags, such as Teams' `<https://…>` links, is returned as it is.
 fn html_to_text(html: &str) -> String {
     const BREAKS: [&str; 6] = ["br", "p", "div", "li", "ul", "ol"];
     let mut text = String::with_capacity(html.len());
@@ -437,5 +451,14 @@ mod tests {
             description(notes).as_deref(),
             Some("📆 [Notes on Fellow](https://fellow.link/Q8)\nhttps://x.io/a\nJoin the call")
         );
+    }
+
+    #[test]
+    fn html_meeting_blocks_go_when_their_link_is_only_in_an_href() {
+        let notes = "Agenda<br>________________________________________<br>\
+                     Microsoft Teams meeting<br>\
+                     <a href=\"https://teams.microsoft.com/l/meetup-join/abc\">Join the meeting now</a><br>\
+                     ________________________________________";
+        assert_eq!(description(notes).as_deref(), Some("Agenda"));
     }
 }
