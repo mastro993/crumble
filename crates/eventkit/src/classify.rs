@@ -171,6 +171,33 @@ pub(crate) fn description(notes: &str) -> Option<String> {
     (!out.is_empty()).then(|| out.to_owned())
 }
 
+/// The `href` of the tag whose body, between `<` and `>`, is `tag`.
+fn href(tag: &str) -> Option<String> {
+    let value = &tag[tag.find("href=")? + "href=".len()..];
+    let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let value = &value[1..];
+    Some(value[..value.find(quote)?].to_owned())
+}
+
+/// Ends the link whose text starts at `start` in `text`: a web link whose text is not its
+/// address becomes `[text](address)`, one whose text is its address stays the address, and a
+/// meeting link keeps its text alone.
+fn close_anchor(text: &mut String, start: usize, href: &str) {
+    let label = text[start..].trim();
+    let web = href.starts_with("https://") || href.starts_with("http://");
+    if !web || meeting_service(href).is_some() || label == href {
+        return;
+    }
+    if label.is_empty() || label.contains(['[', ']']) {
+        text.truncate(start);
+        text.push_str(href);
+    } else {
+        let label = label.to_owned();
+        text.truncate(start);
+        text.push_str(&format!("[{label}]({href})"));
+    }
+}
+
 /// Google's `-::~:~::~…::-` and Teams' `____…` lines around the meeting details they add.
 fn is_marker(line: &str) -> bool {
     let line = line.trim();
@@ -186,13 +213,17 @@ fn without_meeting_links(line: &str) -> String {
         })
 }
 
-/// HTML tags dropped, line-breaking ones turned into newlines, and common entities decoded.
-/// Text without tags, such as Teams' `<https://…>` links, is returned as it is.
+/// HTML tags dropped, line-breaking ones turned into newlines, and common entities decoded. A
+/// link whose text is not its address is kept as `[text](address)`, so its address is not lost;
+/// a meeting link keeps only its text, since the Join button stands for it. Text without tags,
+/// such as Teams' `<https://…>` links, is returned as it is.
 fn html_to_text(html: &str) -> String {
     const BREAKS: [&str; 6] = ["br", "p", "div", "li", "ul", "ol"];
     let mut text = String::with_capacity(html.len());
     let mut rest = html;
     let mut tagged = false;
+    // Where the open link's text starts in `text`, and its address.
+    let mut anchor: Option<(usize, String)> = None;
     while let Some(open) = rest.find('<') {
         text.push_str(&rest[..open]);
         let after = &rest[open + 1..];
@@ -212,8 +243,15 @@ fn html_to_text(html: &str) -> String {
         match tag_end {
             Some(end) if is_tag => {
                 tagged = true;
-                if BREAKS.contains(&name.to_ascii_lowercase().as_str()) {
+                let name = name.to_ascii_lowercase();
+                if BREAKS.contains(&name.as_str()) {
                     text.push('\n');
+                } else if name == "a" && after.starts_with('/') {
+                    if let Some((start, href)) = anchor.take() {
+                        close_anchor(&mut text, start, &href);
+                    }
+                } else if name == "a" {
+                    anchor = href(&after[..end]).map(|href| (text.len(), href));
                 }
                 rest = &after[end + 1..];
             }
@@ -388,5 +426,16 @@ mod tests {
         // Underlines without a meeting link and comparisons that only look like tags stay.
         let kept = format!("{underline}\nif a < b and c > d\n{underline}");
         assert_eq!(description(&kept).as_deref(), Some(kept.as_str()));
+    }
+
+    #[test]
+    fn html_links_keep_their_address() {
+        let notes = "📆 <a href=\"https://fellow.link/Q8\">Notes on Fellow</a><br/>\
+                     <a href='https://x.io/a'>https://x.io/a</a><br/>\
+                     <a href=\"https://meet.google.com/abc-defg-hij\">Join the call</a>";
+        assert_eq!(
+            description(notes).as_deref(),
+            Some("📆 [Notes on Fellow](https://fellow.link/Q8)\nhttps://x.io/a\nJoin the call")
+        );
     }
 }

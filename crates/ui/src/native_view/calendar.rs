@@ -13,12 +13,12 @@ use super::route::Route;
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
 use crumble_eventkit::{self as eventkit, Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, button::ButtonVariants, h_flex};
+use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
     ScrollHandle, Styled, Task, Window, div, point, px,
 };
-use period::CalendarView;
+pub(crate) use period::CalendarView;
 use std::rc::Rc;
 
 gpui_kit::actions!(
@@ -33,7 +33,8 @@ gpui_kit::actions!(
     ]
 );
 
-/// Calendar view and Focused date, kept in memory while the app runs.
+/// Calendar view and Focused date. The Calendar view is also saved in the settings; the Focused
+/// date is kept in memory while the app runs.
 pub(super) struct CalendarPage {
     view: CalendarView,
     focused: NaiveDate,
@@ -41,13 +42,14 @@ pub(super) struct CalendarPage {
     week_hours: ScrollHandle,
 }
 
-impl Default for CalendarPage {
-    fn default() -> Self {
+impl CalendarPage {
+    /// Today in `view`.
+    pub(super) fn new(view: CalendarView) -> Self {
         let week_hours = ScrollHandle::new();
         // Week view opens on the working day rather than on midnight.
         week_hours.set_offset(point(px(0.0), px(-WEEK_OPENS_AT * grids::HOUR_HEIGHT)));
         Self {
-            view: CalendarView::Month,
+            view,
             focused: today(),
             week_hours,
         }
@@ -164,15 +166,24 @@ impl NativeView {
         cx.notify();
     }
 
-    fn show_calendar_view(&mut self, view: CalendarView, cx: &mut Context<Self>) {
+    /// Switches to `view` and saves it, so the Calendar page opens on it after a restart.
+    fn set_calendar_view(&mut self, view: CalendarView) {
         self.calendar.view = view;
+        if self.settings.calendar_view != view {
+            self.settings.calendar_view = view;
+            self.settings.save();
+        }
+    }
+
+    fn show_calendar_view(&mut self, view: CalendarView, cx: &mut Context<Self>) {
+        self.set_calendar_view(view);
         self.refresh_events(false, cx);
         cx.notify();
     }
 
     /// Opens `view` on the Period containing `date`.
     fn open_period(&mut self, view: CalendarView, date: NaiveDate, cx: &mut Context<Self>) {
-        self.calendar.view = view;
+        self.set_calendar_view(view);
         self.calendar.focused = date;
         self.refresh_events(false, cx);
         cx.notify();
@@ -183,28 +194,17 @@ impl NativeView {
         self.navigate(Route::Event(Rc::new(event)), cx);
     }
 
-    /// The page of `event`, as EventKit last read it when it is still on screen, in its
-    /// Account's color.
-    pub(super) fn render_event_page(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
-        let app: &App = cx;
+    /// The Event page's header for `event`, as EventKit last read it when it is still on
+    /// screen.
+    pub(super) fn render_event_toolbar(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
+        let open_calendar = cx.listener(|view, _, _, cx| view.navigate(Route::Calendar, cx));
         let event = self
             .events
             .events
             .iter()
             .find(|read| read.id == event.id)
             .unwrap_or(event);
-        let calendars = self.calendar_sync.read(app).calendars();
-        let shown = event_views::shown(std::slice::from_ref(event), calendars, |account| {
-            tint(self.settings.account_color(account), app)
-        })
-        .pop()
-        // A Calendar gone since the Event was opened leaves it uncolored and unnamed.
-        .unwrap_or_else(|| event_views::Shown {
-            event: event.clone(),
-            color: app.theme().muted_foreground,
-            calendar: "".into(),
-        });
-        event_details::page(&shown, app).into_any_element()
+        event_details::toolbar(event, open_calendar, cx).into_any_element()
     }
 
     /// Calendar shortcuts, registered only while the Calendar page is open.

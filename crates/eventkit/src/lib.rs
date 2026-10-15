@@ -107,7 +107,8 @@ pub struct Event {
     /// Free-text location.
     pub location: Option<String>,
     /// The notes as plain text, without meeting links or the meeting details Google and Teams
-    /// add, since [`Event::join`] stands for them.
+    /// add, since [`Event::join`] stands for them. A link whose text is not its address, as
+    /// Google sends one from the web, is written `[text](address)`.
     pub description: Option<String>,
     /// Meeting link of a known service, found in the URL, location, or notes.
     pub join: Option<Join>,

@@ -132,7 +132,7 @@ impl NativeView {
             )
     }
 
-    /// Borderless, transparent header; the Calendar page puts its toolbar here.
+    /// Borderless, transparent header; the Calendar and Event pages put their toolbars here.
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (width, collapsed, left) = (
             self.sidebar_width,
@@ -143,8 +143,11 @@ impl NativeView {
             self.sidebar_motion_width(div().flex_shrink_0(), "header-inset", move |delta| {
                 header_inset(left, visible_width(width, collapsed, delta))
             });
-        let toolbar = (self.route == Route::Calendar)
-            .then(|| self.render_calendar_toolbar(cx).into_any_element());
+        let toolbar = match &self.route {
+            Route::Calendar => Some(self.render_calendar_toolbar(cx).into_any_element()),
+            Route::Event(event) => Some(self.render_event_toolbar(event, cx)),
+            _ => None,
+        };
         if cfg!(target_os = "macos") {
             TitleBar::new()
                 .border_0()

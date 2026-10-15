@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use crate::native_view::CalendarView;
 use chrono::Weekday;
 use crumble_eventkit::{Account, Calendar};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Settings {
     /// Weekday that starts each Calendar week.
     pub(crate) first_day_of_week: Weekday,
+    /// The Calendar view last picked, which the Calendar page opens on.
+    pub(crate) calendar_view: CalendarView,
     /// EventKit identifiers of the Disabled Accounts.
     pub(crate) disabled_accounts: BTreeSet<String>,
     /// EventKit identifiers of the Disabled Calendars, kept while their Account is Disabled.
@@ -79,6 +82,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             first_day_of_week: Weekday::Mon,
+            calendar_view: CalendarView::default(),
             disabled_accounts: BTreeSet::new(),
             disabled_calendars: BTreeSet::new(),
             folded_sections: BTreeSet::new(),
@@ -202,7 +206,9 @@ pub(crate) fn toggle(disabled: &mut BTreeSet<String>, id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Account, AccountColor, Calendar, Settings, SidebarSection, Weekday, toggle};
+    use super::{
+        Account, AccountColor, Calendar, CalendarView, Settings, SidebarSection, Weekday, toggle,
+    };
     use crumble_eventkit::Provider;
     use std::collections::BTreeSet;
 
@@ -210,6 +216,7 @@ mod tests {
     fn saved_settings_read_back() {
         let mut settings = Settings {
             first_day_of_week: Weekday::Sun,
+            calendar_view: CalendarView::Year,
             ..Settings::default()
         };
         settings.disabled_accounts.insert("source-1".into());
@@ -238,6 +245,8 @@ mod tests {
         assert!(old.disabled_accounts.is_empty() && old.disabled_calendars.is_empty());
         assert!(old.folded_sections.is_empty() && old.account_colors.is_empty());
         assert!(old.account_order.is_empty() && old.account_aliases.is_empty());
+        // Files saved before the Calendar view was remembered open on Month view.
+        assert_eq!(old.calendar_view, CalendarView::Month);
         // Files saved before custom colors keep their palette colors.
         let old = Settings::parse(r#"{"account_colors":{"source-1":"Pink"}}"#);
         assert_eq!(old.account_color("source-1"), AccountColor::Pink);

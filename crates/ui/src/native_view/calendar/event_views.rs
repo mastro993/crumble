@@ -5,15 +5,15 @@ use super::NativeView;
 use super::event_details;
 use super::events::{columns, day_order, minutes_on, on_day};
 use super::grids::HOUR_HEIGHT;
+use crate::native_view::card::hover_card;
 use chrono::NaiveDate;
 use crumble_eventkit::{Calendar, Event, When};
 use gpui_kit::base::TestSupportExt;
-use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{ActiveTheme, StyledExt, v_flex};
 use gpui_kit::{
-    Anchor, App, Context, Div, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px, relative,
+    App, Context, Div, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    relative,
 };
 use std::rc::Rc;
 
@@ -47,7 +47,6 @@ pub(super) struct Shown {
     pub(super) event: Event,
     /// The Account's color.
     pub(super) color: Hsla,
-    pub(super) calendar: SharedString,
 }
 
 /// The Events paired with their Calendars, each in the color `account_color` gives its
@@ -66,7 +65,6 @@ pub(super) fn shown(
             Some(Shown {
                 event: event.clone(),
                 color: account_color(&calendar.account_id),
-                calendar: calendar.name.clone().into(),
             })
         })
         .collect()
@@ -74,37 +72,36 @@ pub(super) fn shown(
 
 #[derive(Clone, Copy)]
 enum ChipKind {
-    /// A Week view block for a timed Event, `height` points tall; a short one shows only its
-    /// title.
-    Block { one_line: bool, height: f32 },
+    /// A Week view block for a timed Event; a short one shows only its title.
+    Block { one_line: bool },
     /// A Month view line for a timed Event: dot, start time, title.
     Line,
     /// A tinted bar for an all-day Event.
     Bar,
 }
 
-/// One Event's clickable shape; it is the trigger of the details card.
+/// One Event's clickable shape, showing its details card while the pointer rests on it.
 #[derive(IntoElement)]
 struct EventChip {
     id: ElementId,
     kind: ChipKind,
-    title: SharedString,
     time: Option<SharedString>,
-    color: Hsla,
+    shown: Shown,
     open: Box<dyn Fn(&mut App)>,
 }
 
 impl RenderOnce for EventChip {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let tint = self.color.opacity(0.22);
-        let title = if self.title.is_empty() {
+        let color = self.shown.color;
+        let tint = color.opacity(0.22);
+        let title: SharedString = if self.shown.event.title.is_empty() {
             "(No title)".into()
         } else {
-            self.title
+            self.shown.event.title.clone().into()
         };
         let chip = div()
-            .id(self.id)
+            .id(self.id.clone())
             .test_support()
             .cursor_pointer()
             .overflow_hidden()
@@ -115,16 +112,14 @@ impl RenderOnce for EventChip {
                 cx.stop_propagation();
                 (self.open)(cx);
             });
-        match self.kind {
-            // The card's trigger is not sized, so the block cannot fill it by percentage.
-            ChipKind::Block { one_line, height } => chip
-                .w_full()
-                .h(px(height))
+        let chip = match self.kind {
+            ChipKind::Block { one_line } => chip
+                .size_full()
                 .line_height(px(BLOCK_LINE_HEIGHT))
                 .px_1()
                 .rounded(px(4.0))
                 .border_l(px(3.0))
-                .border_color(self.color)
+                .border_color(color)
                 .bg(tint)
                 .when(one_line, |block| block.flex().items_center())
                 .when(!one_line, |block| block.py(px(2.0)))
@@ -157,13 +152,7 @@ impl RenderOnce for EventChip {
                     let hover = theme.muted;
                     move |style| style.bg(hover)
                 })
-                .child(
-                    div()
-                        .size(px(6.0))
-                        .flex_shrink_0()
-                        .rounded_full()
-                        .bg(self.color),
-                )
+                .child(div().size(px(6.0)).flex_shrink_0().rounded_full().bg(color))
                 .children(self.time.map(|time| {
                     div()
                         .flex_shrink_0()
@@ -171,12 +160,20 @@ impl RenderOnce for EventChip {
                         .child(time)
                 }))
                 .child(div().min_w_0().truncate().child(title)),
-        }
+        };
+        let shown = self.shown;
+        hover_card(
+            self.id,
+            chip,
+            move |_, cx| event_details::card(&shown, cx).into_any_element(),
+            window,
+            cx,
+        )
     }
 }
 
 /// The chip of `shown` on `date`: hovering shows its details card, clicking opens its page.
-fn event(shown: &Shown, date: NaiveDate, kind: ChipKind, open: &OpenEvent) -> HoverCard {
+fn event(shown: &Shown, date: NaiveDate, kind: ChipKind, open: &OpenEvent) -> EventChip {
     let event = &shown.event;
     let id = format!("event-{}-{date}", event.id);
     let time = match (kind, event.when) {
@@ -184,20 +181,13 @@ fn event(shown: &Shown, date: NaiveDate, kind: ChipKind, open: &OpenEvent) -> Ho
         (_, When::Timed { start, .. }) => Some(start.format("%H:%M").to_string().into()),
     };
     let (open, opened) = (open.clone(), event.clone());
-    let chip = EventChip {
+    EventChip {
         id: ElementId::Name(format!("{id}-chip").into()),
         kind,
-        title: event.title.clone().into(),
         time,
-        color: shown.color,
+        shown: shown.clone(),
         open: Box::new(move |cx| open(&opened, cx)),
-    };
-    let details = shown.clone();
-    HoverCard::new(ElementId::Name(id.into()))
-        .appearance(false)
-        .anchor(Anchor::TopLeft)
-        .trigger(chip)
-        .content(move |_, window, cx| event_details::card(&details, window, cx))
+    }
 }
 
 /// The all-day Events of each of `days`, in Week view's strip above the hours; `None` when the
@@ -295,11 +285,10 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown], open: &OpenEvent) -> 
         .h_full()
         .children(timed.iter().zip(spans).zip(placed).map(
             |((&(shown, _), (start, end)), (column, width))| {
-                let height = to_px(end - start) - 1.0;
                 div()
                     .absolute()
                     .top(px(to_px(start)))
-                    .h(px(height))
+                    .h(px(to_px(end - start) - 1.0))
                     .left(relative(column as f32 / width as f32))
                     .w(relative(1.0 / width as f32))
                     .pr(px(2.0))
@@ -308,7 +297,6 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown], open: &OpenEvent) -> 
                         date,
                         ChipKind::Block {
                             one_line: to_px(end - start) < TWO_LINE_HEIGHT,
-                            height,
                         },
                         open,
                     ))
@@ -409,7 +397,9 @@ mod tests {
             div()
                 .id("day")
                 .test_support()
-                .size_full()
+                // As wide as a Month view day, so the card has room beside it.
+                .w(px(160.))
+                .h_full()
                 .on_click(cx.listener(|day, _, _, _| day.day_clicks += 1))
                 .child(month_day(date, &self.shown, &open, cx))
         }
@@ -439,7 +429,7 @@ mod tests {
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                             Default::default(),
-                            size(px(400.), px(600.)),
+                            size(px(800.), px(600.)),
                         ))),
                         ..Default::default()
                     },
@@ -449,7 +439,6 @@ mod tests {
                             shown: vec![Shown {
                                 event: standup,
                                 color: rgb(0xff0000).into(),
-                                calendar: "Work".into(),
                             }],
                             opened: opened.clone(),
                             day_clicks: 0,
@@ -464,7 +453,7 @@ mod tests {
             window.render_frame(cx);
             window.hover(chip, cx);
             window.render_frame(cx);
-            assert!(window.try_find("event-card").is_none(), "opened at once");
+            assert!(window.try_find("hover-card").is_none(), "opened at once");
         })
         .unwrap_or_else(|error| panic!("update test window: {error}"));
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -472,7 +461,12 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.render_frame(cx);
-            assert!(window.try_find("event-card").is_some(), "no details card");
+            // Beside the Event, never over it.
+            let (card, trigger) = (
+                window.find("hover-card").bounds(),
+                window.find(chip).bounds(),
+            );
+            assert!(card.left() > trigger.right(), "{card:?} covers {trigger:?}");
             window.click(chip, cx);
         })
         .unwrap_or_else(|error| panic!("update test window: {error}"));
