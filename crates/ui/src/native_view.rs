@@ -1,5 +1,6 @@
 mod account_alias;
 mod account_dot;
+mod agenda;
 mod calendar;
 mod calendars_section;
 mod card;
@@ -22,6 +23,7 @@ pub use shell::{GoBack, GoForward, ToggleSidebar};
 use crate::calendar_sync::CalendarSync;
 use crate::settings::{Settings, SidebarSection};
 use account_alias::{AliasFields, Rename};
+use agenda::AgendaPage;
 use calendar::{CalendarEvents, CalendarPage};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
@@ -49,6 +51,7 @@ pub struct NativeView {
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: CalendarEvents,
+    agenda: AgendaPage,
     calendar_sync: Entity<CalendarSync>,
     /// Scroll position of the sidebar's sections.
     sidebar_scroll: ScrollHandle,
@@ -85,6 +88,7 @@ impl NativeView {
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
             view.refresh_events(true, cx);
+            view.agenda.mark_stale();
             view.sync_alias_fields(window, cx);
             cx.notify();
         })
@@ -101,6 +105,7 @@ impl NativeView {
             first_day_select,
             calendar,
             events: CalendarEvents::default(),
+            agenda: AgendaPage::default(),
             calendar_sync,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_hovered: false,
@@ -146,7 +151,11 @@ impl Focusable for NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.route == Route::Agenda {
+            self.maintain_agenda(cx);
+        }
         let page = match &self.route {
+            Route::Agenda => self.render_agenda(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
             Route::Settings => self.render_settings(cx).into_any_element(),
             // The Event's details are in the header for now.

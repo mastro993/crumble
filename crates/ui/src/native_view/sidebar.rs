@@ -143,6 +143,7 @@ impl NativeView {
                     .border_b(hairline)
                     .border_color(divider(above))
                     .child(self.nav_row(Route::Home, "home", cx))
+                    .child(self.nav_row(Route::Agenda, "agenda", cx))
                     .child(self.nav_row(Route::Calendar, "calendar", cx))
                     .child(self.nav_row(Route::Chat, "chat", cx)),
             )

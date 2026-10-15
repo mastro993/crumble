@@ -119,7 +119,7 @@ pub(super) fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
 }
 
 /// When an Event happens, as the details show it: `Mon 13 Oct · 09:00 – 10:00`.
-pub(super) fn when_text(when: &When) -> String {
+pub(in crate::native_view) fn when_text(when: &When) -> String {
     const DAY: &str = "%a %-d %b";
     match *when {
         When::AllDay { first, last } if first == last => {

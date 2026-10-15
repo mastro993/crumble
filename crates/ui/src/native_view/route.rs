@@ -7,6 +7,7 @@ use std::rc::Rc;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Route {
     Home,
+    Agenda,
     Calendar,
     Chat,
     Settings,
@@ -18,6 +19,7 @@ impl Route {
     pub(super) fn title(&self) -> &'static str {
         match self {
             Route::Home => "Home",
+            Route::Agenda => "Agenda",
             Route::Calendar => "Calendar",
             Route::Chat => "Chat",
             Route::Settings => "Settings",
