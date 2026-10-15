@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::NativeView;
 use super::account_alias::{Rename, account_name};
-use super::account_dot::{dot, name, ring, srgb, tint};
+use super::account_dot::{check, dot, name, ring, srgb, tint};
 use super::controls::app_icon;
 use super::custom_color::CustomColor;
 use super::menu::{MenuItem, OpenMenu};
@@ -20,8 +20,8 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, DragMoveEvent, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder, px,
+    MouseButton, MouseDownEvent, ParentElement, Role, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Toggled, Window, div, prelude::FluentBuilder, px,
 };
 
 const PRIVACY_SETTINGS: &str =
@@ -29,8 +29,6 @@ const PRIVACY_SETTINGS: &str =
 const INTERNET_ACCOUNTS: &str =
     "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension";
 
-/// A Hidden Account's row is dimmed to this opacity.
-const HIDDEN_OPACITY: f32 = 0.5;
 /// Muted copy sits a step below its label, as in SkillBinder.
 const MUTED_OPACITY: f32 = 0.65;
 
@@ -66,8 +64,6 @@ fn section(access: Access, loaded: bool, accounts: usize, listed: usize) -> Sect
 /// What an Account row's context menu asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AccountAction {
-    /// Hide a shown Account, or Show a Hidden one.
-    ToggleHidden,
     /// Edit the Account's Alias in place.
     Rename,
     /// Give the dot this color.
@@ -216,10 +212,11 @@ impl NativeView {
         listed
     }
 
-    /// The row shows the Account's Alias, else its label. Clicking it, or pressing Enter or Space
-    /// while it has focus, Hides or Shows the Account; dragging it reorders the Accounts, and
-    /// right-clicking it opens a menu that Hides or Shows the Account, renames it, picks its dot
-    /// color, and moves it. The row stays highlighted while its menu is open.
+    /// The row shows a checkbox in the Account's color, checked unless the Account is Hidden,
+    /// then its Alias, else its label. Clicking the row, or pressing Enter or Space while it has
+    /// focus, Hides or Shows the Account. Dragging the row reorders the Accounts, and right-clicking it opens a
+    /// menu that renames the Account, picks its color, and moves it. The row
+    /// keeps its hover fill while its menu is open.
     fn account_row(
         &self,
         account: &Account,
@@ -227,19 +224,18 @@ impl NativeView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let color = self.settings.account_color(&account.id);
+        let hidden = self.settings.hidden_accounts.contains(&account.id);
         if let Some(rename) = self
             .renaming
             .as_ref()
             .filter(|rename| rename.id == account.id)
         {
-            return rename_row(rename, color, cx);
+            return rename_row(rename, check(color, !hidden, cx), cx);
         }
-        let hidden = self.hidden_accounts.contains(&account.id);
         let label: SharedString = account_name(&self.settings, account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
         let act = move |action: AccountAction, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| match action {
-                AccountAction::ToggleHidden => view.toggle_hidden(&id, cx),
                 AccountAction::Rename => view.start_rename(&id, window, cx),
                 AccountAction::Recolor(color) => view.set_account_color(&id, color, cx),
                 AccountAction::MoveTo(index) => view.move_account(&id, index, cx),
@@ -252,12 +248,23 @@ impl NativeView {
         let id = account.id.clone();
         // A drag never ends in a click.
         activate(
-            row_with(owner.clone(), dot(color, cx), label.clone(), false, cx),
+            row_with(
+                owner.clone(),
+                check(color, !hidden, cx),
+                label.clone(),
+                false,
+                cx,
+            ),
             label.clone(),
             cx,
             move |view, _, cx| view.toggle_hidden(&id, cx),
         )
-        .when(hidden, |row| row.opacity(HIDDEN_OPACITY))
+        .role(Role::CheckBox)
+        .aria_toggled(if hidden {
+            Toggled::False
+        } else {
+            Toggled::True
+        })
         .when(menu_open, |row| row.bg(hover_fill(cx)))
         .relative()
         .top(px(placement.offset))
@@ -267,6 +274,7 @@ impl NativeView {
             RowDrag {
                 id: account.id.clone(),
                 color,
+                checked: !hidden,
                 label,
                 width: self.sidebar_width - 2.0 * INSET,
                 grab: Cell::new(0.0),
@@ -294,7 +302,7 @@ impl NativeView {
                         }
                     },
                 );
-                let items = account_menu(hidden, color, custom, index, len, act.clone());
+                let items = account_menu(color, custom, index, len, act.clone());
                 view.menu = Some(OpenMenu::new(
                     owner.clone(),
                     items,
@@ -371,7 +379,8 @@ impl NativeView {
     }
 
     fn toggle_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
-        settings::toggle(&mut self.hidden_accounts, id);
+        settings::toggle(&mut self.settings.hidden_accounts, id);
+        self.settings.save();
         self.refresh_events(false, cx);
         cx.notify();
     }
@@ -395,7 +404,7 @@ struct Placement {
 }
 
 /// An Account row turned into a field for its Alias; Enter or leaving it saves, Escape cancels.
-fn rename_row(rename: &Rename, color: AccountColor, cx: &Context<NativeView>) -> AnyElement {
+fn rename_row(rename: &Rename, leading: impl IntoElement, cx: &Context<NativeView>) -> AnyElement {
     h_flex()
         .id(SharedString::from(format!("rename-{}", rename.id)))
         .flex_shrink_0()
@@ -403,7 +412,7 @@ fn rename_row(rename: &Rename, color: AccountColor, cx: &Context<NativeView>) ->
         .h(px(ROW_HEIGHT))
         .px(px(ROW_PADDING))
         .capture_key_down(cx.listener(NativeView::rename_key_down))
-        .child(dot(color, cx))
+        .child(leading)
         .child(Input::new(&rename.input).small())
         .into_any_element()
 }
@@ -439,7 +448,6 @@ fn hint(
 /// An Account row's context menu, for the row at `index` of `len`; each choice runs `act`, and
 /// the Color submenu's Custom row opens `custom` in a panel.
 fn account_menu(
-    hidden: bool,
     current: AccountColor,
     custom: CustomColor,
     index: usize,
@@ -450,11 +458,6 @@ fn account_menu(
     let on = |action| {
         let act = act.clone();
         move |window: &mut Window, cx: &mut App| act(action, window, cx)
-    };
-    let (label, icon) = if hidden {
-        ("Show", "view")
-    } else {
-        ("Hide", "view-off")
     };
     // Each color leads with its dot, so the current one is checked at the trailing edge. Custom
     // leads with the custom color once there is one.
@@ -485,9 +488,6 @@ fn account_menu(
             }),
     ]);
     vec![
-        MenuItem::new("toggle-hidden", label)
-            .icon(icon)
-            .on_select(on(AccountAction::ToggleHidden)),
         MenuItem::new("rename", "Rename…")
             .icon("pencil")
             .on_select(on(AccountAction::Rename)),
@@ -602,14 +602,10 @@ mod tests {
                                         }
                                     },
                                 );
-                                let items = account_menu(
-                                    false,
-                                    color,
-                                    custom,
-                                    0,
-                                    2,
-                                    move |action, _, _| actions.borrow_mut().push(action),
-                                );
+                                let items =
+                                    account_menu(color, custom, 0, 2, move |action, _, _| {
+                                        actions.borrow_mut().push(action)
+                                    });
                                 sidebar.menu = Some(OpenMenu::new(
                                     "row",
                                     items,
@@ -756,7 +752,7 @@ mod tests {
     #[gpui_kit::test]
     fn choosing_a_row_closes_the_menu_and_runs_it(cx: &mut TestAppContext) {
         let harness = Harness::new(cx);
-        for item in ["toggle-hidden", "rename", "move-down"] {
+        for item in ["rename", "move-down"] {
             harness.open(cx);
             harness.step(cx, |window, cx| {
                 window.click(format!("menu-item-{item}"), cx)
@@ -774,11 +770,7 @@ mod tests {
 
         assert_eq!(
             harness.actions(cx),
-            [
-                AccountAction::ToggleHidden,
-                AccountAction::Rename,
-                AccountAction::MoveTo(1)
-            ]
+            [AccountAction::Rename, AccountAction::MoveTo(1)]
         );
     }
 
@@ -866,9 +858,9 @@ mod tests {
     fn the_keyboard_opens_the_panel_and_a_hex_value_picks_it(cx: &mut TestAppContext) {
         let harness = Harness::new(cx);
         harness.open(cx);
-        // Hide, Rename, Color, into the submenu on Gray, up to Custom, the last row, and into
+        // Rename, Color, into the submenu on Gray, up to Custom, the last row, and into
         // its panel, which focuses the hex field.
-        for key in ["down", "down", "down", "right", "up", "right"] {
+        for key in ["down", "down", "right", "up", "right"] {
             harness.step(cx, |window, cx| window.press(key, cx));
         }
         harness.check(cx, |window| {
@@ -895,7 +887,7 @@ mod tests {
     fn escape_closes_the_panel_then_the_submenu_then_the_menu(cx: &mut TestAppContext) {
         let harness = Harness::new(cx);
         harness.open(cx);
-        for key in ["down", "down", "down", "right", "up", "right"] {
+        for key in ["down", "down", "right", "up", "right"] {
             harness.step(cx, |window, cx| window.press(key, cx));
         }
         harness.step(cx, |window, cx| window.press("escape", cx));
@@ -918,7 +910,7 @@ mod tests {
     fn the_menu_keeps_focus_when_the_panel_closes_while_its_field_has_it(cx: &mut TestAppContext) {
         let harness = Harness::new(cx);
         harness.open(cx);
-        for key in ["down", "down", "down", "right", "up", "right"] {
+        for key in ["down", "down", "right", "up", "right"] {
             harness.step(cx, |window, cx| window.press(key, cx));
         }
         harness.step(cx, |window, cx| window.hover("menu-item-color-pink", cx));
@@ -959,8 +951,8 @@ mod tests {
     fn the_keyboard_walks_the_menu_and_its_submenu(cx: &mut TestAppContext) {
         let harness = Harness::new(cx);
         harness.open(cx);
-        // Hide, Rename, Color, then into the submenu, which highlights Gray; one down is Red.
-        for key in ["down", "down", "down", "right", "down", "enter"] {
+        // Rename, Color, then into the submenu, which highlights Gray; one down is Red.
+        for key in ["down", "down", "right", "down", "enter"] {
             harness.step(cx, |window, cx| window.press(key, cx));
         }
         harness.assert_closed(cx);

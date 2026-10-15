@@ -27,6 +27,10 @@ const ALL_DAY_LINES: usize = 2;
 const MIN_BLOCK_MINUTES: f32 = 22.0;
 /// Blocks shorter than this, in points, show their title on one line and leave out the time.
 const TWO_LINE_HEIGHT: f32 = 36.0;
+/// Space after a Week view block, before the block beside it or its column's edge.
+const BLOCK_GAP_X: f32 = 6.0;
+/// Space between Week view blocks one under another; half of it sits under the hour line.
+const BLOCK_GAP_Y: f32 = 4.0;
 /// Line height inside a Week view block, tighter than the theme's so two lines fit in 45 minutes.
 const BLOCK_LINE_HEIGHT: f32 = 15.0;
 
@@ -290,11 +294,11 @@ pub(super) fn day_blocks(date: NaiveDate, shown: &[Shown], open: &OpenEvent) -> 
             |((&(shown, _), (start, end)), (column, width))| {
                 div()
                     .absolute()
-                    .top(px(to_px(start)))
-                    .h(px(to_px(end - start) - 1.0))
+                    .top(px(to_px(start) + BLOCK_GAP_Y / 2.0))
+                    .h(px(to_px(end - start) - BLOCK_GAP_Y))
                     .left(relative(column as f32 / width as f32))
                     .w(relative(1.0 / width as f32))
-                    .pr(px(2.0))
+                    .pr(px(BLOCK_GAP_X))
                     .child(event(
                         shown,
                         date,

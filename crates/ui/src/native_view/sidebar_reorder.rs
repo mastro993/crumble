@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::account_dot::dot;
+use super::account_dot::check;
 use super::sidebar_row::row_with;
 use crate::settings::AccountColor;
 use crumble_theme::sidebar::{ROW_GAP, ROW_HEIGHT};
@@ -28,6 +28,8 @@ const PITCH: f32 = ROW_HEIGHT + ROW_GAP;
 pub(super) struct RowDrag<Id> {
     pub(super) id: Id,
     pub(super) color: AccountColor,
+    /// The Account is not Hidden.
+    pub(super) checked: bool,
     pub(super) label: SharedString,
     pub(super) width: f32,
     /// Pointer distance below the row's top edge when the drag began.
@@ -44,6 +46,7 @@ impl<Id> RowDrag<Id> {
 /// The dragged row, floating under the pointer with a shadow.
 pub(super) struct RowDragPreview {
     color: AccountColor,
+    checked: bool,
     label: SharedString,
     width: f32,
 }
@@ -52,6 +55,7 @@ impl RowDragPreview {
     pub(super) fn new<Id>(drag: &RowDrag<Id>) -> Self {
         Self {
             color: drag.color,
+            checked: drag.checked,
             label: drag.label.clone(),
             width: drag.width,
         }
@@ -62,7 +66,7 @@ impl Render for RowDragPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         row_with(
             "row-drag-preview",
-            dot(self.color, cx),
+            check(self.color, self.checked, cx),
             self.label.clone(),
             true,
             cx,

@@ -62,7 +62,7 @@ Someone invited to an Event, including its organizer, with their answer to the i
 _Avoid_: attendee, guest, invitee
 
 **Hidden**:
-Said of an Account whose Events Crumble leaves off the Calendar page until Crumble quits. It is chosen in the Calendars section and changes nothing in macOS.
+Said of an Account whose Events Crumble leaves off the Calendar page while it stays listed in the Calendars section. It is chosen by clicking the Account's row there, which unchecks its checkbox, is kept across restarts, and changes nothing in macOS.
 _Avoid_: muted, unchecked, toggled off
 
 **Alias**:
@@ -80,7 +80,7 @@ The sidebar section that lists every Account that is not Disabled. Its title say
 - An **Account** has one or more **Calendars**; a **Calendar** has many **Events**
 - The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is neither **Disabled** nor **Hidden**, inside the visible **Period**
 - Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
-- **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until Crumble quits
+- **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
 - An **Event** is drawn in its **Account**'s color, whatever its **Calendar**'s color is in macOS
 
@@ -94,5 +94,5 @@ The sidebar section that lists every Account that is not Disabled. Its title say
 - "view" meant both a GPUI view and Week/Month/Year. Resolved: the latter is always a **Calendar view**.
 - "calendar" meant both the page and a synced list of Events. Resolved: the page is the **Calendar page** and a synced list is a **Calendar**.
 - "meeting" meant only Events with attendees. Resolved: every synced entry is an **Event**.
-- "hide" meant both the permanent Settings choice and the sidebar's session-only one. Resolved: the permanent one is **Disabled**, the session-only one is **Hidden**.
+- "hide" meant both the Settings choice and the sidebar's checkbox. Resolved: the Settings one, which also drops the sidebar row, is **Disabled**; the sidebar one is **Hidden**.
 - The **Calendars section** lists **Accounts**, not **Calendars**. Resolved: keep the "Calendars" title for users; in code and conversation its rows are **Accounts**.
