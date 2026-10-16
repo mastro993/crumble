@@ -314,7 +314,7 @@ fn convert(event: &EKEvent) -> Option<Event> {
         Some(Event {
             // Occurrences of a repeating Event share an identifier, so the start makes it unique;
             // `Event::item_id` reads the identifier back.
-            id: format!("{item_id}@{}", start.timestamp()),
+            id: Event::occurrence_id(&item_id, start),
             calendar_id: event.calendar()?.calendarIdentifier().to_string(),
             title: event.title().to_string(),
             when,

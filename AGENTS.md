@@ -43,22 +43,38 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 
 - Use concrete types and functions. Add a trait only when it has two real implementations.
 - Keep crate APIs narrow: `pub(crate)` by default, `pub` only for items another crate uses, each with a doc comment.
-- Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`.
+- Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`. Member manifests must not pin versions; `scripts/check-crate-boundaries.py` checks this.
 - Only `crumble-eventkit` uses `unsafe`, under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md)). Every other crate keeps `unsafe_code = "forbid"`.
+
+## Invariants CI enforces
+
+`scripts/check-crate-boundaries.py` and `.github/workflows/ci.yml` fail a change that:
+
+- Adds `gpui`, `gpui-kit`, or `gpui-pre` to `calendar` / `store` / `eventkit`, or `gpui-kit` to `sync`.
+- Adds Diesel to `ui`, `sync`, `calendar`, or `eventkit`.
+- Adds objc2 crates outside `eventkit`.
+- Pins a crate version in a member `Cargo.toml` instead of `[workspace.dependencies]`.
+
+`Event::id` is unique per occurrence in one run and includes the start. Follow a moved Event with `Event::item_id` and `events::latest`. Do not persist `Event::id`.
 
 ## Testing
 
 - Test pure logic with plain `#[test]` in GPUI-free crates or modules.
 - Use `TestAppContext` only for behavior that needs GPUI: entities, focus, actions, rendering.
 
+## Keyboard
+
+Custom clickable elements that are not a GPUI Kit `Button` go through `native_view::keyboard::focusable` (or `sidebar_row::activate`) so Tab, Enter, and Space reach them. Repeated sibling elements need distinct `ElementId`s; do not key them by display name.
+
 ## Build and verify
 
-Run all three before you call work done:
+Run all four before you call work done:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+python3 scripts/check-crate-boundaries.py
 ```
 
 `cargo run -p crumble --locked` launches `Crumble.app` through `scripts/macos-runner.sh`; see the README for signing.

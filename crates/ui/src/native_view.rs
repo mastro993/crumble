@@ -6,6 +6,7 @@ mod calendars_section;
 mod card;
 mod controls;
 mod custom_color;
+mod keyboard;
 mod menu;
 mod route;
 mod settings_page;

@@ -88,6 +88,15 @@ pub fn next_read(
     }
 }
 
+/// A read that is the same as the last failed one is not tried again until EventKit reports a
+/// change or a different read is wanted, so a persistent error cannot loop.
+pub fn skip_failed_read(
+    wanted: Option<(Span, bool)>,
+    failed: Option<&(Span, bool)>,
+) -> Option<(Span, bool)> {
+    wanted.filter(|wanted| failed != Some(wanted))
+}
+
 /// The days from `from` up to the day before `to`, in pieces EventKit accepts.
 pub fn read_pieces(from: NaiveDate, to: NaiveDate) -> impl Iterator<Item = Range<NaiveDate>> {
     let end = move |first: NaiveDate| {
@@ -240,7 +249,8 @@ pub fn time_label(when: &When) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events, time_label,
+        Row, Span, day_label, horizon, next_read, read_pieces, rows, skip_failed_read, span_events,
+        time_label,
     };
     use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
     use crumble_eventkit::{Event, When};
@@ -485,6 +495,22 @@ mod tests {
         assert_eq!(
             next_read(Some(&recent), false, false, false, today, ids()),
             None
+        );
+    }
+
+    #[test]
+    fn a_failed_read_is_not_retried_until_a_different_one_is_wanted() {
+        let wanted = Some((span(date(1), date(16)), true));
+        assert_eq!(skip_failed_read(wanted.clone(), None), wanted);
+        assert_eq!(skip_failed_read(wanted.clone(), wanted.as_ref()), None);
+        let other = span(date(1), date(15));
+        assert_eq!(
+            skip_failed_read(wanted.clone(), Some(&(other, true))),
+            wanted
+        );
+        assert_eq!(
+            skip_failed_read(wanted.clone(), Some(&(span(date(1), date(16)), false))),
+            wanted
         );
     }
 

@@ -118,11 +118,24 @@ pub struct Event {
 }
 
 impl Event {
+    /// Unique per occurrence in one run: the calendar item's identifier, `@`, then the start
+    /// as a Unix timestamp. [`Event::item_id`] reads the item back; do not persist this, and
+    /// do not use it to follow an Event after it moves.
+    pub fn occurrence_id(item_id: &str, start: DateTime<Local>) -> String {
+        format!("{item_id}@{}", start.timestamp())
+    }
+
     /// The calendar item this occurrence belongs to: every occurrence of a repeating Event
     /// shares it, and it stays when the Event moves, while [`Event::id`] also holds the start.
     pub fn item_id(&self) -> &str {
-        self.id.rsplit_once('@').map_or(&self.id, |(item, _)| item)
+        item_id(&self.id)
     }
+}
+
+fn item_id(occurrence_id: &str) -> &str {
+    occurrence_id
+        .rsplit_once('@')
+        .map_or(occurrence_id, |(item, _)| item)
 }
 
 /// A link that opens a video meeting.
@@ -160,4 +173,49 @@ pub enum Response {
     Delegated,
     /// No answer yet.
     Pending,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Event, When, item_id};
+    use chrono::{Local, TimeDelta, TimeZone};
+
+    fn start() -> chrono::DateTime<Local> {
+        Local
+            .with_ymd_and_hms(2026, 10, 16, 9, 0, 0)
+            .earliest()
+            .unwrap_or_default()
+    }
+
+    fn event_with_id(id: String) -> Event {
+        Event {
+            id,
+            calendar_id: "calendar".into(),
+            title: "Standup".into(),
+            when: When::Timed {
+                start: start(),
+                end: start() + TimeDelta::minutes(15),
+            },
+            location: None,
+            description: None,
+            join: None,
+            participants: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn occurrence_id_embeds_the_start_and_item_id_strips_it() {
+        let morning = start();
+        let later = morning + TimeDelta::hours(1);
+        let first = Event::occurrence_id("item", morning);
+        let moved = Event::occurrence_id("item", later);
+        assert_ne!(first, moved);
+        assert_eq!(item_id(&first), "item");
+        assert_eq!(item_id(&moved), "item");
+        assert_eq!(event_with_id(first).item_id(), "item");
+        // An item identifier that itself contains `@` still round-trips: the start is the last
+        // `@` segment.
+        let nested = Event::occurrence_id("foo@bar", morning);
+        assert_eq!(item_id(&nested), "foo@bar");
+    }
 }
