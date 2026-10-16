@@ -1,7 +1,7 @@
 //! What the Agenda list shows and in what order: every Event that has started and every Quick
-//! note, newest first, under the day they started or were made, with Today's In progress Events
-//! pinned above the Now line. Also
-//! which days the Agenda reads next and how a read is split for EventKit.
+//! note, newest first, under the day they started or are listed at, with Today's In progress
+//! Events pinned above the Now line. Also which days the Agenda reads next and how a read is
+//! split for EventKit.
 
 use crate::events::when_text;
 use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate};
@@ -133,7 +133,7 @@ pub enum Row {
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
-    /// A Quick note, under the day it was made.
+    /// A Quick note, under the day it is listed at.
     QuickNote(Rc<QuickNote>),
     /// The footer once nothing older is left to read.
     End,
@@ -144,7 +144,7 @@ pub enum Row {
 pub struct QuickNote {
     /// The Note's id, as text.
     pub id: String,
-    /// When the Note was made.
+    /// When the Note is listed: its Recording's start, else when it was made.
     pub at: DateTime<Local>,
     /// The Note's title, or `Quick note` when it has none.
     pub label: String,
@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_notes_join_the_events_at_the_time_they_were_made() {
+    fn quick_notes_join_the_events_at_their_time() {
         let now = at(15, 12, 0);
         let events = [
             timed("Workshop", at(15, 11, 0), at(15, 13, 0)),
