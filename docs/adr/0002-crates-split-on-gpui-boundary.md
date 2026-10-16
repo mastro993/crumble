@@ -13,13 +13,13 @@ Domain logic then gets tests that do not build GPUI, and the crate graph enforce
 ## Considered Options
 
 - **Keep one `ui` crate**: rejected. Its pure tests compile against GPUI, and nothing stops views from doing IO.
-- **One crate per feature or screen**: rejected for about 9k lines. The gpui-kit Coding Guides advise against it ("Do not create a crate for every screen or helper"). Each crate adds a manifest, a test binary, and link time, and the build graph here is a linear chain, so there is no parallelism to gain.
+- **One crate per feature or screen**: rejected for about 9k lines. The gpui-kit Coding Guides advise against it ("Do not create a crate for every screen or helper"). Each crate adds a manifest, a test binary, and link time, and the build graph here is nearly linear, so there is little parallelism to gain.
 - **Split by role (all models in one crate, all views in another) or by a literal reading of SOLID**: rejected. The line that pays for itself is GPUI or not.
 - **Abstract the executor so sync needs no GPUI**: rejected. It would hand-roll cancellation and threading that GPUI's tasks already provide, for no gain.
 
 ## Consequences
 
-- Build speed changes little. Editing a view rebuilds a smaller `crumble-ui`, but editing domain logic still rebuilds `crumble-ui` after its domain crate, because the graph is a chain. Measured in [build timings](../architecture/build-timings.md): domain test loops dropped from 2.45 s to under 1 s, a view edit from 2.34 s to 2.08 s, and app or test rebuilds after a logic edit stayed the same. Re-enabling `incremental` now saves at most 0.33 s for 0.7 GB more `target`; the doc recommends keeping it off, and changing it needs separate approval.
+- Build speed changes little. Editing a view rebuilds a smaller `crumble-ui`, but editing domain logic still rebuilds `crumble-ui` after its domain crate, because every domain crate sits upstream of it. Measured in [build timings](../architecture/build-timings.md): domain test loops dropped from 2.45 s to under 1 s, a view edit from 2.34 s to 2.08 s, and app or test rebuilds after a logic edit stayed the same (a whole-stack comparison that also includes the Diesel store). Re-enabling `incremental` now saves at most 0.33 s for a `target` that keeps growing; the doc recommends keeping it off, and changing it needs separate approval.
 - Items that cross a crate boundary become `pub` and need doc comments. Crate APIs stay narrow and concrete, without traits that have a single implementation.
 - The orphan rule may force some trait impls to live in the crate that owns the type.
 - State kept across restarts moves from `settings.json` to SQLite; [ADR 0003](0003-app-state-in-sqlite-via-diesel.md) records that decision.

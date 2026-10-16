@@ -1,6 +1,6 @@
 # Build timings
 
-Dev-build times before and after the crate split in [ADR 0002](../adr/0002-crates-split-on-gpui-boundary.md). The split is justified by testability and enforced boundaries, not speed; these numbers check that it does not make builds slower and show what re-enabling `incremental` would buy.
+Dev-build times before and after the crate split in [ADR 0002](../adr/0002-crates-split-on-gpui-boundary.md). "After" is the top of the whole stack, so it also includes the move from `settings.json` to the Diesel/SQLite store ([ADR 0003](../adr/0003-app-state-in-sqlite-via-diesel.md)) and Diesel's dependencies; the numbers compare the two states of the code, not the crate split in isolation. The split is justified by testability and enforced boundaries, not speed; these numbers check that it does not make builds slower and show what re-enabling `incremental` would buy.
 
 ## Machine
 
@@ -39,7 +39,13 @@ Per-crate compile time in the clean build (A), from `target/cargo-timings/cargo-
 | `crumble-calendar` | | 0.58 |
 | `crumble-theme` | 0.28 | 0.17 |
 
-Disk use of `target` after the script (clean build, then every scenario): 2.0 GB with incremental off, 2.7 GB once the incremental-on runs have added their caches. A clean incremental-on build alone leaves 1.7 GB.
+Disk use of `target`, each mode in its own target directory (see Protocol):
+
+| Step | incremental off | incremental on |
+| --- | ---: | ---: |
+| `cargo build --workspace` | 1.6 GB | 1.7 GB |
+| then `cargo test --workspace --no-run` | 1.9 GB | 2.1 GB |
+| then six logic edits, each rebuilding the app and the tests | 1.9 GB | 2.3 GB |
 
 ### Conclusion
 
@@ -47,13 +53,13 @@ The domain test loops got fast, and nothing else moved much:
 
 - **Faster**: Period tests (E) dropped from 2.45 s to 0.73 s, and store tests (F) run in about 1 s, because neither builds GPUI or `crumble-ui` any more. This is the payoff the split was for.
 - **Slightly faster**: a view edit (B) rebuilds a smaller `crumble-ui`, 2.34 s to 2.08 s.
-- **Unchanged**: a logic edit that rebuilds the app (C) or the test binaries (D) costs the same with incremental off. The crumble crates still form a chain (`crumble-eventkit` → `crumble-calendar` → `crumble-store`, `crumble-sync` → `crumble-ui` → `crumble`), so an edit in `crumble-calendar` now recompiles it, `crumble-store`, `crumble-sync` and `crumble-ui` before relinking the app, where before only `crumble-ui` recompiled. Their smaller sizes add up to about what `crumble-ui` alone cost.
-- **Slower with incremental on**: C and D lost most of what incremental used to save (1.77 s to 2.11 s, 1.63 s to 2.20 s). Incremental reuses work inside a crate; before the split the whole edit sat in one crate that it could mostly reuse, and now each downstream crate pays its own fixed cost on every edit.
+- **Unchanged**: a logic edit that rebuilds the app (C) or the test binaries (D) costs the same with incremental off. Every domain crate sits upstream of `crumble-ui`: `crumble-calendar` feeds both `crumble-store` and `crumble-sync`, which Cargo compiles in parallel, and both feed `crumble-ui` and then `crumble`. So an edit in `crumble-calendar` now recompiles it, then the slower of `crumble-store` and `crumble-sync`, then `crumble-ui`, before relinking the app, where before only `crumble-ui` recompiled. That longer critical path, which now also includes the new Diesel store, costs about what the smaller `crumble-ui` saves.
+- **Slower with incremental on**: C and D lost most of what incremental used to save (1.77 s to 2.11 s, 1.63 s to 2.20 s). Incremental reuses work inside a crate; before the split the whole edit sat in one crate that it could mostly reuse, and now each crate on the critical path pays its own fixed cost on every edit.
 - **Clean builds** are dominated by dependencies and did not change.
 
 ### Recommendation on `incremental`
 
-Keep `incremental = false`. Before the split, turning it on saved about 0.5 s on every edit loop; now it saves 0.33 s on a view edit (B), 0.25 s on a logic edit (C), and nothing on D, E or F, where the difference is within noise. In exchange it costs about 0.7 GB more `target` (2.0 GB to 2.7 GB after the scenarios above), growing with each edited build until `cargo clean`. Clean builds are not affected: Cargo uses incremental only for workspace members and path dependencies, not for the 600-odd crates.io and git units that dominate a clean build, and the single incremental-on clean build (88.70 s) came out no slower than the default. The `gpui-mcp` patch of `gpui-pre` is a git dependency, so incremental does not apply to it either way, and `--features mcp` builds behave the same. Switching back is a one-line change to `[profile.dev]` if view editing becomes the loop that matters; it needs separate approval.
+Keep `incremental = false`. Before the split, turning it on saved about 0.5 s on every edit loop; now it saves 0.33 s on a view edit (B), 0.25 s on a logic edit (C), and nothing on D, E or F, where the difference is within noise. In exchange `target` grows: 0.2 GB more after building the app and tests (1.9 GB to 2.1 GB), 0.4 GB more after six edits, and it keeps growing with each edited build until `cargo clean`, while the incremental-off directory stays flat. Clean builds are not affected: Cargo uses incremental only for workspace members and path dependencies, not for the 600-odd crates.io and git units that dominate a clean build, and the single incremental-on clean build (88.70 s) came out no slower than the default. The `gpui-mcp` patch of `gpui-pre` is a git dependency, so incremental does not apply to it either way, and `--features mcp` builds behave the same. Switching back is a one-line change to `[profile.dev]` if view editing becomes the loop that matters; it needs separate approval.
 
 ### Raw numbers
 
@@ -88,6 +94,7 @@ Each scenario edits a source file so that it really changes, then times one Carg
 - **D. Test build after a logic edit**: the C probe, then `cargo test --workspace --locked --no-run`.
 - **E. Pure-logic test loop**: the C probe, then the Period tests alone. At the baseline they compiled inside the GPUI crate: `cargo test -p crumble-ui --locked --lib -- period`. They now run in their own crate: `cargo test -p crumble-calendar --locked -- period`.
 - **F. Store test loop** (added after the split): probe `crates/store/src/account_color.rs`, then `cargo test -p crumble-store --locked`.
+- **Disk use** (added after the split, outside the script): for each mode, a fresh `CARGO_TARGET_DIR`, then `cargo build --workspace --locked`, `cargo test --workspace --locked --no-run`, and six C probes each followed by `cargo build -p crumble --locked` and the same test build, with `du -sh` after each step. Separate directories keep one mode's artifacts out of the other's number.
 
 B to F run three times each with `incremental` off, then again with `CARGO_PROFILE_DEV_INCREMENTAL=true`. Before each mode, one untimed warm build fills the cache, and D, E and F each get an untimed warm run first. `cargo build` is used instead of `cargo run`, which would launch the macOS runner.
 
@@ -135,7 +142,6 @@ for mode in off on; do
   cargo test -p crumble-store --locked > /dev/null 2>&1
   for i in 1 2 3; do probe $STORE; timed "$mode F $i" cargo test -p crumble-store --locked; done
   git checkout -- $STORE
-  du -sh target | sed "s/^/$mode du /" | tee -a "$OUT/results.txt"
 done
 git diff --exit-code
 ```
