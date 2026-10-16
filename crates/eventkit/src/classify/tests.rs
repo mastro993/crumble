@@ -99,6 +99,19 @@ fn join_link_ignores_unknown_hosts_and_lookalikes() {
     assert_eq!(join_url([Some("https://notzoom.us/j/1")]), None);
     assert_eq!(join_url([Some("http://zoom.us/j/1")]), None);
     assert_eq!(join_url([None, None]), None);
+    // A lookalike in userinfo is not the host; a real host still matches with a port.
+    assert_eq!(
+        join_url([Some("https://zoom.us:443@evil.example/j/1")]),
+        None
+    );
+    assert_eq!(
+        join_url([Some("https://zoom.us:443/j/1")]),
+        Some("https://zoom.us:443/j/1".to_owned())
+    );
+    assert_eq!(
+        join_url([Some("https://guest@us02web.zoom.us/j/1")]),
+        Some("https://guest@us02web.zoom.us/j/1".to_owned())
+    );
 }
 
 #[test]

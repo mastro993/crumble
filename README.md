@@ -27,9 +27,10 @@ Crumble is split into small crates on one line: whether code needs GPUI. Domain 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+python3 scripts/check-crate-boundaries.py
 ```
 
-CI (`.github/workflows/ci.yml`) runs these three on macOS 26 for every pull request and every push to `main`.
+CI (`.github/workflows/ci.yml`) runs these four on macOS 26 for every pull request and every push to `main`.
 
 Run `git config core.hooksPath .githooks` once per clone to turn on the pre-commit hook. It rejects a commit that stages a file over 20,000 bytes and explains how to split it. Lockfiles, generated code, vendored skills and binary files are exempt; `.gitattributes` lists the exempt paths as `linguist-generated` or `linguist-vendored`.
 

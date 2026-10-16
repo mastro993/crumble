@@ -57,23 +57,38 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 
 - Use concrete types and functions. Add a trait only when it has two real implementations.
 - Keep crate APIs narrow: `pub(crate)` by default, `pub` only for items another crate uses, each with a doc comment.
-- Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`.
+- Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`. Member manifests must not pin versions; `scripts/check-crate-boundaries.py` checks this.
 - A module with submodules is `foo.rs` plus a `foo/` folder, never `foo/mod.rs`; clippy's `mod_module_files` rejects `mod.rs`. A crate with its own lint table repeats that lint.
 - Only `crumble-eventkit`, `crumble-audio`, `crumble-transcribe`, `crumble-summarize` and `crumble-notify` use `unsafe`, each under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md), [ADR 0005](docs/adr/0005-recording-with-a-process-tap.md), [ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md), [ADR 0007](docs/adr/0007-summaries-and-model-providers.md), [ADR 0009](docs/adr/0009-suggestions-through-user-notifications.md)). Every other crate keeps `unsafe_code = "forbid"`.
+
+## Invariants CI enforces
+
+`scripts/check-crate-boundaries.py` and `.github/workflows/ci.yml` fail a change that:
+
+- Adds `gpui` or `gpui-pre` outside `crumble`, `ui`, `theme`, and `sync`, or `gpui-kit` to `sync` or any domain crate.
+- Adds Diesel outside `db`, `store`, and `notes`.
+- Adds objc2 crates outside `eventkit`, `audio`, and `notify`.
+- Pins a crate version in a member `Cargo.toml` instead of `[workspace.dependencies]`.
+- Drops `unsafe_code = "deny"` from a crate that uses `unsafe`, or `[lints] workspace = true` from any other.
 
 ## Testing
 
 - Test pure logic with plain `#[test]` in GPUI-free crates or modules.
 - Use `TestAppContext` only for behavior that needs GPUI: entities, focus, actions, rendering.
 
+## Keyboard
+
+Custom clickable elements that are not a GPUI Kit `Button` go through `native_view::keyboard::focusable` (or `sidebar_row::activate`) so Tab, Enter, and Space reach them. Repeated sibling elements need distinct `ElementId`s; do not key them by display name.
+
 ## Build and verify
 
-Run all three before you call work done:
+Run all four before you call work done:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+python3 scripts/check-crate-boundaries.py
 ```
 
 The pre-commit hook in `.githooks/` rejects a staged file over 20,000 bytes. Split the file as its message says; do not bypass it with `--no-verify`.

@@ -1,5 +1,6 @@
 use super::{
-    QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events, time_label,
+    QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, skip_failed_read, span_events,
+    time_label,
 };
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
 use crumble_eventkit::{Event, When};
@@ -296,6 +297,22 @@ fn older_reads_stop_at_the_horizon_and_wait_for_the_one_under_way() {
     assert_eq!(
         next_read(Some(&recent), false, false, false, today, ids()),
         None
+    );
+}
+
+#[test]
+fn a_failed_read_is_not_retried_until_a_different_one_is_wanted() {
+    let wanted = Some((span(date(1), date(16)), true));
+    assert_eq!(skip_failed_read(wanted.clone(), None), wanted);
+    assert_eq!(skip_failed_read(wanted.clone(), wanted.as_ref()), None);
+    let other = span(date(1), date(15));
+    assert_eq!(
+        skip_failed_read(wanted.clone(), Some(&(other, true))),
+        wanted
+    );
+    assert_eq!(
+        skip_failed_read(wanted.clone(), Some(&(span(date(1), date(16)), false))),
+        wanted
     );
 }
 

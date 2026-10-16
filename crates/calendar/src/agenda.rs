@@ -89,6 +89,15 @@ pub fn next_read(
     }
 }
 
+/// A read that is the same as the last failed one is not tried again until EventKit reports a
+/// change or a different read is wanted, so a persistent error cannot loop.
+pub fn skip_failed_read(
+    wanted: Option<(Span, bool)>,
+    failed: Option<&(Span, bool)>,
+) -> Option<(Span, bool)> {
+    wanted.filter(|wanted| failed != Some(wanted))
+}
+
 /// The days from `from` up to the day before `to`, in pieces EventKit accepts.
 pub fn read_pieces(from: NaiveDate, to: NaiveDate) -> impl Iterator<Item = Range<NaiveDate>> {
     let end = move |first: NaiveDate| {

@@ -14,6 +14,8 @@ publish = false
 anyhow = "1.0"
 async-channel = "2.5"
 chrono = "0.4.45"
+# Dev-only: DST dates whose local midnight does not exist, for `local_midnight` tests.
+chrono-tz = "0.10"
 # `notes` has more than 16 columns since its Summary (ADR 0007).
 diesel = { version = "2.3.14", default-features = false, features = ["sqlite", "32-column-tables"] }
 diesel_migrations = { version = "2.3.2", default-features = false, features = ["sqlite"] }
