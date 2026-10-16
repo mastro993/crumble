@@ -39,7 +39,7 @@ impl AccountColor {
 
     /// A color that looks random but stays the same for `id` across launches, so nothing has to
     /// be saved until the user picks one. Gray is left for the user to choose.
-    pub fn default_for(id: &str) -> Self {
+    pub(crate) fn default_for(id: &str) -> Self {
         // FNV-1a: tiny, and unlike std's hasher its output is fixed.
         let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)

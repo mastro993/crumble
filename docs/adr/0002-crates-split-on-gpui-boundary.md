@@ -4,11 +4,11 @@
 
 - `crumble-calendar`: time and Period math, Event placement, and Agenda planning. No GPUI, no IO.
 - `crumble-store`: state kept across restarts, and Account rules (order, color, Alias, label, which Calendars are shown). No GPUI.
-- `crumble-sync`: the GPUI entities that read EventKit (`CalendarSync`, the Events and Agenda loaders). Depends on GPUI core (`gpui-pre`) only, never on gpui-kit components.
+- `crumble-sync`: the GPUI entities that read EventKit (`CalendarSync`, the Events and Agenda loaders). Depends on GPUI core (`gpui-pre`) only, never on gpui-kit components. This departs on purpose from GPUI Kit's advice that applications depend on `gpui-kit` alone: the crate graph, not review, then keeps components out of sync. The `gpui-pre` version must match the one `gpui-kit` uses.
 - `crumble-ui`: views and presentation state.
 - `crumble-theme` and `crumble-eventkit`: unchanged.
 
-Domain logic then gets tests that do not build GPUI, and the crate graph enforces the boundaries: only `crumble-ui` knows gpui-kit components, and only `crumble-eventkit` knows objc2. This matches how Zed lays out its workspace, with model crates such as `project` and `settings` separate from views and pure crates such as `rope` and `text` free of GPUI, and rust-analyzer's use of crates as API boundaries.
+Domain logic then gets tests that do not build GPUI, and the crate graph enforces the boundaries: the domain crates and `crumble-sync` cannot reach gpui-kit components, and only `crumble-eventkit` knows objc2. This matches how Zed lays out its workspace, with model crates such as `project` and `settings` separate from views and pure crates such as `rope` and `text` free of GPUI, and rust-analyzer's use of crates as API boundaries.
 
 ## Considered Options
 

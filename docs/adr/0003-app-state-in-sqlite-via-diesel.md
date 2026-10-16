@@ -15,4 +15,4 @@ State Crumble keeps across restarts (the First day of week, the Calendar view, a
 - Writes are synchronous on the main thread. They are one-row updates, so the Alias field can save on every keystroke; if they ever show up in frame times, the upgrade is a background writer.
 - Diesel links macOS's system SQLite, with no bundled C build, so ADR 0001's macOS-only scope covers it.
 - Schema changes need the Diesel CLI: a new migration plus a regenerated `schema.rs`, both checked in. The README has the commands.
-- If the database cannot be opened or migrated, the app logs it and runs on in-memory defaults without touching the file. A failed write is logged, and the value stays in memory.
+- If the database cannot be opened, migrated, or read, the app logs it and runs on in-memory defaults without touching the file. A failed write is logged, and the value stays in memory.
