@@ -1,15 +1,14 @@
 //! Agenda page: every Event that has started, newest first, in a list that reads further into
 //! the past as it scrolls toward its end.
 
-mod rows;
-
 use super::NativeView;
 use super::account_dot::tint;
-use super::calendar::{local_midnight, today};
 use super::controls::{app_icon, button};
 use super::route::Route;
-use chrono::{DateTime, Days, Local, Months, NaiveDate, Timelike};
-use crumble_eventkit::{self as eventkit, Access, Event, When};
+use chrono::{DateTime, Local, NaiveDate, Timelike};
+use crumble_calendar::agenda::{self, Row, Span, day_label, horizon, time_label};
+use crumble_calendar::{local_midnight, today};
+use crumble_eventkit::{self as eventkit, Access, Event};
 use crumble_theme::CONTENT_PADDING;
 use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, h_flex, v_flex};
 use gpui_kit::{
@@ -17,7 +16,6 @@ use gpui_kit::{
     ParentElement, Pixels, Styled, Task, Window, div, ease_in_out, linear_color_stop,
     linear_gradient, list, prelude::FluentBuilder, px,
 };
-use rows::{Row, day_label, start_day, time_label};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -25,12 +23,6 @@ use std::time::{Duration, Instant};
 
 /// Width of the Agenda list.
 const LIST_WIDTH: f32 = 320.0;
-/// Days each read further into the past covers.
-const CHUNK_DAYS: u64 = 30;
-/// How far back the Agenda reads.
-const HORIZON_MONTHS: u32 = 5 * 12;
-/// EventKit searches at most four years at a time, so longer reads are split.
-const READ_DAYS: u64 = 365;
 /// The list reads further back until it holds this many rows, enough to fill a tall window.
 const MIN_ROWS: usize = 40;
 /// Scrolling within this many rows of the end reads further back.
@@ -42,15 +34,6 @@ const NOW_DOT: f32 = 8.0;
 const TOP_FADE: f32 = 32.0;
 /// How long the list takes to scroll back to its top.
 const SCROLL_TO_TOP: Duration = Duration::from_millis(300);
-
-/// The days and Calendars an Agenda read covers.
-#[derive(Clone, PartialEq, Eq)]
-struct Span {
-    from: NaiveDate,
-    /// The day after the last.
-    to: NaiveDate,
-    calendar_ids: Vec<String>,
-}
 
 /// The Events read so far and the list showing them; kept in memory while the app runs, so
 /// the Agenda reopens where it was left.
@@ -159,40 +142,19 @@ impl AgendaPage {
     }
 }
 
-/// The oldest day the Agenda reads.
-fn horizon(today: NaiveDate) -> NaiveDate {
-    today
-        .checked_sub_months(Months::new(HORIZON_MONTHS))
-        .unwrap_or(today)
-}
-
-/// The Events starting from `from` up to the day before `to`, in pieces EventKit accepts.
-/// Each piece keeps the Events starting inside it, and the piece holding today also the timed
-/// ones still In progress, however long ago they started. Each Event is kept once.
+/// The Events starting from `from` up to the day before `to`, read in the pieces EventKit
+/// accepts and kept as [`agenda::span_events`] says.
 fn read_span(from: NaiveDate, to: NaiveDate, ids: &[String]) -> anyhow::Result<Vec<Event>> {
     let now = Local::now();
-    let mut seen = HashSet::new();
-    let mut events = Vec::new();
-    let mut first = from;
-    while first < to {
-        let end = first
-            .checked_add_days(Days::new(READ_DAYS))
-            .map_or(to, |end| end.min(to));
-        if let (Some(start), Some(stop)) = (local_midnight(first), local_midnight(end)) {
-            events.extend(
-                eventkit::events(start, stop, ids)?
-                    .into_iter()
-                    .filter(|event| {
-                        (first..end).contains(&start_day(event))
-                            || ((first..end).contains(&now.date_naive())
-                                && matches!(event.when, When::Timed { end, .. } if end > now))
-                    })
-                    .filter(|event| seen.insert(event.id.clone())),
-            );
+    let mut pieces = Vec::new();
+    for piece in agenda::read_pieces(from, to) {
+        if let (Some(start), Some(stop)) = (local_midnight(piece.start), local_midnight(piece.end))
+        {
+            let read = eventkit::events(start, stop, ids)?;
+            pieces.push((piece, read));
         }
-        first = end;
     }
-    Ok(events)
+    Ok(agenda::span_events(pieces, now))
 }
 
 impl NativeView {
@@ -262,46 +224,17 @@ impl NativeView {
         }
         let ids = self.settings.shown_calendar_ids(sync.calendars());
         let today = today();
-        let to = today.checked_add_days(Days::new(1)).unwrap_or(today);
         let horizon = horizon(today);
         let agenda = &mut self.agenda;
-        let wanted = match &agenda.span {
-            None => Some((
-                Span {
-                    from: to.checked_sub_days(Days::new(CHUNK_DAYS)).unwrap_or(to),
-                    to,
-                    calendar_ids: ids,
-                },
-                false,
-            )),
-            Some(span) if agenda.stale || span.to != to || span.calendar_ids != ids => Some((
-                Span {
-                    // The horizon moves with the day, so the oldest days fall out.
-                    from: span.from.max(horizon),
-                    to,
-                    calendar_ids: ids,
-                },
-                false,
-            )),
-            Some(span)
-                if !agenda.reading
-                    && span.from > horizon
-                    && (agenda.rows.len() < MIN_ROWS || agenda.near_end.get()) =>
-            {
-                let from = span
-                    .from
-                    .checked_sub_days(Days::new(CHUNK_DAYS))
-                    .map_or(horizon, |from| from.max(horizon));
-                Some((
-                    Span {
-                        from,
-                        ..span.clone()
-                    },
-                    true,
-                ))
-            }
-            Some(_) => None,
-        };
+        let wants_more = agenda.rows.len() < MIN_ROWS || agenda.near_end.get();
+        let wanted = agenda::next_read(
+            agenda.span.as_ref(),
+            agenda.stale,
+            agenda.reading,
+            wants_more,
+            today,
+            ids,
+        );
         if let Some((span, older)) = wanted.filter(|wanted| agenda.failed.as_ref() != Some(wanted))
         {
             agenda.stale = false;
@@ -318,7 +251,7 @@ impl NativeView {
             agenda.built = Some((minute, agenda.reads));
             let from = agenda.span.as_ref().map_or(today, |span| span.from);
             let end = !agenda.reading && from <= horizon;
-            let rows = rows::rows(&agenda.events, now, from, end);
+            let rows = agenda::rows(&agenda.events, now, from, end);
             agenda.set_rows(rows);
         }
 

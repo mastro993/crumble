@@ -7,7 +7,8 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 | Package | Responsibility |
 | --- | --- |
 | `apps/desktop` | Native lifecycle: window options, menus, key bindings, and quitting after the last window closes |
-| `crates/ui` | GPUI root view: shell, sidebar, header, navigation history, pages, state kept across restarts, and embedded icon assets |
+| `crates/ui` | GPUI root view: shell, sidebar, header, navigation history, pages, state kept across restarts, and embedded icon assets. Reads Events from EventKit for the Calendar and Agenda pages and draws them where `crates/calendar` places them |
+| `crates/calendar` | Calendar logic without GPUI or IO: Calendar views, Periods and today; where Events fall on each day and how overlapping ones share columns; the Agenda list's rows, which days it reads next, how a read is split and filtered; links in Event descriptions |
 | `crates/theme` | Colors, typography, and dimensions |
 | `crates/eventkit` | Read-only bridge to macOS EventKit: calendar access, Accounts, Calendars, Events, and change notifications as plain Rust data |
 

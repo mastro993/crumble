@@ -10,6 +10,7 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 
 - `apps/desktop` (`crumble`): native lifecycle, window, menus, key bindings.
 - `crates/ui` (`crumble-ui`): GPUI views and presentation state.
+- `crates/calendar` (`crumble-calendar`): Calendar views and Period math, Event placement, Agenda rows and read planning, description links. No GPUI, no IO.
 - `crates/theme` (`crumble-theme`): colors, typography, dimensions.
 - `crates/eventkit` (`crumble-eventkit`): read-only EventKit bridge, plain Rust data, no GPUI.
 

@@ -3,10 +3,10 @@
 
 use super::NativeView;
 use super::event_details;
-use super::events::{columns, day_order, minutes_on, on_day};
 use super::grids::HOUR_HEIGHT;
 use crate::native_view::card::hover_card;
 use chrono::NaiveDate;
+use crumble_calendar::events::{columns, day_order, minutes_on, on_day};
 use crumble_eventkit::{Calendar, Event, When};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{ActiveTheme, StyledExt, v_flex};

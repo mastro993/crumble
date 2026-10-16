@@ -2,10 +2,11 @@
 
 use super::NativeView;
 use super::event_views::{Shown, all_day_strip, day_blocks, month_day, open_in};
-use super::period::{
-    CalendarView, is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
-};
 use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Timelike, Weekday};
+use crumble_calendar::CalendarView;
+use crumble_calendar::period::{
+    is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
+};
 use crumble_theme::SURFACE_RADIUS;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{

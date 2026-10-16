@@ -2,24 +2,21 @@
 
 mod event_details;
 mod event_views;
-mod events;
 mod grids;
-mod period;
 
 use super::NativeView;
 use super::account_dot::tint;
 use super::controls::{app_icon, button};
 use super::route::Route;
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike};
+use chrono::{Local, NaiveDate, Timelike};
+use crumble_calendar::{CalendarView, events, local_midnight, today};
 use crumble_eventkit::{self as eventkit, Access, Event};
-pub(super) use events::when_text;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
     ScrollHandle, Styled, Task, Window, div, point, px,
 };
-pub(crate) use period::CalendarView;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -87,22 +84,6 @@ impl Default for CalendarEvents {
             read: Task::ready(()),
         }
     }
-}
-
-/// The start of `date`. Where clocks skip midnight for daylight saving, as in Chile, the day
-/// starts an hour later; the extra Events read are drawn only on their own dates.
-pub(super) fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
-    let midnight = date.and_time(NaiveTime::MIN);
-    Local.from_local_datetime(&midnight).earliest().or_else(|| {
-        Local
-            .from_local_datetime(&(midnight + TimeDelta::hours(1)))
-            .earliest()
-    })
-}
-
-/// Read on every use, so a window left open past midnight catches up on its next render.
-pub(super) fn today() -> NaiveDate {
-    Local::now().date_naive()
 }
 
 /// Redraws Week view at the start of every minute, so its current time line keeps up.

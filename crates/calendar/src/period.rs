@@ -5,17 +5,22 @@ use serde::{Deserialize, Serialize};
 
 /// How the Calendar page lays out time; it opens on Month view until the user picks another.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum CalendarView {
+pub enum CalendarView {
+    /// Seven days by the hour.
     Week,
+    /// The month's weeks, one row each.
     #[default]
     Month,
+    /// The year's twelve months.
     Year,
 }
 
 impl CalendarView {
-    pub(super) const ALL: [Self; 3] = [Self::Week, Self::Month, Self::Year];
+    /// Every Calendar view, in switcher order.
+    pub const ALL: [Self; 3] = [Self::Week, Self::Month, Self::Year];
 
-    pub(super) fn label(self) -> &'static str {
+    /// The Calendar view's name, as its switcher tab shows it.
+    pub fn label(self) -> &'static str {
         match self {
             Self::Week => "Week",
             Self::Month => "Month",
@@ -24,7 +29,7 @@ impl CalendarView {
     }
 
     /// The Focused date moved one Period forward or back.
-    pub(super) fn step(self, focused: NaiveDate, forward: bool) -> NaiveDate {
+    pub fn step(self, focused: NaiveDate, forward: bool) -> NaiveDate {
         let shifted = match (self, forward) {
             (Self::Week, true) => focused.checked_add_days(Days::new(7)),
             (Self::Week, false) => focused.checked_sub_days(Days::new(7)),
@@ -38,7 +43,7 @@ impl CalendarView {
 
     /// The dates this view draws Events on, from the first to the day after the last; `None`
     /// for Year view, which draws none.
-    pub(super) fn event_range(
+    pub fn event_range(
         self,
         focused: NaiveDate,
         first_day: Weekday,
@@ -58,7 +63,7 @@ impl CalendarView {
     }
 
     /// Header title of the Period containing `focused`.
-    pub(super) fn title(self, focused: NaiveDate, first_day: Weekday) -> String {
+    pub fn title(self, focused: NaiveDate, first_day: Weekday) -> String {
         match self {
             Self::Year => focused.format("%Y").to_string(),
             Self::Month => focused.format("%B %Y").to_string(),
@@ -79,22 +84,22 @@ impl CalendarView {
 }
 
 /// First date of the week containing `date`.
-pub(super) fn week_start(date: NaiveDate, first_day: Weekday) -> NaiveDate {
+pub fn week_start(date: NaiveDate, first_day: Weekday) -> NaiveDate {
     date.week(first_day).first_day()
 }
 
 /// The seven dates of the week starting on `start`.
-pub(super) fn week_days(start: NaiveDate) -> impl Iterator<Item = NaiveDate> {
+pub fn week_days(start: NaiveDate) -> impl Iterator<Item = NaiveDate> {
     start.iter_days().take(7)
 }
 
 /// Weekdays in column order.
-pub(super) fn weekdays(first_day: Weekday) -> impl Iterator<Item = Weekday> {
+pub fn weekdays(first_day: Weekday) -> impl Iterator<Item = Weekday> {
     std::iter::successors(Some(first_day), |day| Some(day.succ())).take(7)
 }
 
 /// Start of every week row that overlaps the month containing `date`.
-pub(super) fn month_weeks(date: NaiveDate, first_day: Weekday) -> Vec<NaiveDate> {
+pub fn month_weeks(date: NaiveDate, first_day: Weekday) -> Vec<NaiveDate> {
     let first = date.with_day(1).unwrap_or(date);
     let next_month = first + Months::new(1);
     std::iter::successors(Some(week_start(first, first_day)), |start| {
@@ -105,12 +110,13 @@ pub(super) fn month_weeks(date: NaiveDate, first_day: Weekday) -> Vec<NaiveDate>
 }
 
 /// First date of each month in the year containing `date`.
-pub(super) fn year_months(date: NaiveDate) -> impl Iterator<Item = NaiveDate> {
+pub fn year_months(date: NaiveDate) -> impl Iterator<Item = NaiveDate> {
     let year = date.year();
     (1..=12).filter_map(move |month| NaiveDate::from_ymd_opt(year, month, 1))
 }
 
-pub(super) fn is_weekend(date: NaiveDate) -> bool {
+/// Whether `date` falls on a Saturday or Sunday.
+pub fn is_weekend(date: NaiveDate) -> bool {
     matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 

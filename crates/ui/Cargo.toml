@@ -10,6 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 chrono.workspace = true
+crumble-calendar.workspace = true
 dirs.workspace = true
 gpui-kit.workspace = true
 crumble-eventkit.workspace = true
