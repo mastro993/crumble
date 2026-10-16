@@ -19,7 +19,7 @@ Domain logic then gets tests that do not build GPUI, and the crate graph enforce
 
 ## Consequences
 
-- Build speed changes little. Editing a view rebuilds a smaller `crumble-ui`, but editing domain logic still rebuilds `crumble-ui` after its domain crate, because the graph is a chain. Baseline numbers are in [build timings](../architecture/build-timings.md), updated when the split is done. Re-enabling `incremental` in the dev profile is the bigger lever; it is measured there but changed only with separate approval.
+- Build speed changes little. Editing a view rebuilds a smaller `crumble-ui`, but editing domain logic still rebuilds `crumble-ui` after its domain crate, because the graph is a chain. Measured in [build timings](../architecture/build-timings.md): domain test loops dropped from 2.45 s to under 1 s, a view edit from 2.34 s to 2.08 s, and app or test rebuilds after a logic edit stayed the same. Re-enabling `incremental` now saves at most 0.33 s for 0.7 GB more `target`; the doc recommends keeping it off, and changing it needs separate approval.
 - Items that cross a crate boundary become `pub` and need doc comments. Crate APIs stay narrow and concrete, without traits that have a single implementation.
 - The orphan rule may force some trait impls to live in the crate that owns the type.
 - State kept across restarts moves from `settings.json` to SQLite; [ADR 0003](0003-app-state-in-sqlite-via-diesel.md) records that decision.
