@@ -11,11 +11,10 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `apps/desktop` (`crumble`): native lifecycle, window, menus, key bindings.
 - `crates/ui` (`crumble-ui`): GPUI views and presentation state.
 - `crates/calendar` (`crumble-calendar`): Calendar views and Period math, Event placement, Agenda rows and read planning, description links. No GPUI, no IO.
+- `crates/sync` (`crumble-sync`): GPUI entities that read EventKit: `CalendarSync`, `CalendarEvents`, `AgendaEvents`. GPUI core only, no `gpui-kit`.
 - `crates/store` (`crumble-store`): state kept across restarts in SQLite through Diesel, and Account rules: order, color, Alias, label, Disabled and Hidden filtering. No GPUI.
 - `crates/theme` (`crumble-theme`): colors, typography, dimensions.
 - `crates/eventkit` (`crumble-eventkit`): read-only EventKit bridge, plain Rust data, no GPUI.
-
-The split of non-GPUI logic out of `crumble-ui` is in progress per [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md). Until it finishes, `crumble-ui` still holds the EventKit sync entities that the ADR assigns to `crumble-sync`.
 
 ## Where code goes
 
@@ -24,6 +23,7 @@ Split on one question: does this code need GPUI?
 - Code that needs no GPUI goes in a domain crate: time and Period math, Event placement, Account rules, persistence.
 - `crumble-ui` holds views and short-lived presentation state: focus, scroll, hover, motion counters, redraw timers.
 - `crumble-ui` reads and changes domain state only through domain crates. It holds no domain rules, no file or database IO, and no persistence calls.
+- EventKit is read only through `crumble-sync`. `crumble-ui` uses `crumble-eventkit` for its types alone.
 - Stored state changes only through `Store` methods, which write each change themselves. Views call those methods and never persist.
 - A schema change is a new migration in `crates/store/migrations/` plus a regenerated `crates/store/src/schema.rs` ([ADR 0003](docs/adr/0003-app-state-in-sqlite-via-diesel.md); the README has the commands).
 - Presentation-only pure helpers (route history, row reordering, menu stepping, sidebar sizing) stay in `crumble-ui` as GPUI-free modules with plain `#[test]`s.

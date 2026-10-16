@@ -9,13 +9,13 @@ use super::account_dot::tint;
 use super::controls::{app_icon, button};
 use super::route::Route;
 use chrono::{Local, NaiveDate, Timelike};
-use crumble_calendar::{CalendarView, events, local_midnight, today};
-use crumble_eventkit::{self as eventkit, Access, Event};
+use crumble_calendar::{CalendarView, events, today};
+use crumble_eventkit::{Access, Event};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Div, InteractiveElement, IntoElement, ParentElement,
-    ScrollHandle, Styled, Task, Window, div, point, px,
+    AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, ScrollHandle,
+    Styled, Task, Window, div, point, px,
 };
 use std::rc::Rc;
 use std::time::Duration;
@@ -58,34 +58,6 @@ impl CalendarPage {
 /// The hour Week view shows at the top when the app starts.
 const WEEK_OPENS_AT: f32 = 8.0;
 
-/// What an Event read covers: a range of dates and the shown Calendars.
-#[derive(Clone, PartialEq, Eq)]
-struct EventsRead {
-    first: NaiveDate,
-    /// The day after the last.
-    end: NaiveDate,
-    calendar_ids: Vec<String>,
-}
-
-/// The Events of the dates on screen, read again when those dates, the shown Calendars, or
-/// EventKit change.
-pub(super) struct CalendarEvents {
-    events: Vec<Event>,
-    /// The read the shown Events answer, or will once `read` finishes.
-    wanted: Option<EventsRead>,
-    read: Task<()>,
-}
-
-impl Default for CalendarEvents {
-    fn default() -> Self {
-        Self {
-            events: Vec::new(),
-            wanted: None,
-            read: Task::ready(()),
-        }
-    }
-}
-
 /// Redraws Week view at the start of every minute, so its current time line keeps up.
 pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
     cx.spawn(async move |view, cx| {
@@ -108,49 +80,16 @@ pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
 
 impl NativeView {
     /// Reads the Events of the dates on screen in the shown Calendars, unless they are already
-    /// read; `force` reads again anyway, as after EventKit reports a change. A failed read is
-    /// logged and the last Events stay.
+    /// read; `force` reads again anyway, as after EventKit reports a change.
     pub(super) fn refresh_events(&mut self, force: bool, cx: &mut Context<Self>) {
         let CalendarPage { view, focused, .. } = self.calendar;
         let sync = self.calendar_sync.read(cx);
-        let wanted = (sync.access() == Access::Granted)
+        let range = (sync.access() == Access::Granted)
             .then(|| view.event_range(focused, self.store.first_day_of_week()))
-            .flatten()
-            .map(|(first, end)| EventsRead {
-                first,
-                end,
-                calendar_ids: self.store.shown_calendar_ids(sync.calendars()),
-            });
-        if !force && wanted == self.events.wanted {
-            return;
-        }
-        self.events.wanted = wanted.clone();
-        let Some(range) = wanted.and_then(|read| {
-            Some((
-                local_midnight(read.first)?,
-                local_midnight(read.end)?,
-                read.calendar_ids,
-            ))
-        }) else {
-            self.events.events.clear();
-            self.events.read = Task::ready(());
-            cx.notify();
-            return;
-        };
-        // Apple advises reading off the main thread.
-        let read = cx.background_spawn(async move {
-            let (start, end, calendar_ids) = range;
-            eventkit::events(start, end, &calendar_ids)
-        });
-        self.events.read = cx.spawn(async move |this, cx| {
-            let result = read.await;
-            let _ = this.update(cx, |view, cx| match result {
-                Ok(events) => {
-                    view.events.events = events;
-                    cx.notify();
-                }
-                Err(error) => eprintln!("Could not read events: {error}"),
-            });
+            .flatten();
+        let calendar_ids = self.store.shown_calendar_ids(sync.calendars());
+        self.events.update(cx, |events, cx| {
+            events.refresh(range, calendar_ids, force, cx);
         });
     }
 
@@ -196,7 +135,7 @@ impl NativeView {
     /// item after a move, is still in the Calendar page's dates.
     pub(super) fn render_event_toolbar(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
         let open_calendar = cx.listener(|view, _, _, cx| view.navigate(Route::Calendar, cx));
-        let event = events::latest(&self.events.events, event);
+        let event = events::latest(self.events.read(cx).events(), event);
         event_details::toolbar(event, open_calendar, cx).into_any_element()
     }
 
@@ -280,7 +219,7 @@ impl NativeView {
         let today = now.date();
         let app: &App = cx;
         let shown = event_views::shown(
-            &self.events.events,
+            self.events.read(app).events(),
             self.calendar_sync.read(app).calendars(),
             |account| tint(self.store.account_color(account), app),
         );
