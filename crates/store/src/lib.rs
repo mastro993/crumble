@@ -189,6 +189,18 @@ impl Store {
         self.write(db::write_app_state);
     }
 
+    /// Whether a meeting's start brings a notification that suggests recording it; on until
+    /// turned off.
+    pub fn suggests_recording(&self) -> bool {
+        self.state.suggest_recording
+    }
+
+    /// Turns the notification that suggests recording a starting meeting on or off.
+    pub fn set_suggests_recording(&mut self, on: bool) {
+        self.state.suggest_recording = on;
+        self.write(db::write_app_state);
+    }
+
     /// Whether the user agreed to send Recordings' audio to `model` of the Provider with the id
     /// `provider` at `host` (ADR 0008). The host is compared without case.
     pub fn has_audio_consent(&self, provider: &str, model: &str, host: &str) -> bool {
@@ -396,6 +408,7 @@ mod tests {
         assert_eq!(store.state, db::State::default());
         assert_eq!(store.first_day_of_week(), Weekday::Mon);
         assert_eq!(store.calendar_view(), CalendarView::Month);
+        assert!(store.suggests_recording());
         assert_eq!(store.reloaded(), db::State::default());
     }
 
@@ -421,6 +434,7 @@ mod tests {
         store.set_transcription_model(" whisper-large-v3 ");
         store.set_transcription_locale(Some("it_IT"));
         store.add_audio_consent("openai", "whisper-1", "API.openai.com");
+        store.set_suggests_recording(false);
         assert_eq!(store.claude_model(), "claude-opus-5-5");
         assert_eq!(store.transcription_model(), "whisper-large-v3");
         assert_eq!(
