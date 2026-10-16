@@ -16,4 +16,4 @@ State Crumble keeps across restarts (the First day of week, the Calendar view, a
 - Diesel links macOS's system SQLite, with no bundled C build, so ADR 0001's macOS-only scope covers it.
 - Schema changes need the Diesel CLI: a new migration plus a regenerated `schema.rs`, both checked in. The README has the commands.
 - If the database cannot be opened, migrated, or read, the app logs it and runs on in-memory defaults without touching the file. A failed write is logged, and the value stays in memory.
-- Shared file: `crumble-db` owns `crumble.sqlite3`, every migration and the schema; each domain crate keeps its own connection and its own queries. Files run in WAL mode with a 5 s busy timeout, so one connection reads while another writes.
+- Shared file: Notes live in the same `crumble.sqlite3`. `crumble-db` owns the file, every migration and the schema; each domain crate (`crumble-store`, `crumble-notes`) keeps its own connection and its own queries. Files run in WAL mode with a 5 s busy timeout, so one connection reads while another writes.
