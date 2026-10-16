@@ -102,6 +102,8 @@ impl SelectItem for LanguageItem {
 }
 
 /// "System (<language>)", then SpeechAnalyzer's locales by name.
+// ponytail: read once at launch on the main thread, about 70 ms; read on the first visit to
+// Settings if launch time matters.
 fn language_items() -> Vec<LanguageItem> {
     let system = crumble_transcribe::language_name(&crumble_transcribe::current_locale());
     let mut locales: Vec<LanguageItem> = crumble_transcribe::supported_locales()

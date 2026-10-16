@@ -354,7 +354,6 @@ pub fn account_label(account: &Account) -> &str {
     account.email.as_deref().unwrap_or(&account.name)
 }
 
-/// Adds `id` to `set`, or removes it when it is already there.
 /// The key of a consent to send audio, its host in lowercase.
 fn consent(provider: &str, model: &str, host: &str) -> db::AudioConsent {
     (
@@ -364,6 +363,7 @@ fn consent(provider: &str, model: &str, host: &str) -> db::AudioConsent {
     )
 }
 
+/// Adds `id` to `set`, or removes it when it is already there.
 fn toggle(set: &mut BTreeSet<String>, id: &str) {
     if !set.remove(id) {
         set.insert(id.to_owned());

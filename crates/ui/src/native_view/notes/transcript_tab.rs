@@ -3,6 +3,7 @@
 
 use super::super::NativeView;
 use super::super::controls::button;
+use super::super::route::Route;
 use super::recording::clock;
 use super::transcript::{Failure, Stage};
 use crumble_notes::Track;
@@ -106,6 +107,18 @@ impl NativeView {
             // A finished Recording no job took: one older than a remote Transcription Model, or
             // one the user did not agree to send.
             let provider = self.transcription_provider();
+            if !self.can_transcribe(provider) {
+                return line(
+                    "Not transcribed yet. Add the server's address and Model in Settings."
+                        .to_owned(),
+                    button("transcript-settings")
+                        .outline()
+                        .small()
+                        .label("Open Settings")
+                        .on_click(cx.listener(|view, _, _, cx| view.navigate(Route::Settings, cx))),
+                    muted,
+                );
+            }
             let id = note.id.clone();
             return line(
                 "Not transcribed yet".to_owned(),

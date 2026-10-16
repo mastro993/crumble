@@ -17,8 +17,9 @@ use std::path::Path;
 /// The Transcripts being made, for whichever Note shows.
 #[derive(Default)]
 pub(super) struct Transcription {
-    /// Notes waiting their turn, first come first, each with the Provider to transcribe with.
-    queue: VecDeque<(NoteId, Provider)>,
+    /// Notes waiting their turn, first come first, each with the Provider to transcribe with
+    /// and whether no one asked for it, as for an older Recording.
+    queue: VecDeque<(NoteId, Provider, bool)>,
     running: Option<Job>,
     /// Why each Note's last attempt failed, until it is tried again.
     pub(super) failed: HashMap<NoteId, Failure>,
@@ -32,7 +33,7 @@ impl Transcription {
 
     /// Whether the Note `id` is waiting or being transcribed.
     pub(super) fn busy(&self, id: &NoteId) -> bool {
-        self.job(id).is_some() || self.queue.iter().any(|(queued, _)| queued == id)
+        self.job(id).is_some() || self.queue.iter().any(|(queued, ..)| queued == id)
     }
 
     /// The job running for the Note `id`, unless it was cancelled.
@@ -100,7 +101,7 @@ impl NativeView {
         match self.notes.untranscribed() {
             Ok(ids) => ids
                 .into_iter()
-                .for_each(|id| self.queue_transcription(id, provider, cx)),
+                .for_each(|id| self.enqueue_transcription(id, provider, true, cx)),
             Err(error) => eprintln!("Could not find the Recordings to transcribe: {error:#}"),
         }
     }
@@ -123,11 +124,24 @@ impl NativeView {
         }
     }
 
-    /// Queues the Note `id` to be transcribed by `provider`, unless it already waits or runs.
+    /// Queues the Note `id` to be transcribed by `provider`, as the user asked, unless it
+    /// already waits or runs.
     pub(super) fn queue_transcription(
         &mut self,
         id: NoteId,
         provider: Provider,
+        cx: &mut Context<Self>,
+    ) {
+        self.enqueue_transcription(id, provider, false, cx);
+    }
+
+    /// Queues the Note `id` to be transcribed by `provider`; a `backfill` runs only while
+    /// `provider` keeps the audio on the Mac.
+    fn enqueue_transcription(
+        &mut self,
+        id: NoteId,
+        provider: Provider,
+        backfill: bool,
         cx: &mut Context<Self>,
     ) {
         let transcription = &mut self.note_detail.transcription;
@@ -135,7 +149,7 @@ impl NativeView {
             return;
         }
         transcription.failed.remove(&id);
-        transcription.queue.push_back((id, provider));
+        transcription.queue.push_back((id, provider, backfill));
         self.next_transcription(cx);
         cx.notify();
     }
@@ -144,7 +158,7 @@ impl NativeView {
     /// for it finishes unseen and its result is dropped.
     pub(super) fn cancel_transcription(&mut self, id: &NoteId) {
         let transcription = &mut self.note_detail.transcription;
-        transcription.queue.retain(|(queued, _)| queued != id);
+        transcription.queue.retain(|(queued, ..)| queued != id);
         transcription.failed.remove(id);
         if let Some(job) = transcription.running.as_mut().filter(|job| &job.note == id) {
             job.cancelled = true;
@@ -192,12 +206,16 @@ impl NativeView {
         });
     }
 
-    /// Takes the first queued Note that can run, with its Transcriber. A remote Model the user
-    /// has not agreed to send audio to, as when its Model or host changed since they did, skips
-    /// the Note, whose Transcript tab then offers to transcribe it.
+    /// Takes the first queued Note that can run, with its Transcriber. The Note is skipped, and
+    /// its Transcript tab offers to transcribe it, when its Model is remote and either the user
+    /// has not agreed to send audio to it, as when its Model or host changed since they did, or
+    /// no one asked, as for an older Recording queued while the server was local.
     fn next_transcriber(&mut self) -> Option<(NoteId, Box<dyn Transcriber + Send>)> {
-        while let Some((id, provider)) = self.note_detail.transcription.queue.pop_front() {
-            if self.consent_needed(provider).is_some() {
+        while let Some((id, provider, backfill)) = self.note_detail.transcription.queue.pop_front()
+        {
+            let local = runs_locally(provider, self.store.openai_base_url());
+            let consented = self.consent_needed(provider).is_none();
+            if !may_upload(backfill, local, consented) {
                 continue;
             }
             match self.transcriber(provider) {
@@ -350,6 +368,12 @@ impl NativeView {
     }
 }
 
+/// Whether a queued Note may start: always on a local Model; on a remote one, only when the
+/// user asked for it and agreed to send it the audio (ADR 0008).
+fn may_upload(backfill: bool, local: bool, consented: bool) -> bool {
+    local || (consented && !backfill)
+}
+
 /// Makes the Transcript of the Recording in `dir` with `transcriber`, getting Apple's model for
 /// `locale` first if this Mac lacks it, and sends each stage to `send`. Blocks, on a background
 /// thread.
@@ -399,4 +423,21 @@ fn make_transcript(
                 provider,
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_upload;
+
+    #[test]
+    fn audio_goes_remote_only_when_asked_and_agreed() {
+        // (backfill, local, consented)
+        assert!(may_upload(true, true, true));
+        assert!(may_upload(false, true, false));
+        assert!(may_upload(false, false, true));
+        assert!(!may_upload(false, false, false));
+        // An older Recording queued while the server was local, after it moved away.
+        assert!(!may_upload(true, false, true));
+        assert!(!may_upload(true, false, false));
+    }
 }
