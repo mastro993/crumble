@@ -3,7 +3,6 @@
 mod assets;
 mod calendar_sync;
 mod native_view;
-mod settings;
 
 pub use assets::Assets;
 pub use native_view::{

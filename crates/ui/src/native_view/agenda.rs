@@ -222,7 +222,7 @@ impl NativeView {
         if sync.access() != Access::Granted {
             return;
         }
-        let ids = self.settings.shown_calendar_ids(sync.calendars());
+        let ids = self.store.shown_calendar_ids(sync.calendars());
         let today = today();
         let horizon = horizon(today);
         let agenda = &mut self.agenda;
@@ -309,7 +309,7 @@ impl NativeView {
                 sync.calendars()
                     .iter()
                     .map(|calendar| {
-                        let color = self.settings.account_color(&calendar.account_id);
+                        let color = self.store.account_color(&calendar.account_id);
                         (calendar.id.clone(), tint(color, cx))
                     })
                     .collect(),

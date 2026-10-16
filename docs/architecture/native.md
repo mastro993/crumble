@@ -7,8 +7,9 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 | Package | Responsibility |
 | --- | --- |
 | `apps/desktop` | Native lifecycle: window options, menus, key bindings, and quitting after the last window closes |
-| `crates/ui` | GPUI root view: shell, sidebar, header, navigation history, pages, state kept across restarts, and embedded icon assets. Reads Events from EventKit for the Calendar and Agenda pages and draws them where `crates/calendar` places them |
+| `crates/ui` | GPUI root view: shell, sidebar, header, navigation history, pages, and embedded icon assets. Saves the `Store` after each change. Reads Events from EventKit for the Calendar and Agenda pages and draws them where `crates/calendar` places them |
 | `crates/calendar` | Calendar logic without GPUI or IO: Calendar views, Periods and today; where Events fall on each day and how overlapping ones share columns; the Agenda list's rows, which days it reads next, how a read is split and filtered; links in Event descriptions |
+| `crates/store` | State kept across restarts, saved as `settings.json`, and Account rules without GPUI: Account order, colors and their tones, Aliases and labels, which Calendars show given Disabled and Hidden Accounts, and which state the Calendars section shows for the calendar access status |
 | `crates/theme` | Colors, typography, and dimensions |
 | `crates/eventkit` | Read-only bridge to macOS EventKit: calendar access, Accounts, Calendars, Events, and change notifications as plain Rust data |
 
@@ -86,7 +87,7 @@ Crumble reads Events from macOS EventKit and never changes them; see [ADR 0001](
 
 ## Settings
 
-- Choices made in Settings are saved, with the rest of the state Crumble keeps across restarts, as `settings.json` in the platform config directory (`~/Library/Application Support/Crumble` on macOS). A missing, unreadable, or partial file falls back to the defaults. If a save fails, the error is logged and the app keeps the new value in memory.
+- `crates/store` saves the choices made in Settings, with the rest of the state Crumble keeps across restarts, as `settings.json` in the platform config directory (`~/Library/Application Support/Crumble` on macOS). A missing, unreadable, or partial file falls back to the defaults. If a save fails, the error is logged and the app keeps the new value in memory.
 - **First day of week** can be any weekday and defaults to Monday. It sets the column order of every Calendar view and where each week Period begins.
 - **Calendars** lists every Account with an Alias field and a switch, and under it its Calendars, each with a checkbox, its macOS color, and its name. Settings is the only place to Disable or Enable an Account or a Calendar. An Account with an Alias is titled with it, followed by its own name in brackets. Each keystroke in the field saves the Alias. A blank Alias, or one equal to the Account's own name, is removed, so the sidebar's Rename and the field agree. Aliases are saved in `account_aliases`. Every Account and Calendar starts enabled; turning an Account's switch off or unchecking a Calendar Disables it. A Disabled Account greys its Calendars out and keeps their checkboxes as they were. The group is hidden while access is not granted. The Disabled Accounts and Calendars are saved as sets of EventKit identifiers (`disabled_accounts`, `disabled_calendars`) and change nothing in macOS.
 

@@ -1347,6 +1347,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumble-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crumble-calendar",
+ "crumble-eventkit",
+ "dirs 6.0.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crumble-theme"
 version = "0.1.0"
 dependencies = [
@@ -1362,11 +1375,9 @@ dependencies = [
  "chrono",
  "crumble-calendar",
  "crumble-eventkit",
+ "crumble-store",
  "crumble-theme",
- "dirs 6.0.0",
  "gpui-kit",
- "serde",
- "serde_json",
 ]
 
 [[package]]

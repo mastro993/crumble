@@ -1,11 +1,10 @@
-//! Settings page: the user settings saved in `settings.json`.
+//! Settings page: choices kept across restarts in `settings.json`.
 
 use super::NativeView;
 use super::account_dot::dot;
-use super::calendars_section::account_label;
-use crate::settings::Settings;
 use chrono::Weekday;
 use crumble_eventkit::{Access, Account};
+use crumble_store::{Store, account_label};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -37,11 +36,11 @@ pub(super) type WeekdaySelect = Entity<SelectState<Vec<&'static str>>>;
 
 /// Dropdown for the First day of week; choosing a day saves it.
 pub(super) fn first_day_select(
-    settings: &Settings,
+    store: &Store,
     window: &mut Window,
     cx: &mut Context<NativeView>,
 ) -> WeekdaySelect {
-    let selected = settings.first_day_of_week.num_days_from_monday() as usize;
+    let selected = store.first_day_of_week.num_days_from_monday() as usize;
     let select = cx.new(|cx| {
         SelectState::new(
             WEEKDAYS.to_vec(),
@@ -55,8 +54,8 @@ pub(super) fn first_day_select(
             return;
         };
         if let Ok(day) = day.parse::<Weekday>() {
-            view.settings.first_day_of_week = day;
-            view.settings.save();
+            view.store.first_day_of_week = day;
+            view.store.save();
             // The week now starts elsewhere, so other dates are on screen.
             view.refresh_events(false, cx);
             cx.notify();
@@ -106,7 +105,7 @@ impl NativeView {
                 .gap_4()
                 .child(group_title("Calendars", cx))
                 .children(
-                    self.settings
+                    self.store
                         .ordered_accounts(accounts)
                         .into_iter()
                         .map(|account| self.account_settings(account, cx)),
@@ -116,11 +115,11 @@ impl NativeView {
 
     fn account_settings(&self, account: &Account, cx: &Context<Self>) -> Div {
         let label = account_label(account).to_owned();
-        let alias = self.settings.account_alias(&account.id);
+        let alias = self.store.account_alias(&account.id);
         let name = alias.unwrap_or(&label).to_owned();
         let muted = cx.theme().muted_foreground;
         let account_id = account.id.clone();
-        let disabled = self.settings.disabled_accounts.contains(&account.id);
+        let disabled = self.store.disabled_accounts.contains(&account.id);
         let calendars = self
             .calendar_sync
             .read(cx)
@@ -130,7 +129,7 @@ impl NativeView {
             .map(|calendar| {
                 let id = calendar.id.clone();
                 Checkbox::new(ElementId::Name(format!("calendar-{}", calendar.id).into()))
-                    .checked(!self.settings.disabled_calendars.contains(&calendar.id))
+                    .checked(!self.store.disabled_calendars.contains(&calendar.id))
                     .disabled(disabled)
                     .accessibility_label(calendar.name.clone())
                     .on_click(
@@ -155,7 +154,7 @@ impl NativeView {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(dot(self.settings.account_color(&account.id), cx))
+                    .child(dot(self.store.account_color(&account.id), cx))
                     .child(
                         h_flex()
                             .flex_1()
