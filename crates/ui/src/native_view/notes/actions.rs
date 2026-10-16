@@ -1,11 +1,11 @@
-//! The Note actions in the page header: a "…" button opening a menu with Transcribe again and
-//! Delete recording when the Note has a finished Recording, Summarize again with… when it has a
-//! Transcript, and Delete note.
+//! The Note actions in the page header: a "…" button opening a menu with Transcribe again with…
+//! and Delete recording when the Note has a finished Recording, Summarize again with… when it has
+//! a Transcript, and Delete note.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
 use super::super::menu::{MenuItem, OpenMenu};
-use crumble_summarize::Provider;
+use crumble_remote::Provider;
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::{Sizable, WindowExt};
 use gpui_kit::{
@@ -48,9 +48,9 @@ impl NativeView {
         )
     }
 
-    /// Opens the Note actions menu below its button: Transcribe again when the shown Note has a
-    /// finished Recording, Summarize again with… when it has a Transcript, Delete recording, and
-    /// Delete note.
+    /// Opens the Note actions menu below its button: Transcribe again with… when the shown Note
+    /// has a finished Recording, Summarize again with… when it has a Transcript, Delete
+    /// recording, and Delete note.
     fn open_note_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &self.note_detail;
         let Some(shown) = detail.note.as_ref().map(|note| note.id.clone()) else {
@@ -62,15 +62,8 @@ impl NativeView {
             .note
             .as_ref()
             .is_some_and(|note| note.recording.is_some() && !self.is_recording(&note.id));
-        if recorded && !detail.transcription.busy(&shown) {
-            let id = shown.clone();
-            items.push(
-                MenuItem::new("note-transcribe-again", "Transcribe again")
-                    .icon("refresh")
-                    .on_select(act(&view, move |view, window, cx| {
-                        view.confirm_transcribe_again(id.clone(), window, cx)
-                    })),
-            );
+        if recorded && let Some(item) = self.transcribe_again_item(&view) {
+            items.push(item);
         }
         if let Some(item) = self.summarize_again_item(&view) {
             items.push(item);
@@ -102,6 +95,46 @@ impl NativeView {
             cx,
             |view: &mut NativeView| &mut view.menu,
         ));
+    }
+
+    /// "Transcribe again with…", or "Transcribe with…" before there is a Transcript: a submenu
+    /// of the Providers ready to transcribe, the one that made the shown Note's Transcript
+    /// checked. Picking one is the Note's own choice over Settings', and asks before replacing a
+    /// Transcript or sending audio. `None` while its Transcript is being made.
+    fn transcribe_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
+        let note = self.note_detail.note.as_ref()?;
+        if self.note_detail.transcription.busy(&note.id) {
+            return None;
+        }
+        let made_by = note
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.provider.as_str());
+        let providers: Vec<MenuItem> = Provider::ALL
+            .into_iter()
+            .filter(|provider| self.can_transcribe(*provider))
+            .map(|provider| {
+                let id = note.id.clone();
+                MenuItem::new(
+                    format!("note-transcribe-{}", provider.id()),
+                    provider.name(),
+                )
+                .checked(made_by == Some(provider.id()))
+                .on_select(act(view, move |view, window, cx| {
+                    view.confirm_transcribe_again(id.clone(), provider, window, cx)
+                }))
+            })
+            .collect();
+        let label = if made_by.is_some() {
+            "Transcribe again with…"
+        } else {
+            "Transcribe with…"
+        };
+        Some(
+            MenuItem::new("note-transcribe", label)
+                .icon("refresh")
+                .submenu(providers),
+        )
     }
 
     /// "Summarize again with…", or "Summarize with…" before there is a Summary: a submenu of the

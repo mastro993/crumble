@@ -76,6 +76,17 @@ public func localeName(_ locale: UnsafePointer<CChar>) -> UnsafeMutablePointer<C
   return strdup(Locale.current.localizedString(forIdentifier: identifier) ?? identifier)
 }
 
+/// The identifiers of the locales SpeechAnalyzer transcribes, such as `en_US`, one per line;
+/// empty when it cannot run on this Mac.
+@_cdecl("crumble_transcribe_supported_locales")
+public func supportedLocales() -> UnsafeMutablePointer<CChar>? {
+  let identifiers: [String] = blocking {
+    guard SpeechTranscriber.isAvailable else { return [] }
+    return await SpeechTranscriber.supportedLocales.map { $0.identifier }
+  }
+  return strdup(identifiers.sorted().joined(separator: "\n"))
+}
+
 /// 0: `locale` cannot be transcribed on this Mac; 1: its model can be downloaded; 2: it is
 /// downloading; 3: it is installed.
 @_cdecl("crumble_transcribe_model_status")

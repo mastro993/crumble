@@ -57,6 +57,8 @@ impl Note {
 /// How a Note's Transcript was made.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TranscriptInfo {
+    /// The id of the Provider whose Model made it, such as `apple` or `openai`.
+    pub provider: String,
     /// The Model that made it, such as "Apple SpeechAnalyzer".
     pub model: String,
     /// The locale it was made in, such as `en_US`.
@@ -163,6 +165,7 @@ struct NoteRow {
     summary_provider: Option<String>,
     summary_model: Option<String>,
     summarized_at: Option<String>,
+    transcript_provider: Option<String>,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -240,6 +243,7 @@ impl Notes {
             summary_provider: None,
             summary_model: None,
             summarized_at: None,
+            transcript_provider: None,
         };
         diesel::insert_into(notes::table)
             .values(&row)
@@ -327,6 +331,7 @@ impl Notes {
                     notes::recording_duration_ms.eq(None::<i32>),
                     notes::transcript_model.eq(None::<String>),
                     notes::transcript_locale.eq(None::<String>),
+                    notes::transcript_provider.eq(None::<String>),
                     notes::transcribed_at.eq(None::<String>),
                     no_summary(),
                 ))
@@ -393,6 +398,7 @@ impl Notes {
                     notes::recording_duration_ms.eq(None::<i32>),
                     notes::transcript_model.eq(None::<String>),
                     notes::transcript_locale.eq(None::<String>),
+                    notes::transcript_provider.eq(None::<String>),
                     notes::transcribed_at.eq(None::<String>),
                     no_summary(),
                     notes::updated_at.eq(encode_time(now)),
@@ -405,13 +411,14 @@ impl Notes {
         self.remove_audio(id)
     }
 
-    /// Stores `segments`, in order, as the Transcript of the Note `id`, made by `model` in
-    /// `locale`, and returns how it was made as stored. It replaces any Transcript the Note had,
+    /// Stores `segments`, in order, as the Transcript of the Note `id`, made by `model` of the
+    /// Provider `provider` in `locale`, and returns how it was made as stored. It replaces any Transcript the Note had,
     /// and clears its Summary, in one transaction. Errors unless the Note has a finished
     /// Recording.
     pub fn set_transcript(
         &mut self,
         id: &NoteId,
+        provider: &str,
         model: &str,
         locale: &str,
         segments: &[TranscriptSegment],
@@ -433,6 +440,7 @@ impl Notes {
             let updated =
                 diesel::update(live(id).filter(notes::recording_duration_ms.is_not_null()))
                     .set((
+                        notes::transcript_provider.eq(provider),
                         notes::transcript_model.eq(model),
                         notes::transcript_locale.eq(locale),
                         notes::transcribed_at.eq(&transcribed_at),
@@ -450,6 +458,7 @@ impl Notes {
             anyhow::Ok(())
         })?;
         Ok(TranscriptInfo {
+            provider: provider.to_owned(),
             model: model.to_owned(),
             locale: locale.to_owned(),
             transcribed_at: decode_time(&transcribed_at)?,
@@ -726,11 +735,13 @@ fn decode_note(row: NoteRow) -> anyhow::Result<Note> {
             })
             .transpose()?,
         transcript: match (
+            row.transcript_provider,
             row.transcript_model,
             row.transcript_locale,
             row.transcribed_at,
         ) {
-            (Some(model), Some(locale), Some(at)) => Some(TranscriptInfo {
+            (Some(provider), Some(model), Some(locale), Some(at)) => Some(TranscriptInfo {
+                provider,
                 model,
                 locale,
                 transcribed_at: decode_time(&at)?,

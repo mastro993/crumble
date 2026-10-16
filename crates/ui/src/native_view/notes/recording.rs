@@ -140,9 +140,10 @@ impl NativeView {
         cx.notify();
     }
 
-    /// Stops the Recording and keeps its length; on quit and window close too. A stop that
-    /// fails keeps what the files hold, and a Recording with nothing readable is deleted.
-    pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
+    /// Stops the Recording and keeps its length; on quit and window close too, without a
+    /// `window` to ask in. A stop that fails keeps what the files hold, and a Recording with
+    /// nothing readable is deleted.
+    pub(super) fn stop_recording(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         let Some(active) = self.note_detail.recording.take() else {
             return;
         };
@@ -172,7 +173,7 @@ impl NativeView {
             Ok(info) => {
                 self.recording_changed(&id, info);
                 if info.is_some() {
-                    self.transcribe(id, cx);
+                    self.transcribe(id, None, window, cx);
                 }
             }
             Err(error) => self.recording_failed(&format!("{error:#}"), cx),
@@ -368,7 +369,9 @@ impl NativeView {
                             .small()
                             .icon(app_icon("stop").size_4())
                             .label("Stop")
-                            .on_click(cx.listener(|view, _, _, cx| view.stop_recording(cx))),
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.stop_recording(Some(window), cx)
+                            })),
                     )
                     .into_any_element(),
             );

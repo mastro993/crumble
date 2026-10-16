@@ -464,7 +464,7 @@ fn a_transcript_is_kept_in_order_and_replaced_whole() {
         line(System, 0, "Hello."),
         line(Mic, 4, "Bye."),
     ];
-    let info = ok(notes.set_transcript(&note.id, "Model", "en_US", &first, at(8)));
+    let info = ok(notes.set_transcript(&note.id, "apple", "Model", "en_US", &first, at(8)));
     assert_eq!(info.transcribed_at, at(8));
     assert_eq!(ok(notes.transcript(&note.id)), first);
     let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
@@ -472,12 +472,14 @@ fn a_transcript_is_kept_in_order_and_replaced_whole() {
     assert_eq!(found.updated_at, at(8));
 
     let again = [line(System, 2, "Only this.")];
-    ok(notes.set_transcript(&note.id, "Other", "it_IT", &again, at(9)));
+    ok(notes.set_transcript(&note.id, "openai", "whisper-1", "it_IT", &again, at(9)));
     assert_eq!(ok(notes.transcript(&note.id)), again);
     let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
     assert_eq!(
-        found.transcript.map(|info| (info.model, info.locale)),
-        Some(("Other".into(), "it_IT".into()))
+        found
+            .transcript
+            .map(|info| (info.provider, info.model, info.locale)),
+        Some(("openai".into(), "whisper-1".into(), "it_IT".into()))
     );
 }
 
@@ -490,7 +492,7 @@ fn a_transcript_needs_a_finished_recording() {
     for note in [&plain, &running] {
         assert!(
             notes
-                .set_transcript(&note.id, "Model", "en_US", &[], at(8))
+                .set_transcript(&note.id, "apple", "Model", "en_US", &[], at(8))
                 .is_err()
         );
         assert_eq!(ok(notes.transcript(&note.id)), []);
@@ -505,7 +507,7 @@ fn only_a_finished_recording_without_a_transcript_needs_one() {
     ok(notes.set_recording_started(&running.id, at(6)));
     let waiting = recorded(&mut notes);
     let done = recorded(&mut notes);
-    ok(notes.set_transcript(&done.id, "Model", "en_US", &[], at(8)));
+    ok(notes.set_transcript(&done.id, "apple", "Model", "en_US", &[], at(8)));
     let deleted = recorded(&mut notes);
     ok(notes.delete(&deleted.id, at(8)));
     assert_eq!(ok(notes.untranscribed()), [waiting.id]);
@@ -518,6 +520,7 @@ fn deleting_the_recording_deletes_its_transcript() {
     let note = recorded(&mut notes);
     ok(notes.set_transcript(
         &note.id,
+        "apple",
         "Model",
         "en_US",
         &[line(super::Track::Mic, 0, "Hi.")],
@@ -548,6 +551,7 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
     let dir = record_audio(&notes, &note);
     ok(notes.set_transcript(
         &note.id,
+        "apple",
         "Model",
         "en_US",
         &[line(super::Track::Mic, 0, "Hi.")],
@@ -621,6 +625,7 @@ fn transcribed(notes: &mut Notes) -> Note {
     let note = recorded(notes);
     ok(notes.set_transcript(
         &note.id,
+        "apple",
         "Model",
         "en_US",
         &[line(super::Track::Mic, 0, "Hi.")],
@@ -668,11 +673,12 @@ fn a_new_transcript_or_none_clears_the_summary() {
     let mut notes = Notes::in_memory();
     let note = transcribed(&mut notes);
     ok(notes.set_summary(&note.id, "apple", "m", "# Hi", at(9)));
-    ok(notes.set_transcript(&note.id, "Model", "en_US", &[], at(10)));
+    ok(notes.set_transcript(&note.id, "apple", "Model", "en_US", &[], at(10)));
     assert_eq!(summary(&mut notes), None);
 
     ok(notes.set_transcript(
         &note.id,
+        "apple",
         "Model",
         "en_US",
         &[line(super::Track::Mic, 0, "Hi.")],
@@ -689,7 +695,7 @@ fn only_a_spoken_transcript_without_a_summary_needs_one() {
     let mut notes = Notes::in_memory();
     recorded(&mut notes);
     let silent = recorded(&mut notes);
-    ok(notes.set_transcript(&silent.id, "Model", "en_US", &[], at(8)));
+    ok(notes.set_transcript(&silent.id, "apple", "Model", "en_US", &[], at(8)));
     let waiting = transcribed(&mut notes);
     let done = transcribed(&mut notes);
     ok(notes.set_summary(&done.id, "apple", "m", "# Hi", at(9)));

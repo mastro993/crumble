@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Weekday;
+use chrono::{SecondsFormat, Utc};
 use crumble_calendar::CalendarView;
-use crumble_db::schema::{accounts, app_state, calendars, folded_sections};
+use crumble_db::schema::{accounts, app_state, calendars, folded_sections, remote_audio_consents};
 use diesel::prelude::*;
 use diesel::upsert::excluded;
 
@@ -33,10 +34,23 @@ pub(crate) struct State {
     /// Empty until set.
     pub(crate) openai_base_url: String,
     pub(crate) openai_model: String,
+    /// The id of the Transcription Provider: `apple` or `openai`.
+    pub(crate) transcription_provider: String,
+    /// The Transcription Model on the OpenAI-compatible server.
+    pub(crate) transcription_model: String,
+    /// The locale picked for Transcripts; `None` follows the Mac's.
+    pub(crate) transcription_locale: Option<String>,
+    /// Each (Provider id, Model, host) the user agreed to send Recordings' audio to.
+    pub(crate) audio_consents: BTreeSet<AudioConsent>,
 }
+
+/// A Provider id, Model and lowercase host that may receive Recordings' audio (ADR 0008).
+pub(crate) type AudioConsent = (String, String, String);
 
 /// The Claude Model Settings starts with, as the migration's default.
 pub(crate) const CLAUDE_MODEL: &str = "claude-sonnet-5-5";
+/// The Transcription Model Settings starts with on the server, as the migration's default.
+pub(crate) const TRANSCRIPTION_MODEL: &str = "whisper-1";
 
 impl Default for State {
     fn default() -> Self {
@@ -54,6 +68,10 @@ impl Default for State {
             claude_model: CLAUDE_MODEL.to_owned(),
             openai_base_url: String::new(),
             openai_model: String::new(),
+            transcription_provider: "apple".to_owned(),
+            transcription_model: TRANSCRIPTION_MODEL.to_owned(),
+            transcription_locale: None,
+            audio_consents: BTreeSet::new(),
         }
     }
 }
@@ -72,18 +90,32 @@ struct AccountRow {
 /// Reads the whole database.
 pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
     let mut state = State::default();
-    if let Some((day, view, provider, claude_model, openai_base_url, openai_model)) =
-        app_state::table
-            .select((
-                app_state::first_day_of_week,
-                app_state::calendar_view,
+    type Row = (
+        (i32, String),
+        (Option<String>, String, String, String),
+        (String, String, Option<String>),
+    );
+    if let Some((
+        (day, view),
+        (provider, claude_model, openai_base_url, openai_model),
+        (transcription_provider, transcription_model, transcription_locale),
+    )) = app_state::table
+        .select((
+            (app_state::first_day_of_week, app_state::calendar_view),
+            (
                 app_state::summary_provider,
                 app_state::claude_model,
                 app_state::openai_base_url,
                 app_state::openai_model,
-            ))
-            .first::<(i32, String, Option<String>, String, String, String)>(connection)
-            .optional()?
+            ),
+            (
+                app_state::transcription_provider,
+                app_state::transcription_model,
+                app_state::transcription_locale,
+            ),
+        ))
+        .first::<Row>(connection)
+        .optional()?
     {
         state.first_day_of_week = decode_weekday(day);
         state.calendar_view = decode_calendar_view(&view);
@@ -91,7 +123,19 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
         state.claude_model = claude_model;
         state.openai_base_url = openai_base_url;
         state.openai_model = openai_model;
+        state.transcription_provider = transcription_provider;
+        state.transcription_model = transcription_model;
+        state.transcription_locale = transcription_locale;
     }
+    state.audio_consents = remote_audio_consents::table
+        .select((
+            remote_audio_consents::provider,
+            remote_audio_consents::model,
+            remote_audio_consents::host,
+        ))
+        .load::<AudioConsent>(connection)?
+        .into_iter()
+        .collect();
     let mut rows = accounts::table.load::<AccountRow>(connection)?;
     rows.sort_by_key(|row| row.position);
     for row in rows {
@@ -135,6 +179,27 @@ pub(crate) fn write_app_state(connection: &mut SqliteConnection, state: &State) 
             app_state::claude_model.eq(&state.claude_model),
             app_state::openai_base_url.eq(&state.openai_base_url),
             app_state::openai_model.eq(&state.openai_model),
+            app_state::transcription_provider.eq(&state.transcription_provider),
+            app_state::transcription_model.eq(&state.transcription_model),
+            app_state::transcription_locale.eq(&state.transcription_locale),
+        ))
+        .execute(connection)?;
+    Ok(())
+}
+
+/// Records the consent to send Recordings' audio to `consent`, and when it was given.
+pub(crate) fn write_audio_consent(
+    connection: &mut SqliteConnection,
+    consent: &AudioConsent,
+) -> QueryResult<()> {
+    let (provider, model, host) = consent;
+    diesel::insert_or_ignore_into(remote_audio_consents::table)
+        .values((
+            remote_audio_consents::provider.eq(provider),
+            remote_audio_consents::model.eq(model),
+            remote_audio_consents::host.eq(host),
+            remote_audio_consents::acknowledged_at
+                .eq(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
         ))
         .execute(connection)?;
     Ok(())

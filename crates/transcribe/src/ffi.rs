@@ -15,6 +15,7 @@ type Progress = extern "C" fn(*mut c_void, f32);
 unsafe extern "C" {
     fn crumble_transcribe_current_locale() -> *mut c_char;
     fn crumble_transcribe_locale_name(locale: *const c_char) -> *mut c_char;
+    fn crumble_transcribe_supported_locales() -> *mut c_char;
     fn crumble_transcribe_model_status(locale: *const c_char) -> i32;
     fn crumble_transcribe_install_model(
         locale: *const c_char,
@@ -75,11 +76,19 @@ fn run(
     }
 }
 
-/// The Mac's current locale identifier, such as `en_US`: the one to transcribe in until Settings
-/// offers a choice.
+/// The Mac's current locale identifier, such as `en_US`: the one to transcribe in unless
+/// Settings picks another.
 pub fn current_locale() -> String {
     // SAFETY: takes nothing, returns a string for `take`.
     take(unsafe { crumble_transcribe_current_locale() })
+}
+
+/// The locales SpeechAnalyzer transcribes, such as `en_US`, sorted by identifier; empty when it
+/// cannot run on this Mac. Blocks briefly.
+pub fn supported_locales() -> Vec<String> {
+    // SAFETY: takes nothing, returns a string for `take`.
+    let lines = take(unsafe { crumble_transcribe_supported_locales() });
+    lines.lines().map(str::to_owned).collect()
 }
 
 /// `locale`'s name in the Mac's language, such as "English (United States)".

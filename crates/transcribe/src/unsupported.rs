@@ -11,6 +11,11 @@ pub fn current_locale() -> String {
     "en_US".to_owned()
 }
 
+/// Only `en_US`.
+pub fn supported_locales() -> Vec<String> {
+    vec![current_locale()]
+}
+
 /// `locale` itself.
 pub fn language_name(locale: &str) -> String {
     locale.to_owned()

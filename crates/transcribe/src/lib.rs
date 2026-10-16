@@ -1,22 +1,45 @@
-//! Transcripts of Recordings, made on the Mac by Apple's SpeechAnalyzer through a small Swift
-//! bridge (ADR 0006). Each track is transcribed on its own, so the track labels the speech: the
-//! microphone is the user, the Mac's sound is the others on the call. No GPUI.
+//! Transcripts of Recordings, made by a Model the user picks: Apple's SpeechAnalyzer on the Mac
+//! through a small Swift bridge (ADR 0006), or a server that speaks OpenAI's audio
+//! transcriptions (ADR 0008). Each is a [`Transcriber`]. Each track is transcribed on its own,
+//! so the track labels the speech: the microphone is the user, the Mac's sound is the others on
+//! the call. No GPUI.
 
+mod adts;
+mod apple;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(not(target_os = "macos"))]
 #[path = "unsupported.rs"]
 mod ffi;
+mod remote;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::bail;
+use crumble_remote::Provider;
 
-pub use ffi::{current_locale, install_model, language_name, model_status};
+pub use apple::{Apple, MODEL};
+pub use ffi::{current_locale, install_model, language_name, model_status, supported_locales};
+pub use remote::OpenAiCompatible;
 
-/// The Model this crate transcribes with, as a Transcript stores it.
-pub const MODEL: &str = "Apple SpeechAnalyzer";
+/// A Model that turns a Recording into a Transcript.
+pub trait Transcriber {
+    /// Who runs the Model.
+    fn provider(&self) -> Provider;
+    /// The Model, as the Transcript records it: its id, or [`MODEL`] for Apple's.
+    fn model(&self) -> &str;
+    /// The Transcript of the Recording in `dir`, in `locale` such as `en_US`: each of its tracks
+    /// that exists, merged in time order. Blocks, so call it off the main thread; `progress`
+    /// gets 0.0..=1.0, possibly from another thread while this one waits. Its error is a
+    /// sentence to show the user, and never holds an API key.
+    fn transcribe(
+        &self,
+        dir: &Path,
+        locale: &str,
+        progress: &mut (dyn FnMut(f32) + Send),
+    ) -> anyhow::Result<Vec<Segment>>;
+}
 
 /// One stretch of speech in a Recording.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,14 +86,8 @@ pub enum ModelStatus {
     Unsupported,
 }
 
-/// Transcribes the Recording in `dir`: each of its tracks that exists, merged in time order.
-/// The locale's model must be installed. Blocks, so call it off the main thread; `progress`
-/// gets 0.0..=1.0, from another thread while this one waits.
-pub fn transcribe(
-    dir: &Path,
-    locale: &str,
-    mut progress: impl FnMut(f32) + Send,
-) -> anyhow::Result<Vec<Segment>> {
+/// The tracks of the Recording in `dir` that exist, the microphone first.
+fn tracks(dir: &Path) -> anyhow::Result<Vec<(Track, PathBuf)>> {
     let tracks: Vec<(Track, PathBuf)> = [Track::Mic, Track::System]
         .into_iter()
         .map(|track| (track, track.path(dir)))
@@ -79,50 +96,7 @@ pub fn transcribe(
     if tracks.is_empty() {
         bail!("the Recording in {} has no audio", dir.display());
     }
-    #[allow(clippy::cast_precision_loss, reason = "at most two tracks")]
-    let count = tracks.len() as f32;
-    let mut segments = Vec::new();
-    for (done, (track, path)) in tracks.iter().enumerate() {
-        #[allow(clippy::cast_precision_loss, reason = "at most two tracks")]
-        let done = done as f32;
-        // Both tracks run the whole Recording, so each is an equal share of the work.
-        let lines = ffi::transcribe_file(path, locale, &mut |fraction| {
-            progress((done + fraction) / count);
-        })
-        .with_context(|| format!("could not transcribe {}", path.display()))?;
-        segments.push(parse(&lines, *track)?);
-    }
-    Ok(merge(segments))
-}
-
-/// Reads the bridge's output: one `start_ms\tend_ms\ttext` line per segment of `track`.
-fn parse(lines: &str, track: Track) -> anyhow::Result<Vec<Segment>> {
-    lines
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let mut fields = line.splitn(3, '\t');
-            let mut time = || -> anyhow::Result<Duration> {
-                let ms = fields
-                    .next()
-                    .ok_or_else(|| anyhow!("a short line {line:?}"))?;
-                Ok(Duration::from_millis(
-                    ms.parse()
-                        .with_context(|| format!("a bad time in {line:?}"))?,
-                ))
-            };
-            let (start, end) = (time()?, time()?);
-            let text = fields
-                .next()
-                .ok_or_else(|| anyhow!("no text in {line:?}"))?;
-            Ok(Segment {
-                track,
-                start,
-                end,
-                text: text.trim().to_owned(),
-            })
-        })
-        .collect()
+    Ok(tracks)
 }
 
 /// Every track's segments in one list ordered by start, then end, then the microphone first;

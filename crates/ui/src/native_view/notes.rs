@@ -2,14 +2,17 @@
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
 //! The Recording, its player and the header pill are in `recording`; the Transcript and the job
-//! that makes it in `transcript`; the Summary and its job in `summary`.
+//! that makes it in `transcript`, its tab in `transcript_tab`, with the Transcription Model and the consent a remote one
+//! needs in `consent`; the Summary and its job in `summary`.
 
 mod actions;
+mod consent;
 mod detail;
 mod recording;
 mod summary;
 mod tabs;
 mod transcript;
+mod transcript_tab;
 
 use super::NativeView;
 use super::agenda::Selected;
@@ -106,7 +109,7 @@ impl NoteDetail {
             // Quitting within the pause still keeps what was typed, and a running Recording.
             cx.on_app_quit(|view, cx| {
                 view.save_note(cx);
-                view.stop_recording(cx);
+                view.stop_recording(None, cx);
                 async {}
             }),
         ];
@@ -115,7 +118,7 @@ impl NoteDetail {
         window.on_window_should_close(cx, move |_, cx| {
             let _ = view.update(cx, |view, cx| {
                 view.save_note(cx);
-                view.stop_recording(cx);
+                view.stop_recording(None, cx);
             });
             true
         });
@@ -148,7 +151,12 @@ impl NoteDetail {
                 note.summary.is_some()
                     || self.summarization.involves(&note.id)
                     || (note.transcript.is_some() && !self.transcript.is_empty()),
-                note.transcript.is_some() || self.transcription.involves(&note.id),
+                // Also a finished Recording no job took, which the tab offers to transcribe.
+                note.transcript.is_some()
+                    || self.transcription.involves(&note.id)
+                    || note
+                        .recording
+                        .is_some_and(|recording| recording.duration.is_some()),
             )
         });
         let tabs = tabs::tabs(summary, transcript);
