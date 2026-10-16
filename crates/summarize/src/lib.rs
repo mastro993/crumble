@@ -73,6 +73,33 @@ impl Provider {
     }
 }
 
+/// Whether `provider` keeps the Transcript on this Mac: Apple's Model, or an OpenAI-compatible
+/// server at `openai_base_url` whose host is `localhost`, `127.0.0.1` or `::1`. Only such a
+/// Provider summarizes older Transcripts without being asked (ADR 0007).
+pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
+    match provider {
+        Provider::Apple => true,
+        Provider::Claude => false,
+        Provider::OpenAiCompatible => is_loopback(openai_base_url),
+    }
+}
+
+/// Whether `url`'s host is `localhost`, `127.0.0.1` or `::1`.
+fn is_loopback(url: &str) -> bool {
+    let url = url.trim();
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // Credentials before an `@` are not the host.
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+}
+
 /// Whether Apple's on-device model can run on this Mac now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Availability {
@@ -130,7 +157,7 @@ pub fn transcript_text<'a>(segments: impl IntoIterator<Item = (Speaker, &'a str)
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, Speaker, transcript_text};
+    use super::{Provider, Speaker, runs_locally, transcript_text};
 
     #[test]
     fn a_transcript_reads_one_labelled_line_per_segment() {
@@ -153,5 +180,34 @@ mod tests {
             assert_eq!(Provider::from_id(provider.id()), Some(provider));
         }
         assert_eq!(Provider::from_id("gemini"), None);
+    }
+
+    #[test]
+    fn only_apple_and_a_loopback_server_run_locally() {
+        use Provider::{Apple, Claude, OpenAiCompatible};
+        assert!(runs_locally(Apple, ""));
+        assert!(!runs_locally(Claude, "http://localhost:11434/v1"));
+        for local in [
+            "http://localhost:11434/v1",
+            "http://LOCALHOST:1234/v1/",
+            "http://127.0.0.1:8765/v1",
+            "https://[::1]:8080/v1",
+            "localhost:11434/v1",
+            " http://user:pw@127.0.0.1/v1 ",
+        ] {
+            assert!(runs_locally(OpenAiCompatible, local), "{local}");
+        }
+        for remote in [
+            "",
+            "http://192.168.1.20:8765/v1",
+            "https://api.openai.com/v1",
+            "http://localhost.example.com/v1",
+            "http://127.0.0.1.example.com/v1",
+            "http://localhost@evil.example.com/v1",
+            "http://[::2]/v1",
+            "http://10.0.0.1/localhost",
+        ] {
+            assert!(!runs_locally(OpenAiCompatible, remote), "{remote}");
+        }
     }
 }

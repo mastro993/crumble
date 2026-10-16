@@ -144,7 +144,10 @@ impl NoteDetail {
     fn tabs(&self) -> (Vec<tabs::NoteTab>, tabs::NoteTab) {
         let (summary, transcript) = self.note.as_ref().map_or((false, false), |note| {
             (
-                note.summary.is_some() || self.summarization.involves(&note.id),
+                // Also a spoken Transcript no job took, which the tab offers to summarize.
+                note.summary.is_some()
+                    || self.summarization.involves(&note.id)
+                    || (note.transcript.is_some() && !self.transcript.is_empty()),
                 note.transcript.is_some() || self.transcription.involves(&note.id),
             )
         });

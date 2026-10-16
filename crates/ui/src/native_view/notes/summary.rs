@@ -10,7 +10,7 @@ use crumble_notes::{NoteId, Track};
 use crumble_store::secrets;
 use crumble_summarize::{
     Apple, Availability, Claude, OpenAiCompatible, Provider, Speaker, Summarizer,
-    apple_availability, transcript_text,
+    apple_availability, runs_locally, transcript_text,
 };
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::text::TextView;
@@ -60,14 +60,10 @@ struct Job {
     _updates: Task<()>,
 }
 
-enum Failure {
-    /// No Summary Model is picked in Settings.
-    NoModel,
-    /// The Model failed: why, for the user, and the Provider to try again with.
-    Failed {
-        message: String,
-        provider: Option<Provider>,
-    },
+/// Why the Model failed, for the user, and the Provider to try again with.
+struct Failure {
+    message: String,
+    provider: Option<Provider>,
 }
 
 /// What the job sends back to the main thread.
@@ -77,10 +73,15 @@ enum Update {
 }
 
 impl NativeView {
-    /// Queues the Notes whose Transcript has no Summary, as when the app quit while summarizing
-    /// or no Summary Model was picked yet, once one is. Run at launch and when one is picked.
+    /// Queues the older Notes whose Transcript has no Summary, as when the app quit while
+    /// summarizing or no Summary Model was picked yet, when the Summary Model keeps the text on
+    /// the Mac. A remote one gets an older Transcript only when the user asks, from its Note's
+    /// Summary tab. Run at launch and when a Summary Model is picked.
     pub(in super::super) fn summarize_unsummarized(&mut self, cx: &mut Context<Self>) {
-        if self.summary_provider().is_none() {
+        let local = self
+            .summary_provider()
+            .is_some_and(|provider| runs_locally(provider, self.store.openai_base_url()));
+        if !local {
             return;
         }
         match self.notes.unsummarized() {
@@ -154,7 +155,8 @@ impl NativeView {
                 }
             };
             let Some(provider) = asked.or_else(|| self.summary_provider()) else {
-                self.summary_failed(id, Failure::NoModel);
+                // The tab says to pick one; picking it summarizes the Note when that keeps the
+                // text on the Mac, and offers to otherwise.
                 continue;
             };
             let summarizer = match self.summarizer(provider) {
@@ -162,7 +164,7 @@ impl NativeView {
                 Err(message) => {
                     self.summary_failed(
                         id,
-                        Failure::Failed {
+                        Failure {
                             message,
                             provider: asked,
                         },
@@ -265,7 +267,7 @@ impl NativeView {
                         eprintln!("Could not summarize the Transcript: {error:#}");
                         self.summary_failed(
                             id.clone(),
-                            Failure::Failed {
+                            Failure {
                                 message: error.to_string(),
                                 provider: asked,
                             },
@@ -290,7 +292,8 @@ impl NativeView {
         }
     }
 
-    /// The Summary tab: the job's progress, why it failed, or the Summary and who made it.
+    /// The Summary tab: the job's progress, why it failed, an offer to summarize a Transcript no
+    /// job took, or the Summary and who made it.
     pub(super) fn render_summary(&self, cx: &mut Context<Self>) -> AnyElement {
         let detail = &self.note_detail;
         let Some(note) = detail.note.as_ref() else {
@@ -323,32 +326,51 @@ impl NativeView {
                 .child("Waiting to summarize…")
                 .into_any_element();
         }
-        // A failed attempt shows above the Summary the Note still has, if any.
-        let failure = summarization.failed.get(&note.id).map(|failure| {
-            let id = note.id.clone();
-            let (message, action) = match failure {
-                Failure::NoModel => (
-                    "No Summary Model picked. Choose one in Settings.".to_owned(),
-                    button("summary-settings")
+        let no_model = || {
+            (
+                "No Summary Model picked. Choose one in Settings.".to_owned(),
+                button("summary-settings")
+                    .outline()
+                    .small()
+                    .label("Open Settings")
+                    .on_click(cx.listener(|view, _, _, cx| view.navigate(Route::Settings, cx))),
+            )
+        };
+        let id = note.id.clone();
+        // A failed attempt shows above the Summary the Note still has, if any. A Transcript no
+        // job took, as one older than a remote Summary Model, waits for the user to ask.
+        let line = match summarization.failed.get(&note.id) {
+            Some(Failure { message, provider }) => {
+                let provider = *provider;
+                Some((
+                    message.clone(),
+                    button("summary-retry")
                         .outline()
                         .small()
-                        .label("Open Settings")
-                        .on_click(cx.listener(|view, _, _, cx| view.navigate(Route::Settings, cx))),
-                ),
-                Failure::Failed { message, provider } => {
-                    let provider = *provider;
-                    (
-                        message.clone(),
-                        button("summary-retry")
+                        .label("Try again")
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            view.summarize(id.clone(), provider, cx)
+                        })),
+                ))
+            }
+            None if note.summary.is_none() && !detail.transcript.is_empty() => {
+                Some(match self.summary_provider() {
+                    Some(provider) => (
+                        "Not summarized yet".to_owned(),
+                        button("summary-start")
                             .outline()
                             .small()
-                            .label("Try again")
+                            .label(format!("Summarize with {}", provider.name()))
                             .on_click(cx.listener(move |view, _, _, cx| {
-                                view.summarize(id.clone(), provider, cx)
+                                view.summarize(id.clone(), Some(provider), cx)
                             })),
-                    )
-                }
-            };
+                    ),
+                    None => no_model(),
+                })
+            }
+            None => None,
+        };
+        let line = line.map(|(message, action)| {
             h_flex()
                 .gap_2()
                 .text_color(muted)
@@ -379,7 +401,7 @@ impl NativeView {
         v_flex()
             .gap_3()
             .text_sm()
-            .children(failure)
+            .children(line)
             .children(summary)
             .into_any_element()
     }
