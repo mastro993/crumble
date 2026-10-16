@@ -21,7 +21,7 @@ Wall time in seconds, median of 3 runs (A: one run). "incremental on" sets `CARG
 | B. View edit, rebuild `-p crumble` | 2.34 | 1.84 |
 | C. Logic edit, rebuild `-p crumble` | 2.31 | 1.77 |
 | D. Logic edit, `cargo test --workspace --no-run` | 2.19 | 1.63 |
-| E. Logic edit, `cargo test -p crumble-ui --lib -- period` | 2.45 | 1.90 |
+| E. Logic edit, `cargo test -p crumble-ui --lib -- period` (baseline path) | 2.45 | 1.90 |
 
 Per-crate compile time in the clean build (A), from `target/cargo-timings/cargo-timing.html` (604 units in total; the rest is dependencies):
 
@@ -51,9 +51,9 @@ Each scenario edits a source file so that it really changes, then times one Carg
 
 - **A. Clean build**: `cargo clean`, then `cargo build --workspace --locked --timings`. One run. Per-crate times come from the `UNIT_DATA` array in `target/cargo-timings/cargo-timing.html`.
 - **B. View edit**: probe `crates/ui/src/native_view/shell.rs` (the app shell view), then `cargo build -p crumble --locked`.
-- **C. Logic edit**: probe the file holding Period math and today, then `cargo build -p crumble --locked`. At the baseline it is `crates/ui/src/native_view/calendar/period.rs`; once that code moves to `crumble-calendar`, probe its new file.
+- **C. Logic edit**: probe the file holding Period math and today, then `cargo build -p crumble --locked`. At the baseline it was `crates/ui/src/native_view/calendar/period.rs`; it is now `crates/calendar/src/period.rs`.
 - **D. Test build after a logic edit**: the C probe, then `cargo test --workspace --locked --no-run`.
-- **E. Pure-logic test loop**: the C probe, then the Period tests alone. At the baseline they compile inside the GPUI crate: `cargo test -p crumble-ui --locked --lib -- period`. After the split, run them in the crate that holds them.
+- **E. Pure-logic test loop**: the C probe, then the Period tests alone. At the baseline they compiled inside the GPUI crate: `cargo test -p crumble-ui --locked --lib -- period`. They now run in their own crate: `cargo test -p crumble-calendar --locked -- period`.
 
 B to E run three times each with `incremental` off, then again with `CARGO_PROFILE_DEV_INCREMENTAL=true`. Before each mode, one untimed warm build fills the cache, and D and E each get an untimed warm run first. `cargo build` is used instead of `cargo run`, which would launch the macOS runner.
 
@@ -65,7 +65,7 @@ From the repository root, on a clean tree, run the script below; it prints one l
 #!/bin/bash
 set -euo pipefail
 VIEW=crates/ui/src/native_view/shell.rs
-LOGIC=crates/ui/src/native_view/calendar/period.rs
+LOGIC=crates/calendar/src/period.rs
 OUT=${OUT:-/tmp/crumble-timings}
 mkdir -p "$OUT"
 n=0
@@ -91,8 +91,8 @@ for mode in off on; do
   for i in 1 2 3; do probe $LOGIC; timed "$mode C $i" cargo build -p crumble --locked; done
   cargo test --workspace --locked --no-run > /dev/null 2>&1
   for i in 1 2 3; do probe $LOGIC; timed "$mode D $i" cargo test --workspace --locked --no-run; done
-  cargo test -p crumble-ui --locked --lib -- period > /dev/null 2>&1
-  for i in 1 2 3; do probe $LOGIC; timed "$mode E $i" cargo test -p crumble-ui --locked --lib -- period; done
+  cargo test -p crumble-calendar --locked -- period > /dev/null 2>&1
+  for i in 1 2 3; do probe $LOGIC; timed "$mode E $i" cargo test -p crumble-calendar --locked -- period; done
   git checkout -- $LOGIC
 done
 git diff --exit-code
