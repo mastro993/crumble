@@ -1,5 +1,6 @@
 //! The Note detail view, shared by the Agenda content area and the Event page: the Note's title
-//! big at the top with when it happened below, then a card holding the tab bar and the tab.
+//! big at the top with when it happened below, then a card holding the tab bar, the Recording
+//! controls on its trailing side, and the tab.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
@@ -18,7 +19,10 @@ const MAX_WIDTH: f32 = 720.0;
 impl NativeView {
     pub(in super::super) fn render_note_detail(&self, cx: &mut Context<Self>) -> AnyElement {
         let detail = &self.note_detail;
-        let theme = cx.theme();
+        let (border, muted, danger) = {
+            let theme = cx.theme();
+            (theme.border, theme.muted_foreground, theme.danger)
+        };
         let Some(subject) = &detail.subject else {
             return div().into_any_element();
         };
@@ -48,18 +52,20 @@ impl NativeView {
         let body = if detail.note.is_some() {
             v_flex()
                 .child(
-                    // The trailing side stays free for the Recording controls.
                     h_flex()
                         .px_3()
+                        .gap_2()
                         .border_b_1()
-                        .border_color(theme.border)
+                        .border_color(border)
                         .child(
                             TabBar::new("note-tabs")
                                 .underline()
                                 .small()
                                 .selected_index(0)
                                 .child(Tab::new().label("Memo")),
-                        ),
+                        )
+                        .child(div().flex_1())
+                        .children(self.render_recording_controls(cx)),
                 )
                 .child(
                     div()
@@ -73,17 +79,22 @@ impl NativeView {
                 .gap_3()
                 .py_10()
                 .text_sm()
-                .text_color(theme.muted_foreground)
+                .text_color(muted)
                 .child("No note yet")
                 .child(
-                    button("note-empty-new")
-                        .outline()
-                        .small()
-                        .icon(app_icon("note-add").size_4())
-                        .label("New note")
-                        .on_click(
-                            cx.listener(|view, _, window, cx| view.new_note(false, window, cx)),
-                        ),
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            button("note-empty-new")
+                                .outline()
+                                .small()
+                                .icon(app_icon("note-add").size_4())
+                                .label("New note")
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.new_note(false, window, cx)
+                                })),
+                        )
+                        .child(self.render_empty_record_button(cx)),
                 )
                 .into_any_element()
         };
@@ -93,27 +104,30 @@ impl NativeView {
             .gap_4()
             .pt_2()
             .child(
-                v_flex().gap_1().child(title).child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(when),
-                ),
+                v_flex()
+                    .gap_1()
+                    .child(title)
+                    .child(div().text_sm().text_color(muted).child(when)),
             )
             .child(
                 div()
                     .border_1()
-                    .border_color(theme.border)
+                    .border_color(border)
                     .rounded(px(SURFACE_RADIUS))
                     .overflow_hidden()
                     .child(body),
             )
-            .children(detail.save_failed.then(|| {
-                div()
-                    .text_xs()
-                    .text_color(theme.danger)
-                    .child("Couldn't save")
-            }))
+            .children(self.render_recording_hints(cx))
+            .children(
+                detail
+                    .save_failed
+                    .then(|| div().text_xs().text_color(danger).child("Couldn't save")),
+            )
+            .children(
+                detail
+                    .recording_failed
+                    .then(|| div().text_xs().text_color(danger).child("Couldn't record")),
+            )
             .into_any_element()
     }
 }

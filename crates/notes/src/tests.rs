@@ -324,7 +324,10 @@ fn a_recording_starts_once_then_finishes() {
     assert_eq!(started.duration, None);
     // A Note has at most one Recording.
     assert!(notes.set_recording_started(&note.id, at(8)).is_err());
-    assert_eq!(ok(notes.unfinished_recordings()), [note.id.clone()]);
+    assert_eq!(
+        ok(notes.unfinished_recordings()),
+        std::slice::from_ref(&note.id)
+    );
 
     ok(notes.set_recording_finished(&note.id, std::time::Duration::from_millis(90_500), at(8)));
     let [found] = <[Note; 1]>::try_from(ok(notes.quick_notes(at(0)..at(23))))
@@ -398,4 +401,42 @@ fn a_quick_note_is_listed_at_its_recordings_start() {
     assert_eq!(ids(&found), [recorded.id.0.as_str(), plain.id.0.as_str()]);
     assert_eq!(found[0].listed_at(), started.started_at);
     assert_eq!(found[1].listed_at(), at(7));
+}
+
+#[test]
+fn a_crash_left_recording_keeps_what_its_files_hold() {
+    let mut notes = Notes::in_memory();
+    let kept = ok(notes.create(None, at(5)));
+    let unreadable = ok(notes.create(None, at(5)));
+    let finished = ok(notes.create(None, at(5)));
+    for note in [&kept, &unreadable, &finished] {
+        ok(notes.set_recording_started(&note.id, at(6)));
+    }
+    ok(notes.set_recording_finished(&finished.id, std::time::Duration::from_secs(9), at(7)));
+    let unreadable_dir = notes.recording_dir(&unreadable.id);
+    let kept_dir = notes.recording_dir(&kept.id);
+    ok(notes.recover_recordings(
+        |dir| {
+            assert!(dir == kept_dir || dir == unreadable_dir, "{dir:?}");
+            if dir == kept_dir {
+                Ok(std::time::Duration::from_secs(42))
+            } else {
+                Err(anyhow::anyhow!("no audio"))
+            }
+        },
+        at(8),
+    ));
+    let recordings: Vec<_> = ok(notes.quick_notes(at(0)..at(23)))
+        .into_iter()
+        .map(|note| {
+            (
+                note.id,
+                note.recording.and_then(|recording| recording.duration),
+            )
+        })
+        .collect();
+    assert!(recordings.contains(&(kept.id, Some(std::time::Duration::from_secs(42)))));
+    assert!(recordings.contains(&(unreadable.id, None)));
+    assert!(recordings.contains(&(finished.id, Some(std::time::Duration::from_secs(9)))));
+    assert_eq!(ok(notes.unfinished_recordings()), []);
 }

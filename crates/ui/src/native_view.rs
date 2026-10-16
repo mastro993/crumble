@@ -23,6 +23,7 @@ pub use shell::{GoBack, GoForward, ToggleSidebar};
 use account_alias::{AliasFields, Rename};
 use agenda::AgendaPage;
 use calendar::CalendarPage;
+use chrono::Utc;
 use crumble_notes::Notes;
 use crumble_store::{SidebarSection, Store};
 use crumble_sync::{CalendarEvents, CalendarSync};
@@ -87,7 +88,11 @@ impl NativeView {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let store = Store::open();
-        let notes = Notes::open();
+        let mut notes = Notes::open();
+        // Recordings a crash cut short keep what their files hold.
+        if let Err(error) = notes.recover_recordings(crumble_audio::recorded_length, Utc::now()) {
+            eprintln!("Could not recover the Recordings left unfinished: {error:#}");
+        }
         let note_detail = NoteDetail::new(window, cx);
         let first_day_select = settings_page::first_day_select(&store, window, cx);
         let calendar = CalendarPage::new(store.calendar_view());

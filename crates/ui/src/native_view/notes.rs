@@ -1,9 +1,11 @@
 //! The Note detail view's state: the Note of the selected Agenda row or of the opened Event,
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
+//! The Recording, its player and the header pill are in `recording`.
 
 mod actions;
 mod detail;
+mod recording;
 
 use super::NativeView;
 use super::agenda::Selected;
@@ -65,6 +67,12 @@ pub(super) struct NoteDetail {
     save_failed: bool,
     /// Where the Note actions button was last drawn; its menu opens below it.
     actions: Rc<Cell<Bounds<Pixels>>>,
+    /// The one Recording running in the app, whichever Note shows.
+    recording: Option<recording::Active>,
+    /// The shown Note's finished Recording.
+    playback: Option<recording::Playback>,
+    /// Whether the last Recording failed to start, stop or delete.
+    recording_failed: bool,
     _subscriptions: [Subscription; 3],
 }
 
@@ -87,9 +95,10 @@ impl NoteDetail {
                 InputEvent::Blur => view.save_memo(cx),
                 _ => {}
             }),
-            // Quitting within the pause still keeps what was typed.
+            // Quitting within the pause still keeps what was typed, and a running Recording.
             cx.on_app_quit(|view, cx| {
                 view.save_note(cx);
+                view.stop_recording(cx);
                 async {}
             }),
         ];
@@ -110,6 +119,9 @@ impl NoteDetail {
             unsaved_memos: HashMap::new(),
             save_failed: false,
             actions: Rc::default(),
+            recording: None,
+            playback: None,
+            recording_failed: false,
             _subscriptions: subscriptions,
         }
     }
@@ -175,22 +187,27 @@ impl NativeView {
         self.show_note(note, window, cx);
     }
 
-    /// Saves the shown Note before the window closes. While a title or Memo still fails to
-    /// save, asks first instead, as closing drops the text kept in memory.
+    /// Saves the shown Note and stops a running Recording before the window closes. While a
+    /// title or Memo still fails to save, asks first instead, as closing drops the text kept in
+    /// memory.
     fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.save_note(cx);
         let detail = &self.note_detail;
         if detail.unsaved_titles.is_empty() && detail.unsaved_memos.is_empty() {
+            self.stop_recording(cx);
             return true;
         }
-        window.open_alert_dialog(cx, |alert, _, _| {
+        let view = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let view = view.clone();
             alert
                 .title("Close without saving?")
                 .description("Some notes couldn't be saved. Closing loses their changes.")
                 .show_cancel(true)
                 .ok_text("Close")
                 .ok_variant(ButtonVariant::Danger)
-                .on_ok(|_, window, _| {
+                .on_ok(move |_, window, cx| {
+                    let _ = view.update(cx, |view, cx| view.stop_recording(cx));
                     window.remove_window();
                     true
                 })
@@ -226,6 +243,7 @@ impl NativeView {
         detail
             .memo
             .update(cx, |input, cx| input.set_value(memo, window, cx));
+        self.show_player(cx);
         cx.notify();
     }
 
@@ -370,10 +388,20 @@ impl NativeView {
 
     /// Deletes the shown Note; a Quick note's row leaves the Agenda.
     fn delete_note(&mut self, id: &NoteId, window: &mut Window, cx: &mut Context<Self>) {
-        let detail = &mut self.note_detail;
-        if detail.note.as_ref().is_none_or(|note| &note.id != id) {
+        if self
+            .note_detail
+            .note
+            .as_ref()
+            .is_none_or(|note| &note.id != id)
+        {
             return;
         }
+        // The Recording goes with its Note: stop it, and close its files, before they go.
+        if self.is_recording(id) {
+            self.note_detail.recording = None;
+        }
+        self.note_detail.playback = None;
+        let detail = &mut self.note_detail;
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");
             detail.save_failed = true;

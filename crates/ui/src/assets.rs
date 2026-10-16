@@ -67,6 +67,10 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/Home01Icon.svg"),
     ),
     (
+        "icons/mic.svg",
+        include_bytes!("../../../assets/hugeicons/Mic01Icon.svg"),
+    ),
+    (
         "icons/more.svg",
         include_bytes!("../../../assets/hugeicons/MoreHorizontalIcon.svg"),
     ),
@@ -87,6 +91,10 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/PencilEdit01Icon.svg"),
     ),
     (
+        "icons/pause.svg",
+        include_bytes!("../../../assets/hugeicons/PauseIcon.svg"),
+    ),
+    (
         "icons/panel-left-close.svg",
         include_bytes!("../../../assets/hugeicons/LayoutLeftIcon.svg"),
     ),
@@ -95,12 +103,20 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/LayoutAlignLeftIcon.svg"),
     ),
     (
+        "icons/play.svg",
+        include_bytes!("../../../assets/hugeicons/PlayIcon.svg"),
+    ),
+    (
         "icons/scroll-to-top.svg",
         include_bytes!("../../../assets/hugeicons/ArrowUp02Icon.svg"),
     ),
     (
         "icons/settings.svg",
         include_bytes!("../../../assets/hugeicons/Settings01Icon.svg"),
+    ),
+    (
+        "icons/stop.svg",
+        include_bytes!("../../../assets/hugeicons/StopIcon.svg"),
     ),
     (
         "icons/user-group.svg",

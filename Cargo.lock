@@ -1418,7 +1418,9 @@ name = "crumble-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "chrono",
+ "crumble-audio",
  "crumble-calendar",
  "crumble-eventkit",
  "crumble-notes",
