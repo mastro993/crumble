@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/sync", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/sync", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -20,6 +20,7 @@ dirs = "6.0"
 gpui-kit = "=0.7.0"
 # GPUI core for crates that hold entities but no components; the version gpui-kit pins.
 gpui = { package = "gpui-pre", version = "=0.3.7" }
+crumble-audio = { path = "crates/audio" }
 crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
