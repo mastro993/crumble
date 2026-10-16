@@ -15,6 +15,8 @@ use gpui_kit::{AnyElement, Context, IntoElement, ParentElement, Styled, Task, Wi
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
+/// The width of the time column, so the columns after it line up whatever the time's digits.
+const TIME_WIDTH: f32 = 44.0;
 /// The width of the "You" and "Others" column.
 const SPEAKER_WIDTH: f32 = 52.0;
 
@@ -340,19 +342,18 @@ impl NativeView {
                     .into_any_element(),
             };
         }
-        let lines =
-            detail
-                .transcript
-                .iter()
-                .enumerate()
-                .map(|(index, segment)| {
-                    let start = segment.start;
-                    h_flex()
-                        .gap_3()
-                        .items_start()
-                        .child(
+        let lines = detail
+            .transcript
+            .iter()
+            .enumerate()
+            .map(|(index, segment)| {
+                let start = segment.start;
+                h_flex()
+                    .gap_3()
+                    .items_start()
+                    .child(
+                        div().w(px(TIME_WIDTH)).flex_shrink_0().child(
                             button(("transcript-time", index))
-                                .flex_shrink_0()
                                 .link()
                                 .xsmall()
                                 .label(clock(start))
@@ -360,20 +361,21 @@ impl NativeView {
                                 .on_click(cx.listener(move |view, _, window, cx| {
                                     view.seek(start, window, cx)
                                 })),
-                        )
-                        .child(
-                            div()
-                                .w(px(SPEAKER_WIDTH))
-                                .flex_shrink_0()
-                                .text_color(muted)
-                                .child(match segment.track {
-                                    Track::Mic => "You",
-                                    Track::System => "Others",
-                                }),
-                        )
-                        .child(div().flex_1().min_w_0().child(segment.text.clone()))
-                        .into_any_element()
-                });
+                        ),
+                    )
+                    .child(
+                        div()
+                            .w(px(SPEAKER_WIDTH))
+                            .flex_shrink_0()
+                            .text_color(muted)
+                            .child(match segment.track {
+                                Track::Mic => "You",
+                                Track::System => "Others",
+                            }),
+                    )
+                    .child(div().flex_1().min_w_0().child(segment.text.clone()))
+                    .into_any_element()
+            });
         // ponytail: every line renders at once; a list that renders only what shows, once
         // hour-long Transcripts feel slow.
         v_flex()
