@@ -3,6 +3,7 @@
 
 use chrono::{Days, NaiveDate, NaiveDateTime, NaiveTime};
 use crumble_eventkit::{Event, When};
+use std::borrow::Borrow;
 
 const DAY_MINUTES: f32 = 24.0 * 60.0;
 
@@ -106,14 +107,15 @@ pub fn day_order<'a>(
 /// `opened` as last read in `events`: the same occurrence, else the one Event with its
 /// [`Event::series_uid`] and [`Event::occurrence`], as after the Event moved and its start
 /// changed; else `opened` as it was.
-pub fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
-    if let Some(same) = events.iter().find(|event| event.id == opened.id) {
+pub fn latest<'a, E: Borrow<Event>>(events: &'a [E], opened: &'a Event) -> &'a Event {
+    let events = events.iter().map(Borrow::borrow);
+    if let Some(same) = events.clone().find(|event| event.id == opened.id) {
         return same;
     }
     if opened.series_uid.is_none() {
         return opened;
     }
-    let mut moved = events.iter().filter(|event| {
+    let mut moved = events.filter(|event| {
         event.series_uid == opened.series_uid && event.occurrence == opened.occurrence
     });
     match (moved.next(), moved.next()) {
