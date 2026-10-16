@@ -72,6 +72,10 @@ _Avoid_: nickname, display name, rename
 **Calendars section**:
 The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
 
+**Settings page**:
+The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, and gives Aliases. Written "Settings" when nothing else could be meant.
+_Avoid_: preferences, options
+
 ### Agenda
 
 **Agenda page**:
@@ -111,4 +115,5 @@ _Avoid_: current, live, ongoing
 - "meeting" meant only Events with attendees. Resolved: every synced entry is an **Event**.
 - "hide" meant both the Settings choice and the sidebar's checkbox. Resolved: the Settings one, which also drops the sidebar row, is **Disabled**; the sidebar one is **Hidden**.
 - "current event" meant both an **Event** that has started and one happening today. Resolved: one that has started and not ended is **In progress**.
+- "settings" meant both the **Settings page** and everything Crumble keeps across restarts, such as the last **Calendar view** or the **Account** order. Resolved: "Settings" is only the page; the rest is not a domain term.
 - The **Calendars section** lists **Accounts**, not **Calendars**. Resolved: keep the "Calendars" title for users; in code and conversation its rows are **Accounts**.
