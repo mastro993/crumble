@@ -68,6 +68,8 @@ VIEW=crates/ui/src/native_view/shell.rs
 LOGIC=crates/ui/src/native_view/calendar/period.rs
 OUT=${OUT:-/tmp/crumble-timings}
 git diff --quiet HEAD || { echo "commit or stash your changes first" >&2; exit 1; }
+trap 'git checkout -- "$VIEW" "$LOGIC"' EXIT # restore the probe files even if a build fails
+unset CARGO_PROFILE_DEV_INCREMENTAL # A runs with the profile as committed
 mkdir -p "$OUT"
 n=0
 probe() { # append a fresh `const _: u32 = <n>;` to the file so it really changes
