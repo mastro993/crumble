@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/eventkit", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/calendar", "crates/eventkit", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -16,6 +16,7 @@ async-channel = "2.5"
 chrono = { version = "0.4.45", features = ["serde"] }
 dirs = "6.0"
 gpui-kit = "=0.7.0"
+crumble-calendar = { path = "crates/calendar" }
 crumble-eventkit = { path = "crates/eventkit" }
 # Agent automation for `--features mcp` builds. The rev matches the `gpui-mcp` server it talks to.
 gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb49990261e3fdaa26abe38112d30dafb", default-features = false, features = ["gpui-pre"] }

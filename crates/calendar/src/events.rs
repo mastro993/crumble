@@ -11,7 +11,7 @@ fn midnight(date: NaiveDate) -> NaiveDateTime {
 }
 
 /// Whether `event` shows on `date`. A timed Event that ends at midnight stays on the day before.
-pub(super) fn on_day(event: &Event, date: NaiveDate) -> bool {
+pub fn on_day(event: &Event, date: NaiveDate) -> bool {
     match event.when {
         When::AllDay { first, last } => first <= date && date <= last,
         When::Timed { .. } => minutes_on(event, date).is_some(),
@@ -19,7 +19,7 @@ pub(super) fn on_day(event: &Event, date: NaiveDate) -> bool {
 }
 
 /// The minutes after midnight a timed Event covers on `date`, clipped to that day.
-pub(super) fn minutes_on(event: &Event, date: NaiveDate) -> Option<(f32, f32)> {
+pub fn minutes_on(event: &Event, date: NaiveDate) -> Option<(f32, f32)> {
     let When::Timed { start, end } = event.when else {
         return None;
     };
@@ -40,7 +40,7 @@ pub(super) fn minutes_on(event: &Event, date: NaiveDate) -> Option<(f32, f32)> {
 
 /// For each span, its column and the number of columns its group of overlapping spans needs,
 /// so overlapping Events sit side by side. Spans are `(start, end)` minutes.
-pub(super) fn columns(spans: &[(f32, f32)]) -> Vec<(usize, usize)> {
+pub fn columns(spans: &[(f32, f32)]) -> Vec<(usize, usize)> {
     let mut order: Vec<usize> = (0..spans.len()).collect();
     order.sort_by(|&a, &b| {
         spans[a]
@@ -85,7 +85,7 @@ pub(super) fn columns(spans: &[(f32, f32)]) -> Vec<(usize, usize)> {
 }
 
 /// The Events on `date` in reading order: all-day ones first, then by start time, then by title.
-pub(super) fn day_order<'a>(
+pub fn day_order<'a>(
     events: impl IntoIterator<Item = &'a Event>,
     date: NaiveDate,
 ) -> Vec<&'a Event> {
@@ -105,7 +105,7 @@ pub(super) fn day_order<'a>(
 
 /// `opened` as last read in `events`: the same occurrence, else the one occurrence of its
 /// calendar item, as after the Event moved and its start changed; else `opened` as it was.
-pub(super) fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
+pub fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
     if let Some(same) = events.iter().find(|event| event.id == opened.id) {
         return same;
     }
@@ -119,7 +119,7 @@ pub(super) fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
 }
 
 /// When an Event happens, as the details show it: `Mon 13 Oct · 09:00 – 10:00`.
-pub(in crate::native_view) fn when_text(when: &When) -> String {
+pub fn when_text(when: &When) -> String {
     const DAY: &str = "%a %-d %b";
     match *when {
         When::AllDay { first, last } if first == last => {

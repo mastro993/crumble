@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use crate::native_view::CalendarView;
 use chrono::Weekday;
+use crumble_calendar::CalendarView;
 use crumble_eventkit::{Account, Calendar};
 use serde::{Deserialize, Serialize};
 

@@ -16,7 +16,6 @@ mod sidebar_reorder;
 mod sidebar_row;
 mod sidebar_scroll;
 
-pub(crate) use calendar::CalendarView;
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 

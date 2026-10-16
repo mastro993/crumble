@@ -1,26 +1,143 @@
 //! What the Agenda list shows and in what order: every Event that has started, newest first,
-//! under the day it started, with Today's In progress Events pinned above the Now line.
+//! under the day it started, with Today's In progress Events pinned above the Now line. Also
+//! which days the Agenda reads next and how a read is split for EventKit.
 
-use crate::native_view::calendar::when_text;
-use chrono::{DateTime, Datelike, Days, Local, NaiveDate};
+use crate::events::when_text;
+use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate};
 use crumble_eventkit::{Event, When};
 use std::cmp::Reverse;
+use std::collections::HashSet;
+use std::ops::Range;
 use std::rc::Rc;
+
+/// Days each read further into the past covers.
+const CHUNK_DAYS: u64 = 30;
+/// How far back the Agenda reads.
+const HORIZON_MONTHS: u32 = 5 * 12;
+/// EventKit searches at most four years at a time, so longer reads are split.
+const READ_DAYS: u64 = 365;
+
+/// The days and Calendars an Agenda read covers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Span {
+    /// The first day read.
+    pub from: NaiveDate,
+    /// The day after the last.
+    pub to: NaiveDate,
+    /// The shown Calendars read.
+    pub calendar_ids: Vec<String>,
+}
+
+/// The oldest day the Agenda reads.
+pub fn horizon(today: NaiveDate) -> NaiveDate {
+    today
+        .checked_sub_months(Months::new(HORIZON_MONTHS))
+        .unwrap_or(today)
+}
+
+/// The read the Agenda wants next, and whether it is older, adding to the Events already read
+/// rather than replacing them; `None` when the Events read still answer. `span` is what the
+/// Events read cover; `stale` says EventKit reported a change; `reading` says a read is under
+/// way; `wants_more` says the list is short or scrolled near its end.
+///
+/// The first read covers the last 30 days up to Today. After a new day, a change to the
+/// shown Calendars, or an EventKit change, the covered days are read again. Otherwise, while no
+/// read is under way, the list reads further back when it wants more, down to the horizon.
+pub fn next_read(
+    span: Option<&Span>,
+    stale: bool,
+    reading: bool,
+    wants_more: bool,
+    today: NaiveDate,
+    calendar_ids: Vec<String>,
+) -> Option<(Span, bool)> {
+    let to = today.checked_add_days(Days::new(1)).unwrap_or(today);
+    let horizon = horizon(today);
+    match span {
+        None => Some((
+            Span {
+                from: to.checked_sub_days(Days::new(CHUNK_DAYS)).unwrap_or(to),
+                to,
+                calendar_ids,
+            },
+            false,
+        )),
+        Some(span) if stale || span.to != to || span.calendar_ids != calendar_ids => Some((
+            Span {
+                // The horizon moves with the day, so the oldest days fall out.
+                from: span.from.max(horizon),
+                to,
+                calendar_ids,
+            },
+            false,
+        )),
+        Some(span) if !reading && span.from > horizon && wants_more => {
+            let from = span
+                .from
+                .checked_sub_days(Days::new(CHUNK_DAYS))
+                .map_or(horizon, |from| from.max(horizon));
+            Some((
+                Span {
+                    from,
+                    ..span.clone()
+                },
+                true,
+            ))
+        }
+        Some(_) => None,
+    }
+}
+
+/// The days from `from` up to the day before `to`, in pieces EventKit accepts.
+pub fn read_pieces(from: NaiveDate, to: NaiveDate) -> impl Iterator<Item = Range<NaiveDate>> {
+    let end = move |first: NaiveDate| {
+        first
+            .checked_add_days(Days::new(READ_DAYS))
+            .map_or(to, |end| end.min(to))
+    };
+    std::iter::successors(Some(from), move |&first| Some(end(first)))
+        .take_while(move |&first| first < to)
+        .map(move |first| first..end(first))
+}
+
+/// The Events of each piece's read, as `now` sees them. Each piece keeps the Events starting
+/// inside it, and the piece holding today also the timed ones still In progress, however long
+/// ago they started. Each Event is kept once.
+pub fn span_events(
+    pieces: impl IntoIterator<Item = (Range<NaiveDate>, Vec<Event>)>,
+    now: DateTime<Local>,
+) -> Vec<Event> {
+    let mut seen = HashSet::new();
+    let mut events = Vec::new();
+    for (piece, read) in pieces {
+        events.extend(
+            read.into_iter()
+                .filter(|event| {
+                    piece.contains(&start_day(event))
+                        || (piece.contains(&now.date_naive())
+                            && matches!(event.when, When::Timed { end, .. } if end > now))
+                })
+                .filter(|event| seen.insert(event.id.clone())),
+        );
+    }
+    events
+}
 
 /// One item of the Agenda list.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Row {
+pub enum Row {
     /// The header of a day's Events.
     Day(NaiveDate),
     /// The line between Today's In progress Events and the rest.
     Now,
+    /// An Event, under the day it is listed in.
     Event(Rc<Event>),
     /// The footer once nothing older is left to read.
     End,
 }
 
 /// The day an Event is listed under: the day it starts.
-pub(super) fn start_day(event: &Event) -> NaiveDate {
+fn start_day(event: &Event) -> NaiveDate {
     match event.when {
         When::AllDay { first, .. } => first,
         When::Timed { start, .. } => start.date_naive(),
@@ -42,12 +159,7 @@ fn in_progress(event: &Event, now: DateTime<Local>) -> bool {
 /// started, then the Now line, then all-day Events, then the ended ones; other days list their
 /// all-day Events first, then the rest newest first. Only days from `from` on are listed, but
 /// an In progress Event shows however long ago it started. `end` adds the footer.
-pub(super) fn rows(
-    events: &[Rc<Event>],
-    now: DateTime<Local>,
-    from: NaiveDate,
-    end: bool,
-) -> Vec<Row> {
+pub fn rows(events: &[Rc<Event>], now: DateTime<Local>, from: NaiveDate, end: bool) -> Vec<Row> {
     let today = now.date_naive();
     let mut listed: Vec<(NaiveDate, u8, &Rc<Event>)> = events
         .iter()
@@ -101,7 +213,7 @@ pub(super) fn rows(
 }
 
 /// A day header: `Today`, `Yesterday`, `Fri 22 Oct`, and the year outside the current one.
-pub(super) fn day_label(day: NaiveDate, today: NaiveDate) -> String {
+pub fn day_label(day: NaiveDate, today: NaiveDate) -> String {
     if day == today {
         "Today".into()
     } else if day.checked_add_days(Days::new(1)) == Some(today) {
@@ -115,7 +227,7 @@ pub(super) fn day_label(day: NaiveDate, today: NaiveDate) -> String {
 
 /// When an Event happens, short when it fits in its day: `09:00 – 10:30`, `All day`; an Event
 /// across days says both, as its details do.
-pub(super) fn time_label(when: &When) -> String {
+pub fn time_label(when: &When) -> String {
     match *when {
         When::AllDay { first, last } if first == last => "All day".into(),
         When::Timed { start, end } if start.date_naive() == end.date_naive() => {
@@ -127,8 +239,10 @@ pub(super) fn time_label(when: &When) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Row, day_label, rows, time_label};
-    use chrono::{DateTime, Local, NaiveDate, TimeZone};
+    use super::{
+        Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events, time_label,
+    };
+    use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
     use crumble_eventkit::{Event, When};
     use std::rc::Rc;
 
@@ -288,5 +402,130 @@ mod tests {
             time_label(&timed("x", at(13, 23, 0), at(14, 1, 0)).when),
             "Tue 13 Oct 23:00 – Wed 14 Oct 01:00"
         );
+    }
+
+    fn span(from: NaiveDate, to: NaiveDate) -> Span {
+        Span {
+            from,
+            to,
+            calendar_ids: vec!["work".into()],
+        }
+    }
+
+    fn days_before(day: NaiveDate, days: u64) -> NaiveDate {
+        day.checked_sub_days(Days::new(days)).unwrap_or(day)
+    }
+
+    #[test]
+    fn the_first_read_covers_the_last_thirty_days_up_to_today() {
+        let ids = vec!["work".to_owned()];
+        assert_eq!(
+            next_read(None, false, false, false, date(15), ids),
+            Some((span(date(16) - Days::new(30), date(16)), false))
+        );
+    }
+
+    #[test]
+    fn a_change_reads_the_covered_days_again_back_to_the_horizon() {
+        let today = date(15);
+        let horizon = horizon(today);
+        let ids = || vec!["work".to_owned()];
+        let current = span(horizon, date(16));
+        let again = Some((span(horizon, date(16)), false));
+        // EventKit changed.
+        assert_eq!(
+            next_read(Some(&current), true, true, false, today, ids()),
+            again
+        );
+        // A new day: the horizon moved, so the oldest day falls out.
+        let yesterdays = span(days_before(horizon, 1), today);
+        assert_eq!(
+            next_read(Some(&yesterdays), false, false, false, today, ids()),
+            again
+        );
+        // The shown Calendars changed.
+        assert_eq!(
+            next_read(Some(&current), false, false, false, today, vec![]),
+            Some((
+                Span {
+                    calendar_ids: vec![],
+                    ..span(horizon, date(16))
+                },
+                false
+            ))
+        );
+    }
+
+    #[test]
+    fn older_reads_stop_at_the_horizon_and_wait_for_the_one_under_way() {
+        let today = date(15);
+        let horizon = horizon(today);
+        let ids = || vec!["work".to_owned()];
+        let recent = span(date(1), date(16));
+        assert_eq!(
+            next_read(Some(&recent), false, false, true, today, ids()),
+            Some((span(days_before(date(1), 30), date(16)), true))
+        );
+        // The last chunk ends at the horizon, and nothing is read past it.
+        let near = span(horizon + Days::new(10), date(16));
+        assert_eq!(
+            next_read(Some(&near), false, false, true, today, ids()),
+            Some((span(horizon, date(16)), true))
+        );
+        let done = span(horizon, date(16));
+        assert_eq!(
+            next_read(Some(&done), false, false, true, today, ids()),
+            None
+        );
+        // A read under way, or a list that wants nothing more, reads nothing.
+        assert_eq!(
+            next_read(Some(&recent), false, true, true, today, ids()),
+            None
+        );
+        assert_eq!(
+            next_read(Some(&recent), false, false, false, today, ids()),
+            None
+        );
+    }
+
+    #[test]
+    fn long_reads_are_split_into_pieces_eventkit_accepts() {
+        let from = date(1);
+        let to = from + Days::new(800);
+        let pieces: Vec<_> = read_pieces(from, to).collect();
+        assert_eq!(
+            pieces,
+            [
+                from..from + Days::new(365),
+                from + Days::new(365)..from + Days::new(730),
+                from + Days::new(730)..to,
+            ]
+        );
+        assert_eq!(read_pieces(to, to).count(), 0);
+    }
+
+    #[test]
+    fn each_piece_keeps_its_own_events_and_today_s_in_progress_ones_once() {
+        let now = at(15, 10, 0);
+        let event = |title: &str, start, end| (*timed(title, start, end)).clone();
+        let flight = event("Flight", at(9, 22, 0), at(15, 11, 0));
+        let dinner = event("Dinner", at(9, 19, 0), at(9, 20, 0));
+        let standup = event("Standup", at(15, 9, 0), at(15, 9, 15));
+        // EventKit returns every Event overlapping a piece, so the Flight is in both.
+        let pieces = [
+            (date(1)..date(10), vec![dinner.clone(), flight.clone()]),
+            (
+                date(10)..date(16),
+                vec![flight.clone(), dinner, standup.clone()],
+            ),
+        ];
+        let titles: Vec<String> = span_events(pieces, now)
+            .into_iter()
+            .map(|event| event.title)
+            .collect();
+        assert_eq!(titles, ["Dinner", "Flight", "Standup"]);
+        // Without today in it, a piece keeps only the Events starting inside it.
+        let earlier = [(date(10)..date(15), vec![flight, standup])];
+        assert!(span_events(earlier, now).is_empty());
     }
 }
