@@ -19,7 +19,7 @@ CRUMBLE_SIGNING_IDENTITY = "Apple Development: Your Name (TEAMID)"
 
 ## Architecture
 
-Crumble is split into small crates on one line: whether code needs GPUI. Domain logic lives in crates without GPUI, so it is tested without building the UI, and `crumble-ui` holds the views; the split is still in progress. [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md) records the decision and [AGENTS.md](AGENTS.md) the rules for where code goes. [Native architecture](docs/architecture/native.md) describes behavior and which crate owns it, and [CONTEXT.md](CONTEXT.md) defines the domain terms.
+Crumble is split into small crates on one line: whether code needs GPUI. Domain logic lives in crates without GPUI, so it is tested without building the UI, and `crumble-ui` holds the views. [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md) records the decision and [AGENTS.md](AGENTS.md) the rules for where code goes. [Native architecture](docs/architecture/native.md) describes behavior and which crate owns it, and [CONTEXT.md](CONTEXT.md) defines the domain terms.
 
 ## Build and verify
 
