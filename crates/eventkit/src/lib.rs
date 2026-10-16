@@ -9,7 +9,7 @@ mod macos;
 #[cfg(not(target_os = "macos"))]
 mod unsupported;
 
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 
 #[cfg(target_os = "macos")]
 pub use macos::{
@@ -49,7 +49,8 @@ pub enum Provider {
 /// One group of Calendars macOS keeps together.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
-    /// Stable EventKit source identifier.
+    /// EventKit's source identifier. It changes when the Account is removed and added again, and
+    /// can change after a full re-sync, so it is no key for anything kept across those.
     pub id: String,
     /// The name shown in System Settings, such as "iCloud" or the email address.
     pub name: String,
@@ -64,7 +65,8 @@ pub struct Account {
 /// One list of Events inside an Account.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Calendar {
-    /// Stable EventKit calendar identifier.
+    /// EventKit's calendar identifier. It changes when the Account is added again, and can change
+    /// after a full re-sync, so it is no key for anything kept across those.
     pub id: String,
     /// Identifier of the owning [`Account`].
     pub account_id: String,
@@ -96,9 +98,16 @@ pub enum When {
 /// One occurrence of an entry in a Calendar. Declined and cancelled Events are never returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
-    /// Unique per occurrence, so each instance of a repeating Event has its own: the calendar
-    /// item's identifier, `@`, then the start as a Unix timestamp.
+    /// Unique per occurrence within one run of Crumble, but not stable: it changes when the Event
+    /// moves or EventKit re-syncs. Link to an Event by [`Event::series_uid`] and
+    /// [`Event::occurrence`] instead.
     pub id: String,
+    /// The iCalendar UID shared by every occurrence of this Event on every device, with any `/RID=`
+    /// suffix removed. `None` until the Event has synced to its server.
+    pub series_uid: Option<String>,
+    /// Which occurrence of a repeating Event this is, by its original date, which moving the
+    /// occurrence does not change. `None` for an Event that does not repeat.
+    pub occurrence: Option<Occurrence>,
     /// Identifier of the owning [`Calendar`].
     pub calendar_id: String,
     /// Title, possibly empty.
@@ -117,12 +126,13 @@ pub struct Event {
     pub participants: Vec<Participant>,
 }
 
-impl Event {
-    /// The calendar item this occurrence belongs to: every occurrence of a repeating Event
-    /// shares it, and it stays when the Event moves, while [`Event::id`] also holds the start.
-    pub fn item_id(&self) -> &str {
-        self.id.rsplit_once('@').map_or(&self.id, |(item, _)| item)
-    }
+/// The original start of one occurrence of a repeating Event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Occurrence {
+    /// An all-day occurrence: a date with no time zone, so it survives the Mac changing zones.
+    Day(NaiveDate),
+    /// A timed occurrence, as an instant.
+    At(DateTime<Utc>),
 }
 
 /// A link that opens a video meeting.

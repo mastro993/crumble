@@ -1,6 +1,8 @@
-//! Guesses EventKit leaves to Crumble: an Account's provider and an Event's join link.
+//! Guesses EventKit leaves to Crumble: an Account's provider, an Event's join link, and the
+//! parts of an Event's identity EventKit spells inconsistently.
 
-use crate::{Join, Provider};
+use crate::{Join, Occurrence, Provider};
+use chrono::{DateTime, Local, Utc};
 
 /// The EventKit source types that matter for guessing a [`Provider`].
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -71,6 +73,28 @@ fn is_email(text: &str) -> bool {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn is_google_event_id(external_id: &str) -> bool {
     external_id.ends_with("@google.com")
+}
+
+/// The iCalendar UID in an external identifier. Exchange and some CalDAV servers append
+/// `/RID=<n>` to it for a detached occurrence, which would split that occurrence from its series.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn series_uid(external: &str) -> Option<String> {
+    let uid = match external.rsplit_once("/RID=") {
+        Some((uid, _)) => uid,
+        None => external,
+    };
+    (!uid.is_empty()).then(|| uid.to_owned())
+}
+
+/// An occurrence that started at `original`: all-day ones by their local date, as
+/// [`crate::When::AllDay`] reads it, timed ones by their instant.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn occurrence(all_day: bool, original: DateTime<Local>) -> Occurrence {
+    if all_day {
+        Occurrence::Day(original.date_naive())
+    } else {
+        Occurrence::At(original.with_timezone(&Utc))
+    }
 }
 
 /// Hosts whose links open a video meeting, with the service's name. Subdomains match too, such
@@ -294,9 +318,10 @@ fn html_to_text(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Join, Provider, SourceKind, account_email, description, is_google_event_id, join_link,
-        mailto_address, provider,
+        Join, Occurrence, Provider, SourceKind, account_email, description, is_google_event_id,
+        join_link, mailto_address, occurrence, provider, series_uid,
     };
+    use chrono::{Local, NaiveDate, TimeZone, Utc};
 
     fn join_url<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
         join_link(fields).map(|join| join.url)
@@ -460,5 +485,39 @@ mod tests {
                      <a href=\"https://teams.microsoft.com/l/meetup-join/abc\">Join the meeting now</a><br>\
                      ________________________________________";
         assert_eq!(description(notes).as_deref(), Some("Agenda"));
+    }
+
+    #[test]
+    fn series_uids_drop_the_detached_occurrence_suffix() {
+        assert_eq!(
+            series_uid("040000008200E000/RID=811159200").as_deref(),
+            Some("040000008200E000")
+        );
+        assert_eq!(
+            series_uid("abc123@google.com").as_deref(),
+            Some("abc123@google.com")
+        );
+        // A slash elsewhere is part of the UID.
+        assert_eq!(
+            series_uid("team/standup-1").as_deref(),
+            Some("team/standup-1")
+        );
+        assert_eq!(series_uid(""), None);
+        assert_eq!(series_uid("/RID=811159200"), None);
+    }
+
+    #[test]
+    fn all_day_occurrences_are_dates_and_timed_ones_instants() {
+        let Some(start) = Local.with_ymd_and_hms(2026, 10, 13, 0, 0, 0).earliest() else {
+            panic!("midnight exists");
+        };
+        assert_eq!(
+            occurrence(true, start),
+            Occurrence::Day(NaiveDate::from_ymd_opt(2026, 10, 13).unwrap_or_default())
+        );
+        assert_eq!(
+            occurrence(false, start),
+            Occurrence::At(start.with_timezone(&Utc))
+        );
     }
 }

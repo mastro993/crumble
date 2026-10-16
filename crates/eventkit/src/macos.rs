@@ -301,6 +301,14 @@ fn convert(event: &EKEvent) -> Option<Event> {
             .eventIdentifier()
             .unwrap_or_else(|| event.calendarItemIdentifier())
             .to_string();
+        let occurrence = (event.hasRecurrenceRules() || event.isDetached()).then(|| {
+            let original = event
+                .occurrenceDate()
+                .as_deref()
+                .and_then(local)
+                .unwrap_or(start);
+            classify::occurrence(event.isAllDay(), original)
+        });
         let url = event
             .URL()
             .and_then(|url| url.absoluteString())
@@ -312,9 +320,12 @@ fn convert(event: &EKEvent) -> Option<Event> {
         let notes = event.notes().map(|notes| notes.to_string());
         let join = classify::join_link([url.as_deref(), location.as_deref(), notes.as_deref()]);
         Some(Event {
-            // Occurrences of a repeating Event share an identifier, so the start makes it unique;
-            // `Event::item_id` reads the identifier back.
+            // Occurrences of a repeating Event share an identifier, so the start makes it unique.
             id: format!("{item_id}@{}", start.timestamp()),
+            series_uid: event
+                .calendarItemExternalIdentifier()
+                .and_then(|external| classify::series_uid(&external.to_string())),
+            occurrence,
             calendar_id: event.calendar()?.calendarIdentifier().to_string(),
             title: event.title().to_string(),
             when,

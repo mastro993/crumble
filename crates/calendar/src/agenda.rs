@@ -260,6 +260,8 @@ mod tests {
     fn timed(title: &str, start: DateTime<Local>, end: DateTime<Local>) -> Rc<Event> {
         Rc::new(Event {
             id: title.into(),
+            series_uid: None,
+            occurrence: None,
             calendar_id: "calendar".into(),
             title: title.into(),
             when: When::Timed { start, end },
