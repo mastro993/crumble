@@ -561,9 +561,22 @@ fn deleting_the_recording_deletes_its_transcript() {
 }
 
 #[test]
-fn a_deleted_notes_transcript_is_not_read() {
+fn a_deleted_note_keeps_only_its_id_and_timestamps() {
+    use crumble_db::schema::{notes as table, transcript_segments};
+    use diesel::prelude::*;
     let mut notes = Notes::in_memory();
-    let note = recorded(&mut notes);
+    let standup = event(
+        Some("uid"),
+        Some(Occurrence::At(at(7))),
+        "Standup",
+        timed(at(7)),
+    );
+    let note = ok(notes.create(Some(&standup), at(5)));
+    ok(notes.set_title(&note.id, Some("Plans"), at(6)));
+    ok(notes.set_memo(&note.id, "Secret plans", at(6)));
+    ok(notes.set_recording_started(&note.id, at(6)));
+    ok(notes.set_recording_finished(&note.id, std::time::Duration::from_secs(60), at(7)));
+    let dir = record_audio(&notes, &note);
     ok(notes.set_transcript(
         &note.id,
         "Model",
@@ -572,5 +585,52 @@ fn a_deleted_notes_transcript_is_not_read() {
         at(8),
     ));
     ok(notes.delete(&note.id, at(9)));
+
+    let connection = ok(notes.connection());
+    let row = ok(table::table
+        .find(&note.id.0)
+        .select(super::NoteRow::as_select())
+        .first(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(row.title, None);
+    assert_eq!(row.memo, "");
+    assert_eq!(
+        (
+            row.event_series_uid,
+            row.event_occurrence,
+            row.event_title,
+            row.event_start
+        ),
+        (None, None, None, None)
+    );
+    assert_eq!(
+        (
+            row.transcript_model,
+            row.transcript_locale,
+            row.transcribed_at
+        ),
+        (None, None, None)
+    );
+    assert_eq!(
+        (row.recording_started_at, row.recording_duration_ms),
+        (None, None)
+    );
+    assert_eq!(row.updated_at, encode_time(at(9)));
+    let deleted_at: Option<String> = ok(table::table
+        .find(&note.id.0)
+        .select(table::deleted_at)
+        .first(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(deleted_at, Some(encode_time(at(9))));
+    let segments: i64 = ok(transcript_segments::table
+        .count()
+        .get_result(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(segments, 0);
+    assert!(!dir.exists());
+
+    assert_eq!(ok(notes.for_event(&standup)), None);
+    assert_eq!(ok(notes.quick_notes(at(0)..at(23))), []);
     assert_eq!(ok(notes.transcript(&note.id)), []);
+    assert_eq!(ok(notes.untranscribed()), []);
 }

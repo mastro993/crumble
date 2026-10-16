@@ -295,16 +295,35 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Soft delete: sets `deleted_at`; every read skips it. The Recording's audio is deleted
-    /// for good, as the user deleted the Note.
+    /// Soft delete: sets `deleted_at`, and every read skips the Note. Its row stays only as a
+    /// tombstone for sync: what the user wrote or said goes for good, the Recording's audio
+    /// first, then its title, Memo, Event link, Recording and Transcript in one transaction.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
         // The audio goes first: once the Note is deleted, nothing can reach its folder again.
         self.remove_audio(id)?;
         let now = encode_time(now);
-        let updated = diesel::update(live(id))
-            .set((notes::deleted_at.eq(&now), notes::updated_at.eq(&now)))
-            .execute(self.connection()?)?;
-        written(updated, id)
+        self.connection()?.transaction(|connection| {
+            let updated = diesel::update(live(id))
+                .set((
+                    notes::deleted_at.eq(&now),
+                    notes::updated_at.eq(&now),
+                    notes::title.eq(None::<String>),
+                    notes::memo.eq(""),
+                    notes::event_series_uid.eq(None::<String>),
+                    notes::event_occurrence.eq(None::<String>),
+                    notes::event_title.eq(None::<String>),
+                    notes::event_start.eq(None::<String>),
+                    notes::recording_started_at.eq(None::<String>),
+                    notes::recording_duration_ms.eq(None::<i32>),
+                    notes::transcript_model.eq(None::<String>),
+                    notes::transcript_locale.eq(None::<String>),
+                    notes::transcribed_at.eq(None::<String>),
+                ))
+                .execute(connection)?;
+            written(updated, id)?;
+            diesel::delete(segments_of(id)).execute(connection)?;
+            anyhow::Ok(())
+        })
     }
 
     /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
