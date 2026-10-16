@@ -19,11 +19,11 @@ mod sidebar_scroll;
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
-use crate::calendar_sync::CalendarSync;
 use account_alias::{AliasFields, Rename};
 use agenda::AgendaPage;
-use calendar::{CalendarEvents, CalendarPage};
+use calendar::CalendarPage;
 use crumble_store::{SidebarSection, Store};
+use crumble_sync::{CalendarEvents, CalendarSync};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -49,7 +49,7 @@ pub struct NativeView {
     store: Store,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
-    events: CalendarEvents,
+    events: Entity<CalendarEvents>,
     agenda: AgendaPage,
     calendar_sync: Entity<CalendarSync>,
     /// Scroll position of the sidebar's sections.
@@ -84,10 +84,15 @@ impl NativeView {
         let first_day_select = settings_page::first_day_select(&store, window, cx);
         let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
+        let events = cx.new(|_| CalendarEvents::default());
+        cx.observe(&events, |_, _, cx| cx.notify()).detach();
+        let agenda = AgendaPage::new(cx);
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
             view.refresh_events(true, cx);
-            view.agenda.mark_stale();
+            view.agenda
+                .events
+                .update(cx, |events, _| events.mark_stale());
             view.sync_alias_fields(window, cx);
             cx.notify();
         })
@@ -103,8 +108,8 @@ impl NativeView {
             store,
             first_day_select,
             calendar,
-            events: CalendarEvents::default(),
-            agenda: AgendaPage::default(),
+            events,
+            agenda,
             calendar_sync,
             sidebar_scroll: ScrollHandle::new(),
             sidebar_hovered: false,
