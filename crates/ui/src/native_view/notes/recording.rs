@@ -440,12 +440,14 @@ impl NativeView {
         }
         let hint = |id: &'static str, text: &'static str, url: &'static str| {
             h_flex()
+                .w_full()
                 .gap_2()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(div().flex_1().child(text))
+                .child(div().flex_1().min_w_0().child(text))
                 .child(
                     button(id)
+                        .flex_shrink_0()
                         .link()
                         .small()
                         .label("Open System Settings")

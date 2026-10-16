@@ -306,6 +306,11 @@ fn writing_an_unknown_note_errors() {
     assert!(notes.set_memo(&unknown, "memo", at(8)).is_err());
 }
 
+/// Deletes the temporary folder an in-memory `Notes` keeps its Recordings in.
+fn remove_recordings(notes: Notes) {
+    let _ = std::fs::remove_dir_all(&notes.recordings);
+}
+
 /// Puts a stand-in audio file in the Note's Recording folder.
 fn record_audio(notes: &Notes, note: &Note) -> std::path::PathBuf {
     let dir = notes.recording_dir(&note.id);
@@ -375,6 +380,7 @@ fn deleting_the_recording_forgets_it_and_its_audio() {
     // The Note may record again, and deleting with no audio left is fine.
     ok(notes.set_recording_started(&note.id, at(9)));
     ok(notes.delete_recording(&note.id, at(10)));
+    remove_recordings(notes);
 }
 
 #[test]
@@ -385,6 +391,7 @@ fn deleting_a_note_deletes_its_audio() {
     let dir = record_audio(&notes, &note);
     ok(notes.delete(&note.id, at(8)));
     assert!(!dir.exists());
+    remove_recordings(notes);
 }
 
 #[test]
