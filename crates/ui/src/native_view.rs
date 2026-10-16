@@ -17,9 +17,12 @@ mod sidebar_fold;
 mod sidebar_reorder;
 mod sidebar_row;
 mod sidebar_scroll;
+mod suggestions;
 
 pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
+#[cfg(debug_assertions)]
+pub use suggestions::SuggestSample;
 
 use account_alias::{AliasFields, Rename};
 use agenda::AgendaPage;
@@ -40,6 +43,7 @@ use settings_models::ModelSettings;
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
 use std::collections::{HashMap, HashSet};
+use suggestions::Suggestions;
 
 /// GPUI owner of the application shell and navigation.
 pub struct NativeView {
@@ -81,7 +85,9 @@ pub struct NativeView {
     renaming: Option<Rename>,
     /// The open context menu.
     menu: Option<OpenMenu>,
-    /// Redraws Week view each minute for its current time line.
+    /// Today's Events and what was suggested of them.
+    suggestions: Suggestions,
+    /// Redraws Week view each minute for its current time line, and posts the Suggestions due.
     _minute_tick: Task<()>,
 }
 
@@ -105,6 +111,7 @@ impl NativeView {
         let events = cx.new(|_| CalendarEvents::default());
         cx.observe(&events, |_, _, cx| cx.notify()).detach();
         let agenda = AgendaPage::new(cx);
+        let suggestions = Suggestions::new(window, cx);
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
             view.refresh_events(true, cx);
@@ -141,12 +148,14 @@ impl NativeView {
             alias_fields: AliasFields::default(),
             renaming: None,
             menu: None,
+            suggestions,
             _minute_tick: calendar::tick_minutes(cx),
         };
         // Recordings left without a Transcript, and Transcripts without a Summary, as when the
         // app quit while making them.
         view.transcribe_untranscribed(cx);
         view.summarize_unsummarized(cx);
+        view.read_notification_status(cx);
         view
     }
 
@@ -193,19 +202,21 @@ impl Render for NativeView {
             route => div().text_xl().child(route.title()).into_any_element(),
         };
         let colors = cx.theme().colors;
-        div()
-            .track_focus(&self.focus)
-            .when(self.route == Route::Calendar, |root| {
-                self.calendar_actions(root, cx)
-            })
-            .on_action(cx.listener(|view, _: &ToggleSidebar, _, cx| view.toggle_sidebar(cx)))
-            .on_action(cx.listener(|view, _: &GoBack, _, cx| view.go_back(cx)))
-            .on_action(cx.listener(|view, _: &GoForward, _, cx| view.go_forward(cx)))
-            .size_full()
-            .font_family(crumble_theme::system_font())
-            .bg(colors.background)
-            .text_color(colors.foreground)
-            .child(self.render_shell(page, window, cx))
-            .children(self.menu.as_ref().map(OpenMenu::render))
+        let root = div().track_focus(&self.focus);
+        #[cfg(debug_assertions)]
+        let root =
+            root.on_action(cx.listener(|view, _: &SuggestSample, _, cx| view.suggest_sample(cx)));
+        root.when(self.route == Route::Calendar, |root| {
+            self.calendar_actions(root, cx)
+        })
+        .on_action(cx.listener(|view, _: &ToggleSidebar, _, cx| view.toggle_sidebar(cx)))
+        .on_action(cx.listener(|view, _: &GoBack, _, cx| view.go_back(cx)))
+        .on_action(cx.listener(|view, _: &GoForward, _, cx| view.go_forward(cx)))
+        .size_full()
+        .font_family(crumble_theme::system_font())
+        .bg(colors.background)
+        .text_color(colors.foreground)
+        .child(self.render_shell(page, window, cx))
+        .children(self.menu.as_ref().map(OpenMenu::render))
     }
 }
