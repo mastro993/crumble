@@ -33,11 +33,11 @@ pub struct Store {
     pub folded_sections: BTreeSet<SidebarSection>,
     /// Account identifiers in the order the user dragged them into; Accounts not listed follow,
     /// in EventKit's name order.
-    pub account_order: Vec<String>,
-    /// Dot colors the user picked, by Account identifier; the others use [`AccountColor::default_for`].
+    account_order: Vec<String>,
+    /// Dot colors the user picked, by Account identifier; the others get [`Store::account_color`]'s default.
     pub account_colors: BTreeMap<String, AccountColor>,
     /// Aliases the user gave, by Account identifier.
-    pub account_aliases: BTreeMap<String, String>,
+    account_aliases: BTreeMap<String, String>,
 }
 
 /// A foldable sidebar section.
