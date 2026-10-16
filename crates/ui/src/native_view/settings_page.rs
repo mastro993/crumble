@@ -40,7 +40,7 @@ pub(super) fn first_day_select(
     window: &mut Window,
     cx: &mut Context<NativeView>,
 ) -> WeekdaySelect {
-    let selected = store.first_day_of_week.num_days_from_monday() as usize;
+    let selected = store.first_day_of_week().num_days_from_monday() as usize;
     let select = cx.new(|cx| {
         SelectState::new(
             WEEKDAYS.to_vec(),
@@ -54,8 +54,7 @@ pub(super) fn first_day_select(
             return;
         };
         if let Ok(day) = day.parse::<Weekday>() {
-            view.store.first_day_of_week = day;
-            view.store.save();
+            view.store.set_first_day_of_week(day);
             // The week now starts elsewhere, so other dates are on screen.
             view.refresh_events(false, cx);
             cx.notify();
@@ -115,11 +114,11 @@ impl NativeView {
 
     fn account_settings(&self, account: &Account, cx: &Context<Self>) -> Div {
         let label = account_label(account).to_owned();
-        let alias = self.store.account_alias(&account.id);
-        let name = alias.unwrap_or(&label).to_owned();
+        let aliased = self.store.account_alias(&account.id).is_some();
+        let name = self.store.account_name(account).to_owned();
         let muted = cx.theme().muted_foreground;
         let account_id = account.id.clone();
-        let disabled = self.store.disabled_accounts.contains(&account.id);
+        let disabled = self.store.is_account_disabled(&account.id);
         let calendars = self
             .calendar_sync
             .read(cx)
@@ -129,7 +128,7 @@ impl NativeView {
             .map(|calendar| {
                 let id = calendar.id.clone();
                 Checkbox::new(ElementId::Name(format!("calendar-{}", calendar.id).into()))
-                    .checked(!self.store.disabled_calendars.contains(&calendar.id))
+                    .checked(!self.store.is_calendar_disabled(&calendar.id))
                     .disabled(disabled)
                     .accessibility_label(calendar.name.clone())
                     .on_click(
@@ -162,7 +161,7 @@ impl NativeView {
                             .gap_1()
                             .child(div().min_w_0().truncate().font_medium().child(name.clone()))
                             // The Account's own name follows its Alias in brackets.
-                            .when(alias.is_some(), |names| {
+                            .when(aliased, |names| {
                                 names.child(
                                     div()
                                         .min_w_0()

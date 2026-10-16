@@ -114,7 +114,7 @@ impl NativeView {
         let CalendarPage { view, focused, .. } = self.calendar;
         let sync = self.calendar_sync.read(cx);
         let wanted = (sync.access() == Access::Granted)
-            .then(|| view.event_range(focused, self.store.first_day_of_week))
+            .then(|| view.event_range(focused, self.store.first_day_of_week()))
             .flatten()
             .map(|(first, end)| EventsRead {
                 first,
@@ -170,10 +170,7 @@ impl NativeView {
     /// Switches to `view` and saves it, so the Calendar page opens on it after a restart.
     fn set_calendar_view(&mut self, view: CalendarView) {
         self.calendar.view = view;
-        if self.store.calendar_view != view {
-            self.store.calendar_view = view;
-            self.store.save();
-        }
+        self.store.set_calendar_view(view);
     }
 
     fn show_calendar_view(&mut self, view: CalendarView, cx: &mut Context<Self>) {
@@ -250,7 +247,7 @@ impl NativeView {
                     .truncate()
                     .text_base()
                     .font_semibold()
-                    .child(view.title(focused, self.store.first_day_of_week)),
+                    .child(view.title(focused, self.store.first_day_of_week())),
             )
             .child(
                 TabBar::new("calendar-views")
@@ -276,7 +273,7 @@ impl NativeView {
 
     pub(super) fn render_calendar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let CalendarPage { view, focused, .. } = self.calendar;
-        let first_day = self.store.first_day_of_week;
+        let first_day = self.store.first_day_of_week();
         // One device pixel, matching the sidebar's hairline.
         let hairline = px(1.0 / window.scale_factor());
         let now = Local::now().naive_local();

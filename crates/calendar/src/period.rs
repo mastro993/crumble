@@ -1,10 +1,9 @@
 //! Calendar views, the Period each one shows, and stepping between Periods.
 
 use chrono::{Datelike, Days, Months, NaiveDate, Weekday};
-use serde::{Deserialize, Serialize};
 
 /// How the Calendar page lays out time; it opens on Month view until the user picks another.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CalendarView {
     /// Seven days by the hour.
     Week,

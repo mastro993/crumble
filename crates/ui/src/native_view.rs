@@ -80,9 +80,9 @@ impl NativeView {
         // Window-level shortcuts such as ToggleSidebar dispatch through the focused view.
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        let store = Store::load();
+        let store = Store::open();
         let first_day_select = settings_page::first_day_select(&store, window, cx);
-        let calendar = CalendarPage::new(store.calendar_view);
+        let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {

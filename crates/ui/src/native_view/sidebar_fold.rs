@@ -21,9 +21,7 @@ const FOLD_MOTION: Duration = Duration::from_millis(180);
 impl NativeView {
     /// Shows or hides a section's rows and remembers the choice across restarts.
     pub(super) fn toggle_section(&mut self, section: SidebarSection, cx: &mut Context<Self>) {
-        if !self.store.folded_sections.remove(&section) {
-            self.store.folded_sections.insert(section);
-        }
+        self.store.toggle_folded(section);
         let motion = self.section_motion.entry(section).or_default();
         *motion += 1;
         let motion = *motion;
@@ -43,7 +41,6 @@ impl NativeView {
             })
             .detach();
         }
-        self.store.save();
         cx.notify();
     }
 
@@ -55,7 +52,7 @@ impl NativeView {
         cx: &mut Context<Self>,
     ) -> Div {
         let color = cx.theme().muted_foreground.opacity(0.8);
-        let folded = self.store.folded_sections.contains(&section);
+        let folded = self.store.is_folded(section);
         let toggle = activate(
             div()
                 .id(format!("section-{title}"))
@@ -86,7 +83,7 @@ impl NativeView {
 
     /// A chevron pointing down while the section is open, turning right as it folds.
     fn section_chevron(&self, section: SidebarSection, cx: &Context<Self>) -> AnyElement {
-        let folded = self.store.folded_sections.contains(&section);
+        let folded = self.store.is_folded(section);
         let icon = app_icon("chevron-down")
             .size(px(DETAIL_SIZE))
             .text_color(cx.theme().muted_foreground.opacity(0.8));
@@ -113,7 +110,7 @@ impl NativeView {
         items: usize,
         rows: impl IntoElement + 'static,
     ) -> Option<AnyElement> {
-        let folded = self.store.folded_sections.contains(&section);
+        let folded = self.store.is_folded(section);
         let Some(motion) = self.motion(section) else {
             return (!folded).then(|| rows.into_any_element());
         };

@@ -1,10 +1,8 @@
 //! The colors an Account can take.
 
-use serde::{Deserialize, Serialize};
-
 /// The color of an Account's dot in the sidebar and in Settings, and of its Events: one of
 /// SkillBinder's folder colors, or any color the user picked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccountColor {
     /// Palette gray, never picked by default.
     Gray,
