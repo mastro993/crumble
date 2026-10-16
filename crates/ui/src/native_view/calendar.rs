@@ -12,6 +12,7 @@ use super::controls::{app_icon, button};
 use super::route::Route;
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike};
 use crumble_eventkit::{self as eventkit, Access, Event};
+pub(super) use events::when_text;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
@@ -90,7 +91,7 @@ impl Default for CalendarEvents {
 
 /// The start of `date`. Where clocks skip midnight for daylight saving, as in Chile, the day
 /// starts an hour later; the extra Events read are drawn only on their own dates.
-fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
+pub(super) fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
     let midnight = date.and_time(NaiveTime::MIN);
     Local.from_local_datetime(&midnight).earliest().or_else(|| {
         Local
@@ -100,7 +101,7 @@ fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
 }
 
 /// Read on every use, so a window left open past midnight catches up on its next render.
-fn today() -> NaiveDate {
+pub(super) fn today() -> NaiveDate {
     Local::now().date_naive()
 }
 

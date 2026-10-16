@@ -82,11 +82,15 @@ impl NativeView {
             .child(
                 div()
                     .id("main-column")
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .h_full()
                     .flex()
                     .flex_col()
+                    .when(self.route == Route::Agenda, |column| {
+                        column.child(Self::render_agenda_backdrop(window, cx))
+                    })
                     .child(self.render_header(window, cx))
                     .child(
                         div()
@@ -94,8 +98,10 @@ impl NativeView {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .px(px(CONTENT_PADDING))
-                            .pb_6()
+                            // The Agenda list runs from the sidebar's edge to the window's bottom.
+                            .when(self.route != Route::Agenda, |content| {
+                                content.px(px(CONTENT_PADDING)).pb_6()
+                            })
                             .child(page),
                     ),
             )

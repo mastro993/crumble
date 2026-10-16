@@ -62,7 +62,7 @@ Someone invited to an Event, including its organizer, with their answer to the i
 _Avoid_: attendee, guest, invitee
 
 **Hidden**:
-Said of an Account whose Events Crumble leaves off the Calendar page while it stays listed in the Calendars section. It is chosen by clicking the Account's row there, which unchecks its checkbox, is kept across restarts, and changes nothing in macOS.
+Said of an Account whose Events Crumble leaves out of its pages while it stays listed in the Calendars section. It is chosen by clicking the Account's row there, which unchecks its checkbox, is kept across restarts, and changes nothing in macOS.
 _Avoid_: muted, unchecked, toggled off
 
 **Alias**:
@@ -72,6 +72,20 @@ _Avoid_: nickname, display name, rename
 **Calendars section**:
 The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
 
+### Agenda
+
+**Agenda page**:
+The page that lists every Event that has started, newest first, grouped by day.
+_Avoid_: history, timeline, feed
+
+**Agenda list**:
+The scrolling column of the Agenda page that holds its Events, between the sidebar and the page's content. Scrolling down reaches further into the past.
+_Avoid_: secondary sidebar, feed
+
+**In progress**:
+Said of a timed Event that has started and not yet ended. An all-day Event is never In progress.
+_Avoid_: current, live, ongoing
+
 ## Relationships
 
 - A **Calendar view** shows exactly one **Period**, the one that contains the **Focused date**
@@ -79,6 +93,7 @@ The sidebar section that lists every Account that is not Disabled. Its title say
 - **Weekend** stays Saturday and Sunday whatever the **First day of week** is
 - An **Account** has one or more **Calendars**; a **Calendar** has many **Events**
 - The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is neither **Disabled** nor **Hidden**, inside the visible **Period**
+- The **Agenda page** shows the same **Events** as the **Calendar page** would, but only those that have started, whatever the **Focused date**
 - Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
@@ -95,4 +110,5 @@ The sidebar section that lists every Account that is not Disabled. Its title say
 - "calendar" meant both the page and a synced list of Events. Resolved: the page is the **Calendar page** and a synced list is a **Calendar**.
 - "meeting" meant only Events with attendees. Resolved: every synced entry is an **Event**.
 - "hide" meant both the Settings choice and the sidebar's checkbox. Resolved: the Settings one, which also drops the sidebar row, is **Disabled**; the sidebar one is **Hidden**.
+- "current event" meant both an **Event** that has started and one happening today. Resolved: one that has started and not ended is **In progress**.
 - The **Calendars section** lists **Accounts**, not **Calendars**. Resolved: keep the "Calendars" title for users; in code and conversation its rows are **Accounts**.

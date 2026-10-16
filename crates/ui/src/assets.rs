@@ -7,6 +7,10 @@ pub struct Assets;
 
 const ICONS: &[(&str, &[u8])] = &[
     (
+        "icons/agenda.svg",
+        include_bytes!("../../../assets/hugeicons/CalendarCheckOut01Icon.svg"),
+    ),
+    (
         "icons/arrow-down.svg",
         include_bytes!("../../../assets/hugeicons/ArrowDown01Icon.svg"),
     ),
@@ -77,6 +81,10 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/panel-left-open.svg",
         include_bytes!("../../../assets/hugeicons/LayoutAlignLeftIcon.svg"),
+    ),
+    (
+        "icons/scroll-to-top.svg",
+        include_bytes!("../../../assets/hugeicons/ArrowUp02Icon.svg"),
     ),
     (
         "icons/settings.svg",
