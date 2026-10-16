@@ -15,7 +15,7 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `crates/theme` (`crumble-theme`): colors, typography, dimensions.
 - `crates/eventkit` (`crumble-eventkit`): read-only EventKit bridge, plain Rust data, no GPUI.
 
-The split of non-GPUI logic out of `crumble-ui` is in progress per [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md). Until it finishes, `crumble-ui` still holds domain logic and persistence that the ADR assigns to other crates.
+The split of non-GPUI logic out of `crumble-ui` is in progress per [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md). Until it finishes, `crumble-ui` still holds the EventKit sync entities that the ADR assigns to `crumble-sync`.
 
 ## Where code goes
 
