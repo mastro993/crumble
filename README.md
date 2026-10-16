@@ -4,7 +4,7 @@ Native desktop app built with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https:
 
 ## Run
 
-Install Rust 1.96 through `rustup`, then:
+Install Rust 1.96 through `rustup`, and Xcode with the macOS 26 SDK (Xcode 27 / Swift 6.4 is what the repository builds with). `crumble-transcribe` compiles its Swift bridge with `xcrun swiftc` during the build ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)); if `xcrun` points at an older toolchain, select Xcode with `sudo xcode-select -s /Applications/Xcode.app`. Then:
 
 ```sh
 cargo run -p crumble --locked
@@ -28,6 +28,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+`cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
 
 ## Changing the database schema
 
