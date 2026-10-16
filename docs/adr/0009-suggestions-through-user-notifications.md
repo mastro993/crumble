@@ -20,5 +20,5 @@ When a meeting starts, Crumble suggests recording it with a macOS notification t
 ## Consequences
 
 - `crumble-notify` defines an Objective-C class for the delegate, which is `unsafe`, so like `crumble-eventkit` (ADR 0001) and `crumble-audio` (ADR 0005) it sets `unsafe_code = "deny"`, with a `SAFETY` comment on each block, instead of the workspace's `forbid`.
-- A click that relaunches Crumble arrives before today's Events are read, so its Event is not found and the Agenda page opens. Record does nothing then.
+- A click that relaunches Crumble arrives before today's Events are read, so it waits for that first read. A click on yesterday's Suggestion after midnight finds no Event and opens the Agenda page.
 - An Event that starts while the Mac sleeps is still suggested on wake if it started no more than 5 minutes before.

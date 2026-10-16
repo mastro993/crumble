@@ -2,8 +2,8 @@
 //! "Record" action, through `UNUserNotificationCenter` (ADR 0009).
 //!
 //! The caller decides what to suggest and what a click does; this crate only posts and hears
-//! back. A notification's identifier is the caller's key, so a click finds its Event again even
-//! after Crumble relaunched. Outside an app bundle, as in tests, and on other platforms, nothing
+//! back. A notification's identifier is the caller's key, so a click that relaunches Crumble
+//! still names its Event. Outside an app bundle, as in tests, and on other platforms, nothing
 //! posts and authorization reads as denied.
 
 #[cfg(target_os = "macos")]

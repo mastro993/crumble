@@ -30,6 +30,9 @@ pub(super) struct Suggestions {
     suggested: HashSet<String>,
     /// Whether notifications show, as last read; Settings explains a denial.
     pub(super) status: Status,
+    /// A click that came before today's Events were first read, as when it launched Crumble;
+    /// handled once they are.
+    pending: Option<Response>,
     /// The invented Event [`SuggestSample`] posted, so its clicks find it.
     #[cfg(debug_assertions)]
     sample: Option<crumble_eventkit::Event>,
@@ -60,7 +63,12 @@ impl Suggestions {
             }
         });
         let subscriptions = [
-            cx.observe(&today, |view, _, cx| view.suggest(cx)),
+            cx.observe_in(&today, window, |view, _, window, cx| {
+                if let Some(response) = view.suggestions.pending.take() {
+                    view.open_suggestion(response, window, cx);
+                }
+                view.suggest(cx);
+            }),
             // Coming back from System Settings shows what changed there.
             cx.observe_window_activation(window, |view, window, cx| {
                 if window.is_window_active() {
@@ -71,6 +79,7 @@ impl Suggestions {
         Self {
             today,
             suggested: HashSet::new(),
+            pending: None,
             status: Status::NotDetermined,
             #[cfg(debug_assertions)]
             sample: None,
@@ -165,9 +174,11 @@ impl NativeView {
     }
 
     /// Opens the page of the Event `response` names, and for "Record" starts recording it in a
-    /// new Note unless a Recording runs. An Event no longer found opens the Agenda page.
+    /// new Note unless a Recording runs. Before today's Events are first read, the click waits
+    /// for them; an Event not among them then opens the Agenda page.
     fn open_suggestion(&mut self, response: Response, window: &mut Window, cx: &mut Context<Self>) {
         let today = self.suggestions.today.read(cx);
+        let read = today.reads() > 0;
         let event = suggestions::find(today.events(), &response.key).cloned();
         #[cfg(debug_assertions)]
         let event = event.or_else(|| {
@@ -177,7 +188,11 @@ impl NativeView {
                 .filter(|sample| suggestions::key(sample) == response.key)
         });
         let Some(event) = event else {
-            self.navigate(Route::Agenda, cx);
+            if read {
+                self.navigate(Route::Agenda, cx);
+            } else {
+                self.suggestions.pending = Some(response);
+            }
             return;
         };
         self.navigate(Route::Event(Rc::new(event)), cx);
