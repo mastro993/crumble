@@ -183,7 +183,7 @@ impl NativeView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let color = self.store.account_color(&account.id);
-        let hidden = self.store.hidden_accounts.contains(&account.id);
+        let hidden = self.store.is_account_hidden(&account.id);
         if let Some(rename) = self
             .renaming
             .as_ref()
@@ -322,32 +322,27 @@ impl NativeView {
     fn save_account_order(&mut self, order: Vec<String>, cx: &App) {
         let accounts = self.calendar_sync.read(cx).accounts();
         self.store.set_listed_order(accounts, order);
-        self.store.save();
     }
 
     fn set_account_color(&mut self, id: &str, color: AccountColor, cx: &mut Context<Self>) {
-        self.store.account_colors.insert(id.to_owned(), color);
-        self.store.save();
+        self.store.set_account_color(id, color);
         cx.notify();
     }
 
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
-        crumble_store::toggle(&mut self.store.disabled_accounts, id);
-        self.store.save();
+        self.store.toggle_account_disabled(id);
         self.refresh_events(false, cx);
         cx.notify();
     }
 
     fn toggle_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
-        crumble_store::toggle(&mut self.store.hidden_accounts, id);
-        self.store.save();
+        self.store.toggle_account_hidden(id);
         self.refresh_events(false, cx);
         cx.notify();
     }
 
     pub(super) fn toggle_calendar(&mut self, id: &str, cx: &mut Context<Self>) {
-        crumble_store::toggle(&mut self.store.disabled_calendars, id);
-        self.store.save();
+        self.store.toggle_calendar_disabled(id);
         self.refresh_events(false, cx);
         cx.notify();
     }

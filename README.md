@@ -29,4 +29,23 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+## Changing the database schema
+
+Crumble keeps its state in SQLite through [Diesel](https://diesel.rs/) ([ADR 0003](docs/adr/0003-app-state-in-sqlite-via-diesel.md)). The app runs pending migrations itself at startup, so normal runs need no Diesel CLI. To change the schema, install the CLI against macOS's SQLite:
+
+```sh
+cargo install diesel_cli --no-default-features --features sqlite
+```
+
+Then, from `crates/store` (where `diesel.toml` lives), add a migration, fill in its `up.sql` and `down.sql`, and regenerate `src/schema.rs` against a scratch database:
+
+```sh
+cd crates/store
+diesel migration generate <name>
+diesel migration run --database-url /tmp/crumble-scratch.sqlite3
+rm /tmp/crumble-scratch.sqlite3
+```
+
+`migration run` rewrites `src/schema.rs`; commit it with the migration.
+
 Icons in `assets/hugeicons` are from [Hugeicons](https://hugeicons.com/) under the MIT license.

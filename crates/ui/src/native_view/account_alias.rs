@@ -133,7 +133,6 @@ impl NativeView {
         };
         self.store
             .set_account_alias(id, alias, account_label(account));
-        self.store.save();
         cx.notify();
     }
 }

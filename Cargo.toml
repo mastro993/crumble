@@ -13,7 +13,9 @@ publish = false
 [workspace.dependencies]
 anyhow = "1.0"
 async-channel = "2.5"
-chrono = { version = "0.4.45", features = ["serde"] }
+chrono = "0.4.45"
+diesel = { version = "2.3.14", default-features = false, features = ["sqlite"] }
+diesel_migrations = { version = "2.3.2", default-features = false, features = ["sqlite"] }
 dirs = "6.0"
 gpui-kit = "=0.7.0"
 crumble-calendar = { path = "crates/calendar" }
@@ -23,8 +25,6 @@ crumble-store = { path = "crates/store" }
 gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb49990261e3fdaa26abe38112d30dafb", default-features = false, features = ["gpui-pre"] }
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

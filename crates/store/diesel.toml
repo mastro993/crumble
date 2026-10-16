@@ -1,0 +1,6 @@
+# Diesel CLI settings; run `diesel` from this directory. See the README's "Changing the database schema".
+[print_schema]
+file = "src/schema.rs"
+
+[migrations_directory]
+dir = "migrations"
