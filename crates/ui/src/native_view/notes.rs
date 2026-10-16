@@ -25,7 +25,7 @@ const MEMO_SAVE_DELAY: Duration = Duration::from_millis(500);
 /// Whose Note the detail view shows.
 #[derive(Clone)]
 pub(super) enum Subject {
-    QuickNote(Note),
+    QuickNote(Box<Note>),
     Event(Rc<Event>),
 }
 
@@ -134,7 +134,7 @@ impl NativeView {
                 Selected::QuickNote(id) => self
                     .agenda
                     .quick_note(id)
-                    .map(|note| Subject::QuickNote(note.clone())),
+                    .map(|note| Subject::QuickNote(Box::new(note.clone()))),
             },
             super::Route::Event(opened) => {
                 let event = crumble_calendar::events::latest(self.events.read(cx).events(), opened);
@@ -161,7 +161,7 @@ impl NativeView {
         self.note_detail.subject = subject;
         let note = match &self.note_detail.subject {
             None => None,
-            Some(Subject::QuickNote(note)) => Some(note.clone()),
+            Some(Subject::QuickNote(note)) => Some((**note).clone()),
             Some(Subject::Event(event)) => self.notes.for_event(event).unwrap_or_else(|error| {
                 eprintln!("Could not read the Event's Note: {error}");
                 None

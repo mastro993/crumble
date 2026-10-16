@@ -46,8 +46,24 @@ diesel::table! {
         deleted_at -> Nullable<Text>,
         recording_started_at -> Nullable<Text>,
         recording_duration_ms -> Nullable<Integer>,
+        transcript_model -> Nullable<Text>,
+        transcript_locale -> Nullable<Text>,
+        transcribed_at -> Nullable<Text>,
     }
 }
+
+diesel::table! {
+    transcript_segments (id) {
+        id -> Text,
+        note_id -> Text,
+        track -> Text,
+        start_ms -> Integer,
+        end_ms -> Integer,
+        text -> Text,
+    }
+}
+
+diesel::joinable!(transcript_segments -> notes (note_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     accounts,
@@ -55,4 +71,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     calendars,
     folded_sections,
     notes,
+    transcript_segments,
 );
