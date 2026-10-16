@@ -21,5 +21,6 @@ anarlog, an open-source meeting-notes app for macOS, keys Apple Calendar Events 
 
 - A Note whose Event vanished, deleted or out of reach, is kept with its snapshot and never deleted. How the UI shows it is decided with the Notes UI.
 - One Event can show in two Calendars, as an invitation seen through two Accounts, with the same UID. A key that matches more than once is ambiguous, and whoever re-matches must pick or ask rather than guess silently.
+- Editing "this and following events" in Google Calendar splits the series: the later occurrences get a new UID, the old one plus `_R<date>`. A Note on one of them no longer matches by key and falls back to its snapshot. Crumble does not strip `_R<date>`, since it names a real, separate series; anarlog does not either.
 - An Event made on this Mac has no UID until it syncs. A Note made then has only its snapshot until the UID appears.
 - `Account::id` and `Calendar::id` are not stable either: they change when an Account is added again and can change after a full re-sync. Stored preferences (each Account's order, color, Alias, Disabled and Hidden choices, and Disabled Calendars) are keyed by them and can be lost then. Rekeying them is a separate follow-up.
