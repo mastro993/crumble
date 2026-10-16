@@ -11,6 +11,8 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 | `crates/theme` | Colors, typography, and dimensions |
 | `crates/eventkit` | Read-only bridge to macOS EventKit: calendar access, Accounts, Calendars, Events, and change notifications as plain Rust data |
 
+Code that does not need GPUI is moving out of `crates/ui` into domain crates, as decided in [ADR 0002](../adr/0002-crates-split-on-gpui-boundary.md); this table changes as each crate lands.
+
 ## Shell
 
 - The macOS window uses a transparent titlebar. The traffic lights sit centred in the 50 pt header row. Other platforms keep native decorations.

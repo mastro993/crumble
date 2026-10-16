@@ -17,6 +17,10 @@ On macOS, `cargo run` wraps the app in `target/<profile>/Crumble.app` and launch
 CRUMBLE_SIGNING_IDENTITY = "Apple Development: Your Name (TEAMID)"
 ```
 
+## Architecture
+
+Crumble is split into small crates on one line: whether code needs GPUI. Domain logic lives in crates without GPUI, so it is tested without building the UI, and `crumble-ui` holds the views; the split is still in progress. [ADR 0002](docs/adr/0002-crates-split-on-gpui-boundary.md) records the decision and [AGENTS.md](AGENTS.md) the rules for where code goes. [Native architecture](docs/architecture/native.md) describes behavior and which crate owns it, and [CONTEXT.md](CONTEXT.md) defines the domain terms.
+
 ## Build and verify
 
 ```sh
@@ -24,7 +28,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
-
-See [native architecture](docs/architecture/native.md) for the package layout and app shell.
 
 Icons in `assets/hugeicons` are from [Hugeicons](https://hugeicons.com/) under the MIT license.
