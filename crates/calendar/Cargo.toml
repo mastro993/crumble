@@ -10,5 +10,8 @@ publish.workspace = true
 chrono.workspace = true
 crumble-eventkit.workspace = true
 
+[dev-dependencies]
+chrono-tz.workspace = true
+
 [lints]
 workspace = true

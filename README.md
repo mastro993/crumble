@@ -23,10 +23,13 @@ Crumble is split into small crates on one line: whether code needs GPUI. Domain 
 
 ## Build and verify
 
+CI runs these on every pull request (domain crates on Ubuntu, the whole workspace on macOS):
+
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+python3 scripts/check-crate-boundaries.py
 ```
 
 ## Changing the database schema
