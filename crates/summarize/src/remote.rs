@@ -68,6 +68,9 @@ impl Claude {
     }
 
     fn ask(&self, instructions: &str, prompt: &str, max_tokens: u32) -> anyhow::Result<String> {
+        if self.api_key.trim().is_empty() {
+            bail!("Add a Claude API key in Settings.");
+        }
         if self.model.trim().is_empty() {
             bail!("Enter a Claude Model in Settings.");
         }
@@ -366,6 +369,18 @@ mod tests {
             model: "llama3.2".into(),
         };
         assert!(server.check().is_err());
+        let keyless = Claude {
+            api_key: String::new(),
+            model: "claude-sonnet-5-5".into(),
+        };
+        assert_eq!(
+            keyless
+                .check()
+                .map_err(|error| error.to_string())
+                .err()
+                .as_deref(),
+            Some("Add a Claude API key in Settings.")
+        );
     }
 
     #[test]

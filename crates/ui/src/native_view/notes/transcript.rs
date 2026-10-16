@@ -170,7 +170,7 @@ impl NativeView {
                 transcription.running = None;
                 match result {
                     _ if cancelled => {}
-                    Ok(segments) => self.store_transcript(id, &locale, &segments),
+                    Ok(segments) => self.store_transcript(id, &locale, &segments, cx),
                     Err(failure) => {
                         self.note_detail
                             .transcription
@@ -184,8 +184,15 @@ impl NativeView {
         cx.notify();
     }
 
-    /// Keeps `segments` as the Note `id`'s Transcript, and shows it if the Note shows.
-    fn store_transcript(&mut self, id: &NoteId, locale: &str, segments: &[Segment]) {
+    /// Keeps `segments` as the Note `id`'s Transcript, shows it if the Note shows, and queues
+    /// its Summary in place of the one the old Transcript had.
+    fn store_transcript(
+        &mut self,
+        id: &NoteId,
+        locale: &str,
+        segments: &[Segment],
+        cx: &mut Context<Self>,
+    ) {
         let segments: Vec<TranscriptSegment> = segments
             .iter()
             .map(|segment| TranscriptSegment {
@@ -203,7 +210,10 @@ impl NativeView {
                 .set_transcript(id, crumble_transcribe::MODEL, locale, &segments, Utc::now());
         match stored {
             Ok(info) => {
-                self.note_changed(id, |note| note.transcript = Some(info.clone()));
+                self.note_changed(id, |note| {
+                    note.transcript = Some(info.clone());
+                    note.summary = None;
+                });
                 if self
                     .note_detail
                     .note
@@ -212,6 +222,8 @@ impl NativeView {
                 {
                     self.note_detail.transcript = segments;
                 }
+                self.cancel_summary(id);
+                self.summarize(id.clone(), None, cx);
             }
             // As when the Recording or its Note went while the job ran.
             Err(error) => eprintln!("Could not keep the Transcript: {error:#}"),
@@ -399,7 +411,7 @@ impl NativeView {
 }
 
 /// `42%`.
-fn percent(fraction: f32) -> String {
+pub(super) fn percent(fraction: f32) -> String {
     format!("{:.0}%", (fraction * 100.0).clamp(0.0, 100.0))
 }
 

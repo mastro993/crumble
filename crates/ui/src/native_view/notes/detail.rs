@@ -1,6 +1,7 @@
 //! The Note detail view, shared by the Agenda content area and the Event page: the Note's title
 //! big at the top with when it happened below, then a card holding the tab bar, the Recording
-//! controls on its trailing side, and the tab: the Memo, or the Transcript once there is one.
+//! controls on its trailing side, and the tab: the Summary or the Transcript once there is one,
+//! or the Memo.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
@@ -60,6 +61,7 @@ impl NativeView {
                 NoteTab::Memo => Textarea::new(&detail.memo)
                     .appearance(false)
                     .into_any_element(),
+                NoteTab::Summary => self.render_summary(cx),
                 NoteTab::Transcript => self.render_transcript(cx),
             };
             v_flex()
