@@ -32,7 +32,7 @@ gpui_kit::actions!(
     ]
 );
 
-/// Calendar view and Focused date. The Calendar view is also kept in the Store; the Focused
+/// Calendar view and Focused date. The Calendar view is also kept across restarts; the Focused
 /// date is kept in memory while the app runs.
 pub(super) struct CalendarPage {
     view: CalendarView,
