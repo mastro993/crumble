@@ -1,4 +1,4 @@
-//! Settings page: choices kept across restarts in `settings.json`.
+//! Settings page: choices kept across restarts through `Store`.
 
 use super::NativeView;
 use super::account_dot::dot;
