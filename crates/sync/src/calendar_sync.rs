@@ -1,13 +1,13 @@
 //! The Accounts and Calendars read from EventKit, kept current while the app runs.
 
 use crumble_eventkit::{self as eventkit, Access, Account, Calendar, ChangeObserver};
-use gpui_kit::{AppContext, Context, Task};
+use gpui::{AppContext, Context, Task};
 
 /// What Crumble knows of the user's Accounts and Calendars.
 ///
 /// It reads them at startup only when access is already granted, so launching never prompts,
 /// and again whenever EventKit reports a change. A failed read is logged and the last data stays.
-pub(crate) struct CalendarSync {
+pub struct CalendarSync {
     access: Access,
     accounts: Vec<Account>,
     calendars: Vec<Calendar>,
@@ -22,7 +22,8 @@ pub(crate) struct CalendarSync {
 }
 
 impl CalendarSync {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+    /// Starts watching EventKit and reads at once if access is already granted.
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let (changed, receiver) = async_channel::unbounded();
         let notify = changed.clone();
         let observer = eventkit::observe_changes(move || {
@@ -51,26 +52,28 @@ impl CalendarSync {
         sync
     }
 
-    pub(crate) fn access(&self) -> Access {
+    /// The calendar access the user has given Crumble, as last read.
+    pub fn access(&self) -> Access {
         self.access
     }
 
     /// Every Account, sorted by name.
-    pub(crate) fn accounts(&self) -> &[Account] {
+    pub fn accounts(&self) -> &[Account] {
         &self.accounts
     }
 
     /// Every Calendar of every Account, sorted by name.
-    pub(crate) fn calendars(&self) -> &[Calendar] {
+    pub fn calendars(&self) -> &[Calendar] {
         &self.calendars
     }
 
-    pub(crate) fn loaded(&self) -> bool {
+    /// Whether a read has finished since access was granted.
+    pub fn loaded(&self) -> bool {
         self.loaded
     }
 
     /// Shows the macOS permission prompt, then reads again whatever the user chose.
-    pub(crate) fn request_access(&self) {
+    pub fn request_access(&self) {
         let changed = self.changed.clone();
         eventkit::request_access(move |_| {
             let _ = changed.try_send(());
