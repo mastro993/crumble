@@ -33,11 +33,11 @@ pub enum SidebarSection {
 }
 
 impl Store {
-    /// Opens the app's database and reads it. When it cannot be opened, the app runs on the
-    /// defaults in an in-memory database and leaves the file alone.
+    /// Opens the app's database and reads it. When it cannot be opened or read, the app runs on
+    /// the defaults in an in-memory database and leaves the file alone.
     pub fn open() -> Self {
-        match db::open_file() {
-            Ok(connection) => Self::read(connection),
+        match db::open_file().and_then(Self::read) {
+            Ok(store) => store,
             Err(error) => {
                 eprintln!("Could not open the database, using defaults: {error}");
                 Self::in_memory()
@@ -46,8 +46,8 @@ impl Store {
     }
 
     fn in_memory() -> Self {
-        match db::open(":memory:") {
-            Ok(connection) => Self::read(connection),
+        match db::open(":memory:").and_then(Self::read) {
+            Ok(store) => store,
             Err(error) => {
                 eprintln!("Could not open an in-memory database, changes are not kept: {error}");
                 Self {
@@ -58,15 +58,14 @@ impl Store {
         }
     }
 
-    fn read(mut connection: SqliteConnection) -> Self {
-        let state = db::load(&mut connection).unwrap_or_else(|error| {
-            eprintln!("Could not read the database, using defaults: {error}");
-            State::default()
-        });
-        Self {
+    /// Reads the whole database. A failed read returns the error rather than defaults, so a later
+    /// write cannot overwrite stored values that were never loaded.
+    fn read(mut connection: SqliteConnection) -> anyhow::Result<Self> {
+        let state = db::load(&mut connection)?;
+        Ok(Self {
             state,
             connection: Some(connection),
-        }
+        })
     }
 
     /// Writes the in-memory state with `write` in one transaction; a failure is logged and the
@@ -334,7 +333,11 @@ mod tests {
             std::time::SystemTime::now()
         ));
         let url = path.to_string_lossy().into_owned();
-        let open = || Store::read(db::open(&url).unwrap_or_else(|error| panic!("{error}")));
+        let open = || {
+            db::open(&url)
+                .and_then(Store::read)
+                .unwrap_or_else(|error| panic!("{error}"))
+        };
         let mut store = open();
         store.set_first_day_of_week(Weekday::Wed);
         store.set_account_alias("source-1", "Work", "me@example.com");
@@ -353,16 +356,32 @@ mod tests {
             let updated = sql_query("UPDATE accounts SET color = 'chartreuse'").execute(connection);
             assert_eq!(updated, Ok(1));
         }
-        let reloaded = Store::read(
-            store
-                .connection
-                .take()
-                .unwrap_or_else(|| panic!("no database")),
-        );
+        let reloaded = store
+            .connection
+            .take()
+            .map(Store::read)
+            .and_then(Result::ok)
+            .unwrap_or_else(|| panic!("no database"));
         assert_eq!(
             reloaded.account_color("source-1"),
             AccountColor::default_for("source-1")
         );
+    }
+
+    #[test]
+    fn a_failed_read_is_an_error_rather_than_defaults() {
+        let mut store = Store::in_memory();
+        store.set_first_day_of_week(Weekday::Sun);
+        let mut connection = store
+            .connection
+            .take()
+            .unwrap_or_else(|| panic!("no database"));
+        assert!(
+            sql_query("DROP TABLE calendars")
+                .execute(&mut connection)
+                .is_ok()
+        );
+        assert!(Store::read(connection).is_err());
     }
 
     fn account(id: &str) -> Account {
