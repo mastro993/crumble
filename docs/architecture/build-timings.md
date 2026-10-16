@@ -8,7 +8,7 @@ Baseline dev-build times before the crate split in [ADR 0002](../adr/0002-crates
 | --- | --- |
 | Machine | Mac16,7, Apple M4 Pro, 14 cores, 48 GB RAM, macOS 26.7.1 |
 | Toolchain | rustc 1.96.0 (ac68faa20 2026-05-25), aarch64-apple-darwin, LLVM 22.1.2 |
-| Commit | `6cf5b6f` (Rust code identical to `main` at `2082890`) |
+| Commit | `2082890` on `main`, measured on a child commit that changes only `CONTEXT.md` |
 | Profile | `dev` from `Cargo.toml`: `debug = 0`, `incremental = false`, dependencies at `opt-level = 2` |
 
 ## Results
@@ -59,7 +59,7 @@ B to E run three times each with `incremental` off, then again with `CARGO_PROFI
 
 ### How to reproduce
 
-From the repository root, on a clean tree, run the script below; it prints one line per timed run (`<mode> <scenario> <run> <seconds>`) and leaves the tree as it found it. Update `VIEW`, `LOGIC`, and the E command to wherever the code lives when you run it. Close other heavy work first.
+From the repository root, on a clean tree, run the script below; it refuses to start on a dirty tree, prints one line per timed run (`<mode> <scenario> <run> <seconds>`) and leaves the tree as it found it. Update `VIEW`, `LOGIC`, and the E command to wherever the code lives when you run it. Close other heavy work first.
 
 ```sh
 #!/bin/bash
@@ -67,6 +67,9 @@ set -euo pipefail
 VIEW=crates/ui/src/native_view/shell.rs
 LOGIC=crates/calendar/src/period.rs
 OUT=${OUT:-/tmp/crumble-timings}
+git diff --quiet HEAD || { echo "commit or stash your changes first" >&2; exit 1; }
+trap 'git checkout -- "$VIEW" "$LOGIC"' EXIT # restore the probe files even if a build fails
+unset CARGO_PROFILE_DEV_INCREMENTAL # A runs with the profile as committed
 mkdir -p "$OUT"
 n=0
 probe() { # append a fresh `const _: u32 = <n>;` to the file so it really changes
