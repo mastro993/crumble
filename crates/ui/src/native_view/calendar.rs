@@ -132,11 +132,13 @@ impl NativeView {
     }
 
     /// The Event page's header for `event`, as EventKit last read it when it, or its calendar
-    /// item after a move, is still in the Calendar page's dates.
+    /// item after a move, is still in the Calendar page's dates, then the Note actions.
     pub(super) fn render_event_toolbar(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
         let open_calendar = cx.listener(|view, _, _, cx| view.navigate(Route::Calendar, cx));
         let event = events::latest(self.events.read(cx).events(), event);
-        event_details::toolbar(event, open_calendar, cx).into_any_element()
+        event_details::toolbar(event, open_calendar, cx)
+            .children(self.render_note_actions(cx))
+            .into_any_element()
     }
 
     /// Calendar shortcuts, registered only while the Calendar page is open.
