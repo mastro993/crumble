@@ -1,6 +1,6 @@
-//! The color dot and checkbox that mark an Account, and the names and tones of its colors.
+//! The color dot and checkbox that mark an Account, and how its color is drawn.
 
-use crate::settings::AccountColor;
+use crumble_store::AccountColor;
 use crumble_theme::sidebar::{CHECK_RADIUS, CHECK_SIZE, DOT_SIZE, ICON_SIZE};
 use gpui_kit::component::{ActiveTheme, Icon, IconName};
 use gpui_kit::{App, Div, Hsla, ParentElement, Rgba, Styled, div, prelude::FluentBuilder, px, rgb};
@@ -55,34 +55,9 @@ fn slot() -> Div {
         .size(px(ICON_SIZE))
 }
 
-pub(super) fn name(color: AccountColor) -> &'static str {
-    match color {
-        AccountColor::Gray => "Gray",
-        AccountColor::Red => "Red",
-        AccountColor::Orange => "Orange",
-        AccountColor::Yellow => "Yellow",
-        AccountColor::Green => "Green",
-        AccountColor::Blue => "Blue",
-        AccountColor::Purple => "Purple",
-        AccountColor::Pink => "Pink",
-        AccountColor::Custom(_) => "Custom",
-    }
-}
-
-/// How `color` is drawn in the current appearance. Palette colors use SkillBinder's tones that
-/// keep contrast on the dark and light sidebar surfaces; a custom color is the same in both.
+/// How `color` is drawn in the current appearance: its dark or light tone.
 pub(super) fn tint(color: AccountColor, cx: &App) -> Hsla {
-    let (dark_tone, light_tone) = match color {
-        AccountColor::Gray => (0xa3a3a3, 0x737373),
-        AccountColor::Red => (0xf87171, 0xdc2626),
-        AccountColor::Orange => (0xfb923c, 0xea580c),
-        AccountColor::Yellow => (0xfacc15, 0xca8a04),
-        AccountColor::Green => (0x4ade80, 0x16a34a),
-        AccountColor::Blue => (0x60a5fa, 0x2563eb),
-        AccountColor::Purple => (0xc084fc, 0x9333ea),
-        AccountColor::Pink => (0xf472b6, 0xdb2777),
-        AccountColor::Custom(srgb) => (srgb, srgb),
-    };
+    let (dark_tone, light_tone) = color.tones();
     rgb(if cx.theme().mode.is_dark() {
         dark_tone
     } else {

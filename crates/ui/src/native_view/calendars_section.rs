@@ -5,16 +5,16 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use super::NativeView;
-use super::account_alias::{Rename, account_name};
-use super::account_dot::{check, dot, name, ring, srgb, tint};
+use super::account_alias::Rename;
+use super::account_dot::{check, dot, ring, srgb, tint};
 use super::controls::app_icon;
 use super::custom_color::CustomColor;
 use super::menu::{MenuItem, OpenMenu};
 use super::route::Route;
 use super::sidebar_reorder::{RowDrag, RowDragPreview, grab_cursor};
 use super::sidebar_row::{activate, hover_fill, row, row_with};
-use crate::settings::{self, AccountColor, SidebarSection};
-use crumble_eventkit::{Access, Account};
+use crumble_eventkit::Account;
+use crumble_store::{AccountColor, CalendarsSection, SidebarSection, calendars_section};
 use crumble_theme::sidebar::{DETAIL_SIZE, ICON_GAP, INSET, ROW_GAP, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
@@ -32,35 +32,6 @@ const INTERNET_ACCOUNTS: &str =
 /// Muted copy sits a step below its label, as in SkillBinder.
 const MUTED_OPACITY: f32 = 0.65;
 
-/// What the Calendars section shows.
-#[derive(Debug, PartialEq, Eq)]
-enum Section {
-    /// No EventKit on this platform.
-    Hidden,
-    /// One row that asks for access.
-    Connect,
-    /// One row that opens Privacy settings, the only place a refusal can be undone.
-    AllowAccess,
-    /// A hint that opens Internet Accounts settings.
-    AddAccounts,
-    /// A hint that opens Settings, where every Account is Disabled.
-    AllDisabled,
-    /// One row per Account that is not Disabled; none until the first read finishes.
-    Accounts,
-}
-
-/// `listed` counts the `accounts` that are not Disabled.
-fn section(access: Access, loaded: bool, accounts: usize, listed: usize) -> Section {
-    match access {
-        Access::Unsupported => Section::Hidden,
-        Access::NotDetermined => Section::Connect,
-        Access::Denied => Section::AllowAccess,
-        Access::Granted if loaded && accounts == 0 => Section::AddAccounts,
-        Access::Granted if listed == 0 && accounts > 0 => Section::AllDisabled,
-        Access::Granted => Section::Accounts,
-    }
-}
-
 /// What an Account row's context menu asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AccountAction {
@@ -70,11 +41,6 @@ enum AccountAction {
     Recolor(AccountColor),
     /// Move the row to this index.
     MoveTo(usize),
-}
-
-/// An Account's label: its email when EventKit gives it away, else its System Settings name.
-pub(super) fn account_label(account: &Account) -> &str {
-    account.email.as_deref().unwrap_or(&account.name)
 }
 
 impl NativeView {
@@ -88,15 +54,15 @@ impl NativeView {
             window.request_animation_frame();
         }
         let sync = self.calendar_sync.read(cx);
-        let accounts = self.listed_accounts(sync.accounts());
-        let rows: Vec<AnyElement> = match section(
+        let accounts = self.store.listed_accounts(sync.accounts());
+        let rows: Vec<AnyElement> = match calendars_section(
             sync.access(),
             sync.loaded(),
             sync.accounts().len(),
             accounts.len(),
         ) {
-            Section::Hidden => return None,
-            Section::Connect => vec![
+            CalendarsSection::Hidden => return None,
+            CalendarsSection::Connect => vec![
                 activate(
                     row(
                         "connect-calendars",
@@ -111,7 +77,7 @@ impl NativeView {
                 )
                 .into_any_element(),
             ],
-            Section::AllowAccess => vec![
+            CalendarsSection::AllowAccess => vec![
                 activate(
                     row(
                         "allow-calendar-access",
@@ -126,7 +92,7 @@ impl NativeView {
                 )
                 .into_any_element(),
             ],
-            Section::AddAccounts => vec![
+            CalendarsSection::AddAccounts => vec![
                 hint(
                     "add-accounts",
                     "Add accounts in System Settings › Internet Accounts",
@@ -135,7 +101,7 @@ impl NativeView {
                 )
                 .into_any_element(),
             ],
-            Section::AllDisabled => vec![
+            CalendarsSection::AllDisabled => vec![
                 hint(
                     "all-accounts-disabled",
                     "All accounts disabled · Open Settings",
@@ -144,7 +110,7 @@ impl NativeView {
                 )
                 .into_any_element(),
             ],
-            Section::Accounts => {
+            CalendarsSection::Accounts => {
                 let stored: Vec<String> =
                     accounts.iter().map(|account| account.id.clone()).collect();
                 let (order, floating) = self
@@ -205,13 +171,6 @@ impl NativeView {
         )
     }
 
-    /// `accounts` that are not Disabled, in the user's order.
-    fn listed_accounts<'a>(&self, accounts: &'a [Account]) -> Vec<&'a Account> {
-        let mut listed = self.settings.ordered_accounts(accounts);
-        listed.retain(|account| !self.settings.disabled_accounts.contains(&account.id));
-        listed
-    }
-
     /// The row shows a checkbox in the Account's color, checked unless the Account is Hidden,
     /// then its Alias, else its label. Clicking the row, or pressing Enter or Space while it has
     /// focus, Hides or Shows the Account. Dragging the row reorders the Accounts, and right-clicking it opens a
@@ -223,8 +182,8 @@ impl NativeView {
         placement: Placement,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let color = self.settings.account_color(&account.id);
-        let hidden = self.settings.hidden_accounts.contains(&account.id);
+        let color = self.store.account_color(&account.id);
+        let hidden = self.store.hidden_accounts.contains(&account.id);
         if let Some(rename) = self
             .renaming
             .as_ref()
@@ -232,7 +191,7 @@ impl NativeView {
         {
             return rename_row(rename, check(color, !hidden, cx), cx);
         }
-        let label: SharedString = account_name(&self.settings, account).to_owned().into();
+        let label: SharedString = self.store.account_name(account).to_owned().into();
         let (view, id) = (cx.entity().downgrade(), account.id.clone());
         let act = move |action: AccountAction, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| match action {
@@ -319,7 +278,8 @@ impl NativeView {
 
     /// The listed Account identifiers in their saved order.
     fn account_ids(&self, cx: &App) -> Vec<String> {
-        self.listed_accounts(self.calendar_sync.read(cx).accounts())
+        self.store
+            .listed_accounts(self.calendar_sync.read(cx).accounts())
             .into_iter()
             .map(|account| account.id.clone())
             .collect()
@@ -361,33 +321,33 @@ impl NativeView {
 
     fn save_account_order(&mut self, order: Vec<String>, cx: &App) {
         let accounts = self.calendar_sync.read(cx).accounts();
-        self.settings.set_listed_order(accounts, order);
-        self.settings.save();
+        self.store.set_listed_order(accounts, order);
+        self.store.save();
     }
 
     fn set_account_color(&mut self, id: &str, color: AccountColor, cx: &mut Context<Self>) {
-        self.settings.account_colors.insert(id.to_owned(), color);
-        self.settings.save();
+        self.store.account_colors.insert(id.to_owned(), color);
+        self.store.save();
         cx.notify();
     }
 
     pub(super) fn toggle_account(&mut self, id: &str, cx: &mut Context<Self>) {
-        settings::toggle(&mut self.settings.disabled_accounts, id);
-        self.settings.save();
+        crumble_store::toggle(&mut self.store.disabled_accounts, id);
+        self.store.save();
         self.refresh_events(false, cx);
         cx.notify();
     }
 
     fn toggle_hidden(&mut self, id: &str, cx: &mut Context<Self>) {
-        settings::toggle(&mut self.settings.hidden_accounts, id);
-        self.settings.save();
+        crumble_store::toggle(&mut self.store.hidden_accounts, id);
+        self.store.save();
         self.refresh_events(false, cx);
         cx.notify();
     }
 
     pub(super) fn toggle_calendar(&mut self, id: &str, cx: &mut Context<Self>) {
-        settings::toggle(&mut self.settings.disabled_calendars, id);
-        self.settings.save();
+        crumble_store::toggle(&mut self.store.disabled_calendars, id);
+        self.store.save();
         self.refresh_events(false, cx);
         cx.notify();
     }
@@ -464,10 +424,13 @@ fn account_menu(
     let mut colors: Vec<MenuItem> = AccountColor::PALETTE
         .into_iter()
         .map(|color| {
-            MenuItem::new(format!("color-{}", name(color).to_lowercase()), name(color))
-                .leading(move |cx| dot(color, cx).into_any_element())
-                .checked(color == current)
-                .on_select(on(AccountAction::Recolor(color)))
+            MenuItem::new(
+                format!("color-{}", color.name().to_lowercase()),
+                color.name(),
+            )
+            .leading(move |cx| dot(color, cx).into_any_element())
+            .checked(color == current)
+            .on_select(on(AccountAction::Recolor(color)))
         })
         .collect();
     let is_custom = matches!(current, AccountColor::Custom(_));
@@ -512,7 +475,7 @@ mod tests {
     use super::super::custom_color::CustomColor;
     use super::super::menu::SUBMENU_CLOSE_DELAY;
     use super::AccountAction::Recolor;
-    use super::{Access, AccountAction, AccountColor, OpenMenu, Section, account_menu, section};
+    use super::{AccountAction, AccountColor, OpenMenu, account_menu};
     use crumble_theme::menu::PADDING;
     use crumble_theme::menu::SUBMENU_OVERLAP;
     use gpui_kit::component::ColorName;
@@ -534,21 +497,6 @@ mod tests {
             Shortcut
         ]
     );
-
-    #[test]
-    fn each_access_state_picks_its_rows() {
-        assert_eq!(section(Access::Unsupported, false, 0, 0), Section::Hidden);
-        assert_eq!(
-            section(Access::NotDetermined, false, 0, 0),
-            Section::Connect
-        );
-        assert_eq!(section(Access::Denied, true, 2, 2), Section::AllowAccess);
-        assert_eq!(section(Access::Granted, true, 0, 0), Section::AddAccounts);
-        assert_eq!(section(Access::Granted, true, 2, 1), Section::Accounts);
-        assert_eq!(section(Access::Granted, true, 2, 0), Section::AllDisabled);
-        // No hint flashes before the first read finishes.
-        assert_eq!(section(Access::Granted, false, 0, 0), Section::Accounts);
-    }
 
     /// Stands in for the sidebar: the first of two Account rows, recording its menu's choices
     /// and the clicks that reach the row, and a field that goes away when it loses focus, as a

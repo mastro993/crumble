@@ -11,7 +11,7 @@ use std::{
 
 use super::account_dot::check;
 use super::sidebar_row::row_with;
-use crate::settings::AccountColor;
+use crumble_store::AccountColor;
 use crumble_theme::sidebar::{ROW_GAP, ROW_HEIGHT};
 use gpui_kit::base::animation::ease_out_cubic;
 use gpui_kit::{

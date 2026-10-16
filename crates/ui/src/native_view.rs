@@ -20,10 +20,10 @@ pub use calendar::{NextPeriod, PreviousPeriod, ShowToday};
 pub use shell::{GoBack, GoForward, ToggleSidebar};
 
 use crate::calendar_sync::CalendarSync;
-use crate::settings::{Settings, SidebarSection};
 use account_alias::{AliasFields, Rename};
 use agenda::AgendaPage;
 use calendar::{CalendarEvents, CalendarPage};
+use crumble_store::{SidebarSection, Store};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -46,7 +46,7 @@ pub struct NativeView {
     sidebar_motion: u64,
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
-    settings: Settings,
+    store: Store,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: CalendarEvents,
@@ -80,9 +80,9 @@ impl NativeView {
         // Window-level shortcuts such as ToggleSidebar dispatch through the focused view.
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        let settings = Settings::load();
-        let first_day_select = settings_page::first_day_select(&settings, window, cx);
-        let calendar = CalendarPage::new(settings.calendar_view);
+        let store = Store::load();
+        let first_day_select = settings_page::first_day_select(&store, window, cx);
+        let calendar = CalendarPage::new(store.calendar_view);
         let calendar_sync = cx.new(CalendarSync::new);
         // A sync change can also mean EventKit changed its Events or Accounts.
         cx.observe_in(&calendar_sync, window, |view, _, window, cx| {
@@ -100,7 +100,7 @@ impl NativeView {
             sidebar_collapsed: false,
             sidebar_motion: 0,
             sidebar_closing: false,
-            settings,
+            store,
             first_day_select,
             calendar,
             events: CalendarEvents::default(),

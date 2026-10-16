@@ -3,18 +3,9 @@
 use std::collections::HashMap;
 
 use super::NativeView;
-use super::calendars_section::account_label;
-use crate::settings::Settings;
-use crumble_eventkit::Account;
+use crumble_store::account_label;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{AppContext, Context, Entity, Focusable, KeyDownEvent, Subscription, Window};
-
-/// The name an Account goes by: its Alias, else its own label.
-pub(super) fn account_name<'a>(settings: &'a Settings, account: &'a Account) -> &'a str {
-    settings
-        .account_alias(&account.id)
-        .unwrap_or_else(|| account_label(account))
-}
 
 /// The Account row being renamed in the sidebar.
 pub(super) struct Rename {
@@ -48,11 +39,7 @@ impl NativeView {
             if self.alias_fields.0.contains_key(&id) {
                 continue;
             }
-            let alias = self
-                .settings
-                .account_alias(&id)
-                .unwrap_or_default()
-                .to_owned();
+            let alias = self.store.account_alias(&id).unwrap_or_default().to_owned();
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder("Alias")
@@ -75,7 +62,7 @@ impl NativeView {
         let Some(account) = sync.accounts().iter().find(|account| account.id == id) else {
             return;
         };
-        let name = account_name(&self.settings, account).to_owned();
+        let name = self.store.account_name(account).to_owned();
         let input = cx.new(|cx| {
             let mut input = InputState::new(window, cx).default_value(name);
             input.select_all(window, cx);
@@ -114,7 +101,7 @@ impl NativeView {
         if save {
             self.save_alias(&rename.id, &typed, cx);
             let alias = self
-                .settings
+                .store
                 .account_alias(&rename.id)
                 .unwrap_or_default()
                 .to_owned();
@@ -144,9 +131,9 @@ impl NativeView {
         let Some(account) = sync.accounts().iter().find(|account| account.id == id) else {
             return;
         };
-        self.settings
+        self.store
             .set_account_alias(id, alias, account_label(account));
-        self.settings.save();
+        self.store.save();
         cx.notify();
     }
 }

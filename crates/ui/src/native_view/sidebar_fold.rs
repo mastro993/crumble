@@ -6,7 +6,7 @@ use std::{f32::consts::FRAC_PI_2, time::Duration};
 use super::NativeView;
 use super::controls::app_icon;
 use super::sidebar_row::activate;
-use crate::settings::SidebarSection;
+use crumble_store::SidebarSection;
 use crumble_theme::sidebar::{
     DETAIL_SIZE, ROW_GAP, ROW_HEIGHT, ROW_PADDING, SECTION_GAP, SECTION_HEIGHT,
 };
@@ -21,8 +21,8 @@ const FOLD_MOTION: Duration = Duration::from_millis(180);
 impl NativeView {
     /// Shows or hides a section's rows and remembers the choice across restarts.
     pub(super) fn toggle_section(&mut self, section: SidebarSection, cx: &mut Context<Self>) {
-        if !self.settings.folded_sections.remove(&section) {
-            self.settings.folded_sections.insert(section);
+        if !self.store.folded_sections.remove(&section) {
+            self.store.folded_sections.insert(section);
         }
         let motion = self.section_motion.entry(section).or_default();
         *motion += 1;
@@ -43,7 +43,7 @@ impl NativeView {
             })
             .detach();
         }
-        self.settings.save();
+        self.store.save();
         cx.notify();
     }
 
@@ -55,7 +55,7 @@ impl NativeView {
         cx: &mut Context<Self>,
     ) -> Div {
         let color = cx.theme().muted_foreground.opacity(0.8);
-        let folded = self.settings.folded_sections.contains(&section);
+        let folded = self.store.folded_sections.contains(&section);
         let toggle = activate(
             div()
                 .id(format!("section-{title}"))
@@ -86,7 +86,7 @@ impl NativeView {
 
     /// A chevron pointing down while the section is open, turning right as it folds.
     fn section_chevron(&self, section: SidebarSection, cx: &Context<Self>) -> AnyElement {
-        let folded = self.settings.folded_sections.contains(&section);
+        let folded = self.store.folded_sections.contains(&section);
         let icon = app_icon("chevron-down")
             .size(px(DETAIL_SIZE))
             .text_color(cx.theme().muted_foreground.opacity(0.8));
@@ -113,7 +113,7 @@ impl NativeView {
         items: usize,
         rows: impl IntoElement + 'static,
     ) -> Option<AnyElement> {
-        let folded = self.settings.folded_sections.contains(&section);
+        let folded = self.store.folded_sections.contains(&section);
         let Some(motion) = self.motion(section) else {
             return (!folded).then(|| rows.into_any_element());
         };
