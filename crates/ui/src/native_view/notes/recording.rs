@@ -187,14 +187,17 @@ impl NativeView {
             Err(error) => Err(error),
         };
         match info {
-            // What was kept stays, but part of it may be missing.
-            Ok(info) if !clean => {
-                self.recording_changed(&id, info);
-                self.recording_failed(&id, "it did not stop cleanly", cx);
-            }
             Ok(info) => {
                 self.recording_changed(&id, info);
-                self.note_detail.recording_failed = None;
+                if clean {
+                    self.note_detail.recording_failed = None;
+                } else {
+                    // What was kept stays, but part of it may be missing.
+                    self.recording_failed(&id, "it did not stop cleanly", cx);
+                }
+                if info.is_some() {
+                    self.transcribe(id, cx);
+                }
             }
             Err(error) => self.recording_failed(&id, &format!("{error:#}"), cx),
         }
@@ -204,21 +207,7 @@ impl NativeView {
 
     /// Keeps every in-memory copy of the Note `id` in step with its Recording.
     fn recording_changed(&mut self, id: &NoteId, info: Option<RecordingInfo>) {
-        let detail = &mut self.note_detail;
-        if let Some(note) = &mut detail.note
-            && &note.id == id
-        {
-            note.recording = info;
-        }
-        if let Some(Subject::QuickNote(note)) = &mut detail.subject
-            && &note.id == id
-        {
-            note.recording = info;
-        }
-        if let Some(mut note) = self.agenda.quick_note(id).cloned() {
-            note.recording = info;
-            self.agenda.note_changed(&note);
-        }
+        self.note_changed(id, |note| note.recording = info);
     }
 
     /// Opens the shown Note's finished Recording in the player, replacing any other.
@@ -323,16 +312,34 @@ impl NativeView {
         if self.is_recording(id) {
             return;
         }
-        // Closes the files before they go.
+        // Closes the files before they go, and the Transcript goes with them.
         self.note_detail.playback = None;
+        self.cancel_transcription(id);
         match self.notes.delete_recording(id, Utc::now()) {
             Ok(()) => {
                 self.note_detail.unsaved_recordings.remove(id);
-                self.recording_changed(id, None);
+                self.note_changed(id, |note| {
+                    note.recording = None;
+                    note.transcript = None;
+                });
+                self.show_transcript();
                 self.note_detail.recording_failed = None;
             }
             Err(error) => self.recording_failed(id, &format!("{error:#}"), cx),
         }
+        cx.notify();
+    }
+
+    /// Moves the shown Note's player to `to`, as when a Transcript line's time is clicked.
+    pub(super) fn seek(&mut self, to: Duration, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(playback) = &mut self.note_detail.playback else {
+            return;
+        };
+        playback.player.seek(to);
+        let at = playback.player.position().as_secs_f32();
+        playback
+            .scrubber
+            .update(cx, |scrubber, cx| scrubber.set_value(at, window, cx));
         cx.notify();
     }
 
@@ -556,7 +563,7 @@ fn red_dot(cx: &Context<NativeView>) -> impl IntoElement {
 }
 
 /// `0:07`, `12:03`, or `1:02:03`.
-fn clock(time: Duration) -> String {
+pub(super) fn clock(time: Duration) -> String {
     let seconds = time.as_secs();
     let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if hours > 0 {

@@ -1434,6 +1434,7 @@ dependencies = [
  "crumble-store",
  "crumble-sync",
  "crumble-theme",
+ "crumble-transcribe",
  "gpui-kit",
 ]
 

@@ -1,17 +1,20 @@
 //! The Note detail view's state: the Note of the selected Agenda row or of the opened Event,
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
-//! The Recording, its player and the header pill are in `recording`.
+//! The Recording, its player and the header pill are in `recording`; the Transcript and the job
+//! that makes it in `transcript`.
 
 mod actions;
 mod detail;
 mod recording;
+mod tabs;
+mod transcript;
 
 use super::NativeView;
 use super::agenda::Selected;
 use chrono::Utc;
 use crumble_eventkit::Event;
-use crumble_notes::{Note, NoteId, RecordingInfo};
+use crumble_notes::{Note, NoteId, RecordingInfo, TranscriptSegment};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
@@ -76,6 +79,12 @@ pub(super) struct NoteDetail {
     playback: Option<recording::Playback>,
     /// The Note whose Recording last failed to start, stop in full, or delete.
     recording_failed: Option<NoteId>,
+    /// The tab the user picked, kept across Notes; `None` shows the first.
+    tab: Option<tabs::NoteTab>,
+    /// The shown Note's Transcript.
+    transcript: Vec<TranscriptSegment>,
+    /// The Transcripts being made, in the background.
+    transcription: transcript::Transcription,
     _subscriptions: [Subscription; 3],
 }
 
@@ -126,8 +135,22 @@ impl NoteDetail {
             recording: None,
             playback: None,
             recording_failed: None,
+            tab: None,
+            transcript: Vec::new(),
+            transcription: transcript::Transcription::default(),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// The shown Note's tabs, and the one that shows.
+    fn tabs(&self) -> (Vec<tabs::NoteTab>, tabs::NoteTab) {
+        let transcript = self
+            .note
+            .as_ref()
+            .is_some_and(|note| note.transcript.is_some() || self.transcription.involves(&note.id));
+        let tabs = tabs::tabs(transcript);
+        let shown = tabs::shown(self.tab, &tabs);
+        (tabs, shown)
     }
 }
 
@@ -251,7 +274,28 @@ impl NativeView {
             .memo
             .update(cx, |input, cx| input.set_value(memo, window, cx));
         self.show_player(cx);
+        self.show_transcript();
         cx.notify();
+    }
+
+    /// Changes every in-memory copy of the Note `id`: the shown Note, the Quick note shown,
+    /// and its Agenda row.
+    fn note_changed(&mut self, id: &NoteId, change: impl Fn(&mut Note)) {
+        let detail = &mut self.note_detail;
+        if let Some(note) = &mut detail.note
+            && &note.id == id
+        {
+            change(note);
+        }
+        if let Some(Subject::QuickNote(note)) = &mut detail.subject
+            && &note.id == id
+        {
+            change(note);
+        }
+        if let Some(mut note) = self.agenda.quick_note(id).cloned() {
+            change(&mut note);
+            self.agenda.note_changed(&note);
+        }
     }
 
     /// Saves the shown Note's title and Memo where they changed, and tries again the ones that
@@ -415,6 +459,7 @@ impl NativeView {
             self.note_detail.recording = None;
         }
         self.note_detail.playback = None;
+        self.cancel_transcription(id);
         let detail = &mut self.note_detail;
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");

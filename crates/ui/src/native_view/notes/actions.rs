@@ -1,5 +1,5 @@
-//! The Note actions in the page header: a "…" button opening a menu with Delete recording when
-//! the Note has one, and Delete note.
+//! The Note actions in the page header: a "…" button opening a menu with Transcribe again and
+//! Delete recording when the Note has a finished Recording, and Delete note.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
@@ -46,8 +46,8 @@ impl NativeView {
         )
     }
 
-    /// Opens the Note actions menu below its button: Delete recording when the shown Note has a
-    /// finished one, and Delete note.
+    /// Opens the Note actions menu below its button: Transcribe again and Delete recording when
+    /// the shown Note has a finished Recording, and Delete note.
     fn open_note_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &self.note_detail;
         let Some(shown) = detail.note.as_ref().map(|note| note.id.clone()) else {
@@ -59,6 +59,16 @@ impl NativeView {
             .note
             .as_ref()
             .is_some_and(|note| note.recording.is_some() && !self.is_recording(&note.id));
+        if recorded && !detail.transcription.busy(&shown) {
+            let id = shown.clone();
+            items.push(
+                MenuItem::new("note-transcribe-again", "Transcribe again")
+                    .icon("refresh")
+                    .on_select(act(&view, move |view, window, cx| {
+                        view.confirm_transcribe_again(id.clone(), window, cx)
+                    })),
+            );
+        }
         if recorded {
             let id = shown.clone();
             items.push(
