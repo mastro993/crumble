@@ -1420,7 +1420,6 @@ dependencies = [
  "crumble-calendar",
  "crumble-db",
  "crumble-eventkit",
- "crumble-summarize",
  "diesel",
  "security-framework",
 ]

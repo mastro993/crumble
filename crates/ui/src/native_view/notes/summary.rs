@@ -77,8 +77,8 @@ enum Update {
 }
 
 impl NativeView {
-    /// Queues the Notes whose Transcript has no Summary, as when the app quit while summarizing,
-    /// once a Summary Model is picked. Run once at launch.
+    /// Queues the Notes whose Transcript has no Summary, as when the app quit while summarizing
+    /// or no Summary Model was picked yet, once one is. Run at launch and when one is picked.
     pub(in super::super) fn summarize_unsummarized(&mut self, cx: &mut Context<Self>) {
         if self.summary_provider().is_none() {
             return;
@@ -89,25 +89,11 @@ impl NativeView {
         }
     }
 
-    /// Queues again the Notes that waited for a Summary Model, once one is picked.
-    pub(in super::super) fn summarize_waiting_for_a_model(&mut self, cx: &mut Context<Self>) {
-        let waiting: Vec<NoteId> = self
-            .note_detail
-            .summarization
-            .failed
-            .iter()
-            .filter(|(_, failure)| matches!(failure, Failure::NoModel))
-            .map(|(id, _)| id.clone())
-            .collect();
-        waiting
-            .into_iter()
-            .for_each(|id| self.summarize(id, None, cx));
-    }
-
     /// The Summary Model's Provider picked in Settings, else Apple's when it can run.
     pub(in super::super) fn summary_provider(&self) -> Option<Provider> {
         self.store
             .summary_provider(apple_availability() == Availability::Available)
+            .and_then(Provider::from_id)
     }
 
     /// Whether `provider` has what it needs to summarize: Apple's model can run, or the remote
@@ -184,7 +170,7 @@ impl NativeView {
                     continue;
                 }
             };
-            let model = summarizer.model().to_owned();
+            let (provider, model) = (summarizer.provider(), summarizer.model().to_owned());
             let (send, updates) = async_channel::unbounded();
             let work = cx.background_executor().spawn(async move {
                 let result = summarizer.summarize(&text, &mut |fraction| {

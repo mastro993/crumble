@@ -101,7 +101,11 @@ pub(super) fn model_settings(
     cx: &mut Context<NativeView>,
 ) -> ModelSettings {
     let apple = apple_availability();
-    let selected = index_of(store.summary_provider(apple == Availability::Available));
+    let selected = index_of(
+        store
+            .summary_provider(apple == Availability::Available)
+            .and_then(Provider::from_id),
+    );
     let provider = cx.new(|cx| SelectState::new(provider_items(apple), selected, window, cx));
     let field = |value: &str, placeholder: &str, window: &mut Window, cx: &mut Context<_>| {
         let (value, placeholder) = (value.to_owned(), placeholder.to_owned());
@@ -137,8 +141,8 @@ pub(super) fn model_settings(
                 let SelectEvent::Confirm(Some(provider)) = event else {
                     return;
                 };
-                view.store.set_summary_provider(*provider);
-                view.summarize_waiting_for_a_model(cx);
+                view.store.set_summary_provider(provider.id());
+                view.summarize_unsummarized(cx);
                 cx.notify();
             },
         ),

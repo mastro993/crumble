@@ -71,11 +71,6 @@ impl Provider {
             Provider::OpenAiCompatible => "OpenAI-compatible server",
         }
     }
-
-    /// Whether the Transcript's text leaves the Mac.
-    pub fn is_remote(self) -> bool {
-        self != Provider::Apple
-    }
 }
 
 /// Whether Apple's on-device model can run on this Mac now.
@@ -158,7 +153,5 @@ mod tests {
             assert_eq!(Provider::from_id(provider.id()), Some(provider));
         }
         assert_eq!(Provider::from_id("gemini"), None);
-        assert!(!Provider::Apple.is_remote());
-        assert!(Provider::Claude.is_remote());
     }
 }

@@ -15,7 +15,6 @@ use std::collections::BTreeSet;
 use chrono::Weekday;
 use crumble_calendar::CalendarView;
 use crumble_eventkit::{Account, Calendar};
-use crumble_summarize::Provider;
 use db::State;
 use diesel::{Connection, QueryResult, SqliteConnection};
 
@@ -108,17 +107,18 @@ impl Store {
         }
     }
 
-    /// The Summary Model's Provider: the one picked in Settings, else Apple's when
-    /// `apple_available`, else none.
-    pub fn summary_provider(&self, apple_available: bool) -> Option<Provider> {
+    /// The id of the Summary Model's Provider, as `crumble_summarize::Provider::id` gives it:
+    /// the one picked in Settings, else `apple` when `apple_available`, else none.
+    pub fn summary_provider(&self, apple_available: bool) -> Option<&str> {
         self.state
             .summary_provider
-            .or(apple_available.then_some(Provider::Apple))
+            .as_deref()
+            .or(apple_available.then_some("apple"))
     }
 
-    /// Makes `provider` make Summaries.
-    pub fn set_summary_provider(&mut self, provider: Provider) {
-        self.state.summary_provider = Some(provider);
+    /// Makes the Provider with the id `provider` make Summaries.
+    pub fn set_summary_provider(&mut self, provider: &str) {
+        self.state.summary_provider = Some(provider.to_owned());
         self.write(db::write_app_state);
     }
 
@@ -353,7 +353,7 @@ mod tests {
         store.set_account_color("source-2", AccountColor::Custom(0x3366ff));
         store.set_account_alias("source-3", "Work", "me@example.com");
         store.set_listed_order(&accounts, vec!["source-3".into(), "source-2".into()]);
-        store.set_summary_provider(crumble_summarize::Provider::OpenAiCompatible);
+        store.set_summary_provider("openai");
         store.set_claude_model(" claude-opus-5-5 ");
         store.set_openai_base_url("http://localhost:11434/v1");
         store.set_openai_model("llama3.2");
@@ -404,14 +404,13 @@ mod tests {
 
     #[test]
     fn the_summary_provider_is_the_picked_one_else_apples_when_available() {
-        use crumble_summarize::Provider;
         let mut store = Store::in_memory();
         assert_eq!(store.summary_provider(false), None);
-        assert_eq!(store.summary_provider(true), Some(Provider::Apple));
+        assert_eq!(store.summary_provider(true), Some("apple"));
         assert_eq!(store.claude_model(), "claude-sonnet-5-5");
-        store.set_summary_provider(Provider::Claude);
-        assert_eq!(store.summary_provider(true), Some(Provider::Claude));
-        assert_eq!(store.reloaded().summary_provider, Some(Provider::Claude));
+        store.set_summary_provider("claude");
+        assert_eq!(store.summary_provider(true), Some("claude"));
+        assert_eq!(store.reloaded().summary_provider.as_deref(), Some("claude"));
     }
 
     #[test]
