@@ -12,6 +12,7 @@ Crumble is a GPUI desktop application built with GPUI Kit components. The app sh
 | `crates/sync` | GPUI entities that read EventKit off the main thread and keep the result current: `CalendarSync` (access, Accounts, Calendars), `CalendarEvents` (the Calendar page's Events), and `AgendaEvents` (the Agenda's Events and the days they cover). Depends on GPUI core only, not on GPUI Kit |
 | `crates/db` | The SQLite file `crumble.sqlite3`, every migration, and the Diesel schema. Opens connections and runs pending migrations; holds no queries |
 | `crates/store` | State kept across restarts, in the `crates/db` file with each change written as it happens, and Account rules without GPUI: Account order, colors and their tones, Aliases and labels, which Calendars show given Disabled and Hidden Accounts, and which state the Calendars section shows for the calendar access status |
+| `crates/notes` | Notes and Quick notes in the `crates/db` file: creating, editing and soft-deleting them, and finding a Note's Event occurrence again |
 | `crates/theme` | Colors, typography, and dimensions |
 | `crates/eventkit` | Read-only bridge to macOS EventKit: calendar access, Accounts, Calendars, Events, and change notifications as plain Rust data |
 
@@ -93,6 +94,16 @@ Crumble reads Events from macOS EventKit and never changes them; see [ADR 0001](
 - The tables are `app_state` (one row: `first_day_of_week`, 0 for Monday, and `calendar_view`), `accounts` (by EventKit identifier: `position` in the user's order, `color` as a palette name or `#rrggbb`, `alias`, `disabled`, `hidden`), `calendars` (by EventKit identifier: `disabled`) and `folded_sections`. An Account or Calendar row is written the first time the user changes it and kept after its values return to the defaults.
 - **First day of week** can be any weekday and defaults to Monday. It sets the column order of every Calendar view and where each week Period begins.
 - **Calendars** lists every Account with an Alias field and a switch, and under it its Calendars, each with a checkbox, its macOS color, and its name. Settings is the only place to Disable or Enable an Account or a Calendar. An Account with an Alias is titled with it, followed by its own name in brackets. Each keystroke in the field saves the Alias. A blank Alias, or one equal to the Account's own name, is removed, so the sidebar's Rename and the field agree. Aliases are saved in `accounts.alias`. Every Account and Calendar starts enabled; turning an Account's switch off or unchecking a Calendar Disables it. A Disabled Account greys its Calendars out and keeps their checkboxes as they were. The group is hidden while access is not granted. Disabled Accounts and Calendars are saved by EventKit identifier in `accounts.disabled` and `calendars.disabled`, and change nothing in macOS.
+
+## Notes
+
+Note, Quick note and Memo are defined in [CONTEXT.md](../../CONTEXT.md). There is no Notes UI yet.
+
+- `crates/notes` keeps Notes in the `notes` table of `crumble.sqlite3`, through its own connection beside the one `crates/store` keeps. The file runs in WAL mode with a 5 s busy timeout, so one connection reads while the other writes. If the file cannot be opened, Notes use an in-memory database for that run and are not kept.
+- Each row has a UUID v7 `id`, an optional `title`, the `memo`, and `created_at`, `updated_at` and `deleted_at` as RFC 3339 UTC text to the millisecond. Every change sets `updated_at`. Deleting a Note sets `deleted_at` and every read skips it; a deleted Note cannot be edited or brought back.
+- A Note attached to an Event keeps the Event's key, `event_series_uid` and `event_occurrence`, and a snapshot of its `event_title` and `event_start` ([ADR 0004](../adr/0004-event-identity-for-notes.md)). An occurrence and a start are stored as `2026-10-13` for an all-day one or `2026-10-13T07:00:00Z` for a timed one. A Quick note has all four `NULL`.
+- An Event's Notes, oldest first, are those whose key matches it (the same UID, and the same occurrence or none for both) or whose snapshot matches its title and start. The snapshot finds a Note made before the Event synced, or after Google split its series. Reading never rewrites a stored key, and a Note whose Event is gone is kept.
+- Quick notes are listed newest first by when they were made.
 
 ## Agent automation
 

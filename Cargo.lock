@@ -1356,6 +1356,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumble-notes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crumble-db",
+ "crumble-eventkit",
+ "diesel",
+ "uuid",
+]
+
+[[package]]
 name = "crumble-store"
 version = "0.1.0"
 dependencies = [

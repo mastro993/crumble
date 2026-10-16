@@ -1,0 +1,18 @@
+[package]
+name = "crumble-notes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+crumble-db.workspace = true
+crumble-eventkit.workspace = true
+diesel.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
