@@ -2,7 +2,8 @@
 //! alone as a Quick note. A Note finds its Event again by the key and snapshot of ADR 0004.
 //! A Note's Recording is kept as files in its own folder, which this crate names and deletes;
 //! `crumble-audio` writes and reads the files in it (ADR 0005). Its Transcript is kept here as
-//! segments, replaced wholesale each time it is made (ADR 0006).
+//! segments, replaced wholesale each time it is made (ADR 0006), and its Summary beside it,
+//! cleared whenever the Transcript changes (ADR 0007).
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -39,6 +40,8 @@ pub struct Note {
     pub recording: Option<RecordingInfo>,
     /// How the Note's Transcript was made, if it has one; [`Notes::transcript`] reads its text.
     pub transcript: Option<TranscriptInfo>,
+    /// The Summary of the Note's Transcript, if it has one.
+    pub summary: Option<SummaryInfo>,
 }
 
 impl Note {
@@ -60,6 +63,19 @@ pub struct TranscriptInfo {
     pub locale: String,
     /// When it was made, to the millisecond.
     pub transcribed_at: DateTime<Utc>,
+}
+
+/// A Note's Summary and how it was made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummaryInfo {
+    /// The Summary, as Markdown.
+    pub text: String,
+    /// The id of the Provider whose Model made it, such as `claude`.
+    pub provider: String,
+    /// The Model that made it, such as `claude-sonnet-5-5`.
+    pub model: String,
+    /// When it was made, to the millisecond.
+    pub summarized_at: DateTime<Utc>,
 }
 
 /// One stretch of speech in a Transcript.
@@ -143,6 +159,10 @@ struct NoteRow {
     transcript_model: Option<String>,
     transcript_locale: Option<String>,
     transcribed_at: Option<String>,
+    summary: Option<String>,
+    summary_provider: Option<String>,
+    summary_model: Option<String>,
+    summarized_at: Option<String>,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -216,6 +236,10 @@ impl Notes {
             transcript_model: None,
             transcript_locale: None,
             transcribed_at: None,
+            summary: None,
+            summary_provider: None,
+            summary_model: None,
+            summarized_at: None,
         };
         diesel::insert_into(notes::table)
             .values(&row)
@@ -285,7 +309,7 @@ impl Notes {
 
     /// Soft delete: sets `deleted_at`, and every read skips the Note. Its row stays only as a
     /// tombstone for sync: what the user wrote or said goes for good, in one transaction, with
-    /// its title, Memo, Event link, Recording and Transcript.
+    /// its title, Memo, Event link, Recording, Transcript and Summary.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
         let now = encode_time(now);
         self.connection()?.transaction(|connection| {
@@ -304,6 +328,7 @@ impl Notes {
                     notes::transcript_model.eq(None::<String>),
                     notes::transcript_locale.eq(None::<String>),
                     notes::transcribed_at.eq(None::<String>),
+                    no_summary(),
                 ))
                 .execute(connection)?;
             written(updated, id)?;
@@ -358,8 +383,8 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Removes the Note `id`'s Recording and the Transcript made from it, which nothing can make
-    /// again: forgets both, then deletes the audio's folder.
+    /// Removes the Note `id`'s Recording, and the Transcript and Summary made from it, which
+    /// nothing can make again: forgets them, then deletes the audio's folder.
     pub fn delete_recording(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
         self.connection()?.transaction(|connection| {
             let updated = diesel::update(live(id))
@@ -369,6 +394,7 @@ impl Notes {
                     notes::transcript_model.eq(None::<String>),
                     notes::transcript_locale.eq(None::<String>),
                     notes::transcribed_at.eq(None::<String>),
+                    no_summary(),
                     notes::updated_at.eq(encode_time(now)),
                 ))
                 .execute(connection)?;
@@ -381,7 +407,8 @@ impl Notes {
 
     /// Stores `segments`, in order, as the Transcript of the Note `id`, made by `model` in
     /// `locale`, and returns how it was made as stored. It replaces any Transcript the Note had,
-    /// in one transaction. Errors unless the Note has a finished Recording.
+    /// and clears its Summary, in one transaction. Errors unless the Note has a finished
+    /// Recording.
     pub fn set_transcript(
         &mut self,
         id: &NoteId,
@@ -409,6 +436,7 @@ impl Notes {
                         notes::transcript_model.eq(model),
                         notes::transcript_locale.eq(locale),
                         notes::transcribed_at.eq(&transcribed_at),
+                        no_summary(),
                         notes::updated_at.eq(&transcribed_at),
                     ))
                     .execute(connection)?;
@@ -426,6 +454,55 @@ impl Notes {
             locale: locale.to_owned(),
             transcribed_at: decode_time(&transcribed_at)?,
         })
+    }
+
+    /// Stores `text` as the Summary of the Note `id`, made by `model` of the Provider `provider`,
+    /// and returns it as stored. It replaces any Summary the Note had. Errors unless the Note
+    /// has a Transcript.
+    pub fn set_summary(
+        &mut self,
+        id: &NoteId,
+        provider: &str,
+        model: &str,
+        text: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<SummaryInfo> {
+        let summarized_at = encode_time(now);
+        let updated = diesel::update(live(id).filter(notes::transcript_model.is_not_null()))
+            .set((
+                notes::summary.eq(text),
+                notes::summary_provider.eq(provider),
+                notes::summary_model.eq(model),
+                notes::summarized_at.eq(&summarized_at),
+                notes::updated_at.eq(&summarized_at),
+            ))
+            .execute(self.connection()?)?;
+        if updated == 0 {
+            bail!("no Note {id} with a Transcript");
+        }
+        Ok(SummaryInfo {
+            text: text.to_owned(),
+            provider: provider.to_owned(),
+            model: model.to_owned(),
+            summarized_at: decode_time(&summarized_at)?,
+        })
+    }
+
+    /// The Notes whose Transcript holds speech but has no Summary, oldest first, as when the app
+    /// quit while summarizing. Run at launch, to summarize them.
+    pub fn unsummarized(&mut self) -> anyhow::Result<Vec<NoteId>> {
+        let spoken = diesel::dsl::exists(
+            transcript_segments::table.filter(transcript_segments::note_id.eq(notes::id)),
+        );
+        let ids = notes::table
+            .filter(notes::deleted_at.is_null())
+            .filter(notes::transcript_model.is_not_null())
+            .filter(notes::summary.is_null())
+            .filter(spoken)
+            .order(notes::id)
+            .select(notes::id)
+            .load::<String>(self.connection()?)?;
+        Ok(ids.into_iter().map(NoteId).collect())
     }
 
     /// The Transcript of the Note `id` in time order; empty when it has none, or is deleted.
@@ -523,6 +600,22 @@ fn live(
     notes::table
         .find(id.0.as_str())
         .filter(notes::deleted_at.is_null())
+}
+
+/// The columns that clear a Note's Summary.
+#[allow(clippy::type_complexity, reason = "Diesel's assignment types")]
+fn no_summary() -> (
+    diesel::dsl::Eq<notes::summary, Option<String>>,
+    diesel::dsl::Eq<notes::summary_provider, Option<String>>,
+    diesel::dsl::Eq<notes::summary_model, Option<String>>,
+    diesel::dsl::Eq<notes::summarized_at, Option<String>>,
+) {
+    (
+        notes::summary.eq(None),
+        notes::summary_provider.eq(None),
+        notes::summary_model.eq(None),
+        notes::summarized_at.eq(None),
+    )
 }
 
 /// The Transcript segments of the Note `id`.
@@ -641,6 +734,20 @@ fn decode_note(row: NoteRow) -> anyhow::Result<Note> {
                 model,
                 locale,
                 transcribed_at: decode_time(&at)?,
+            }),
+            _ => None,
+        },
+        summary: match (
+            row.summary,
+            row.summary_provider,
+            row.summary_model,
+            row.summarized_at,
+        ) {
+            (Some(text), Some(provider), Some(model), Some(at)) => Some(SummaryInfo {
+                text,
+                provider,
+                model,
+                summarized_at: decode_time(&at)?,
             }),
             _ => None,
         },
