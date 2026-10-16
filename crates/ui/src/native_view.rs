@@ -152,7 +152,7 @@ impl Focusable for NativeView {
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.route == Route::Agenda {
-            self.maintain_agenda(cx);
+            self.maintain_agenda(window, cx);
         }
         let page = match &self.route {
             Route::Agenda => self.render_agenda(window, cx),

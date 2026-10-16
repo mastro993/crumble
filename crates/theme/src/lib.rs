@@ -134,13 +134,13 @@ fn apply_mode(mode: ThemeMode, cx: &mut App) {
     Theme::change(mode, None, cx);
     Theme::update(cx, |theme| {
         if mode.is_dark() {
-            theme.sidebar = gpui_kit::rgb(0x161616).into();
+            theme.sidebar = gpui_kit::rgb(0x1b1b1b).into();
             theme.sidebar_accent = gpui_kit::rgb(0x2f2f2f).into();
             theme.sidebar_accent_foreground = gpui_kit::rgb(0xebebeb).into();
         } else {
             let background = theme.background;
             theme.sidebar = gpui_kit::Hsla {
-                l: (background.l - 0.02).max(0.0),
+                l: (background.l - 0.03).max(0.0),
                 ..background
             };
         }

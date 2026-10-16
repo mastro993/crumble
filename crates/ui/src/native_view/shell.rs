@@ -6,9 +6,7 @@ use super::controls::button;
 use super::sidebar::{SidebarDrag, clamp_sidebar_width, visible_width};
 use super::{NativeView, Route};
 use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT};
-use gpui_kit::component::{
-    Icon, IconName, Sizable, StyledExt, TitleBar, button::ButtonVariants, h_flex,
-};
+use gpui_kit::component::{Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
@@ -84,11 +82,15 @@ impl NativeView {
             .child(
                 div()
                     .id("main-column")
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .h_full()
                     .flex()
                     .flex_col()
+                    .when(self.route == Route::Agenda, |column| {
+                        column.child(Self::render_agenda_backdrop(window, cx))
+                    })
                     .child(self.render_header(window, cx))
                     .child(
                         div()
@@ -148,14 +150,6 @@ impl NativeView {
                 header_inset(left, visible_width(width, collapsed, delta))
             });
         let toolbar = match &self.route {
-            Route::Agenda => Some(
-                div()
-                    .flex_1()
-                    .text_base()
-                    .font_semibold()
-                    .child(Route::Agenda.title())
-                    .into_any_element(),
-            ),
             Route::Calendar => Some(self.render_calendar_toolbar(cx).into_any_element()),
             Route::Event(event) => Some(self.render_event_toolbar(event, cx)),
             _ => None,

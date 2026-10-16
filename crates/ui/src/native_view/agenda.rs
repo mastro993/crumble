@@ -6,20 +6,22 @@ mod rows;
 use super::NativeView;
 use super::account_dot::tint;
 use super::calendar::{local_midnight, today};
+use super::controls::{app_icon, button};
 use super::route::Route;
 use chrono::{DateTime, Days, Local, Months, NaiveDate, Timelike};
 use crumble_eventkit::{self as eventkit, Access, Event, When};
 use crumble_theme::CONTENT_PADDING;
-use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Hsla, IntoElement, ListAlignment, ListState,
-    ParentElement, Styled, Task, Window, div, list, px,
+    AnyElement, App, AppContext, Context, Hsla, IntoElement, ListAlignment, ListOffset, ListState,
+    ParentElement, Pixels, Styled, Task, Window, div, ease_in_out, linear_color_stop,
+    linear_gradient, list, prelude::FluentBuilder, px,
 };
 use rows::{Row, day_label, start_day, time_label};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Width of the Agenda list.
 const LIST_WIDTH: f32 = 320.0;
@@ -36,6 +38,10 @@ const PREFETCH_ROWS: usize = 20;
 /// Thickness of the Now line, and the size of the dot that starts it.
 const NOW_LINE: f32 = 2.0;
 const NOW_DOT: f32 = 8.0;
+/// Height of the fade that rows scroll away under at the list's top.
+const TOP_FADE: f32 = 32.0;
+/// How long the list takes to scroll back to its top.
+const SCROLL_TO_TOP: Duration = Duration::from_millis(300);
 
 /// The days and Calendars an Agenda read covers.
 #[derive(Clone, PartialEq, Eq)]
@@ -67,6 +73,9 @@ pub(super) struct AgendaPage {
     list: ListState,
     /// Whether the last scroll came near the end of the list.
     near_end: Rc<Cell<bool>>,
+    /// When a scroll back to the top began and how far down it began; the user scrolling
+    /// stops it.
+    scrolling_up: Rc<Cell<Option<(Instant, Pixels)>>>,
     /// Whether the minute tick that keeps the rows current is running.
     ticking: bool,
 }
@@ -75,9 +84,11 @@ impl Default for AgendaPage {
     fn default() -> Self {
         let list = ListState::new(0, ListAlignment::Top, px(200.0));
         let near_end = Rc::new(Cell::new(false));
-        let near = near_end.clone();
+        let scrolling_up = Rc::new(Cell::new(None));
+        let (near, up) = (near_end.clone(), scrolling_up.clone());
         list.set_scroll_handler(move |event, _, _| {
             near.set(event.visible_range.end + PREFETCH_ROWS >= event.count);
+            up.set(None);
         });
         Self {
             events: Vec::new(),
@@ -91,6 +102,7 @@ impl Default for AgendaPage {
             built: None,
             list,
             near_end,
+            scrolling_up,
             ticking: false,
         }
     }
@@ -122,6 +134,28 @@ impl AgendaPage {
                 .splice(kept..old.len() - tail, rows.len() - kept - tail);
         }
         self.rows = Rc::new(rows);
+    }
+
+    /// How far the list is scrolled from its top.
+    fn scroll_offset(&self) -> Pixels {
+        -self.list.scroll_px_offset_for_scrollbar().y
+    }
+
+    /// Moves a scroll back to the top one frame on, or straight there when the system asks
+    /// for less motion.
+    fn step_scroll_to_top(&self, window: &Window, cx: &App) {
+        let Some((started, from)) = self.scrolling_up.get() else {
+            return;
+        };
+        let progress = started.elapsed().as_secs_f32() / SCROLL_TO_TOP.as_secs_f32();
+        if progress < 1.0 && !cx.reduce_motion() {
+            let goal = from * (1.0 - ease_in_out(progress));
+            self.list.scroll_by(goal - self.scroll_offset());
+            window.request_animation_frame();
+        } else {
+            self.scrolling_up.set(None);
+            self.list.scroll_to(ListOffset::default());
+        }
     }
 }
 
@@ -220,7 +254,8 @@ impl NativeView {
     /// Keeps the Agenda current while it shows: reads it the first time, again after the day,
     /// the shown Calendars, or EventKit change, and further back near the end of the list;
     /// rebuilds the rows each minute so Events join as they start.
-    pub(super) fn maintain_agenda(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn maintain_agenda(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.agenda.step_scroll_to_top(window, cx);
         let sync = self.calendar_sync.read(cx);
         if sync.access() != Access::Granted {
             return;
@@ -314,17 +349,28 @@ impl NativeView {
         }
     }
 
-    /// The Agenda list beside an empty content area.
-    pub(super) fn render_agenda(&self, window: &Window, cx: &App) -> AnyElement {
+    /// The Agenda column's surface from the window's top to its bottom, behind the header and
+    /// the list.
+    pub(super) fn render_agenda_backdrop(window: &Window, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
-        let sync = self.calendar_sync.read(cx);
-        let column = div()
-            .flex_shrink_0()
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
             .w(px(LIST_WIDTH))
-            .h_full()
+            .bg(surface(cx))
             // One device pixel, matching the sidebar's hairline.
             .border_r(px(1.0 / window.scale_factor()))
-            .border_color(theme.border);
+            .border_color(theme.border)
+    }
+
+    /// The Agenda list beside an empty content area, with a button back to the top once the
+    /// list is scrolled.
+    pub(super) fn render_agenda(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let sync = self.calendar_sync.read(cx);
+        let column = div().relative().flex_shrink_0().w(px(LIST_WIDTH)).h_full();
         let column = if sync.access() == Access::Granted {
             let colors: Rc<HashMap<String, Hsla>> = Rc::new(
                 sync.calendars()
@@ -337,15 +383,59 @@ impl NativeView {
             );
             let rows = self.agenda.rows.clone();
             let today = today();
-            column.child(
-                list(self.agenda.list.clone(), move |index, _, cx| {
-                    rows.get(index).map_or_else(
-                        || div().into_any_element(),
-                        |row| render_row(row, rows.len() == 1, today, &colors, cx),
+            column
+                .child(
+                    list(self.agenda.list.clone(), move |index, _, cx| {
+                        rows.get(index).map_or_else(
+                            || div().into_any_element(),
+                            |row| render_row(row, index == 0, rows.len() == 1, today, &colors, cx),
+                        )
+                    })
+                    .size_full(),
+                )
+                .child({
+                    // Rows fade away under the list's top; the fade grows in over its first
+                    // scrolled points so the top row isn't dimmed at rest.
+                    let surface = surface(cx);
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        // Clear of the backdrop's hairline.
+                        .right(px(1.0 / window.scale_factor()))
+                        .h(self.agenda.scroll_offset().min(px(TOP_FADE)))
+                        .bg(linear_gradient(
+                            180.0,
+                            linear_color_stop(surface, 0.0),
+                            linear_color_stop(surface.opacity(0.0), 1.0),
+                        ))
+                })
+                .when(self.agenda.scroll_offset() > px(0.0), |column| {
+                    column.child(
+                        h_flex()
+                            .absolute()
+                            .top_3()
+                            .left_0()
+                            .right_0()
+                            .justify_center()
+                            .child(
+                                button("agenda-top")
+                                    .outline()
+                                    .small()
+                                    .rounded(px(999.0))
+                                    .shadow_md()
+                                    .icon(app_icon("scroll-to-top"))
+                                    .accessibility_label("Scroll to top")
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        let agenda = &view.agenda;
+                                        agenda
+                                            .scrolling_up
+                                            .set(Some((Instant::now(), agenda.scroll_offset())));
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                 })
-                .size_full(),
-            )
         } else {
             column.child(
                 div()
@@ -359,9 +449,18 @@ impl NativeView {
     }
 }
 
-/// One item of the Agenda list; `alone` says the list holds nothing else.
+/// The Agenda column's opaque surface: half the sidebar over the page, so this second-level
+/// column sits between them.
+fn surface(cx: &App) -> Hsla {
+    let theme = cx.theme();
+    theme.background.blend(theme.sidebar.opacity(0.5))
+}
+
+/// One item of the Agenda list; `first` says it opens the list, and `alone` says the list
+/// holds nothing else.
 fn render_row(
     row: &Row,
+    first: bool,
     alone: bool,
     today: NaiveDate,
     colors: &HashMap<String, Hsla>,
@@ -371,7 +470,8 @@ fn render_row(
     let item = div().px(px(CONTENT_PADDING));
     match row {
         Row::Day(day) => item
-            .pt_4()
+            // The header strip already spaces the list from the window's top.
+            .map(|item| if first { item.pt_1() } else { item.pt_4() })
             .pb_1()
             .text_sm()
             .font_semibold()
@@ -388,9 +488,9 @@ fn render_row(
                     .flex_shrink_0()
                     .size(px(NOW_DOT))
                     .rounded_full()
-                    .bg(theme.primary),
+                    .bg(theme.danger),
             )
-            .child(div().flex_1().h(px(NOW_LINE)).bg(theme.primary))
+            .child(div().flex_1().h(px(NOW_LINE)).bg(theme.danger))
             .into_any_element(),
         Row::Event(event) => {
             let color = colors
