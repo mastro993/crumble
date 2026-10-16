@@ -1,9 +1,11 @@
 //! State Crumble keeps across restarts, in a SQLite database under the platform data directory,
-//! and the Account rules that read it.
+//! and the Account rules that read it. API keys are kept apart, in the Keychain, through
+//! [`secrets`].
 
 mod account_color;
 mod calendars_section;
 mod db;
+pub mod secrets;
 
 pub use account_color::AccountColor;
 pub use calendars_section::{CalendarsSection, calendars_section};
@@ -13,6 +15,7 @@ use std::collections::BTreeSet;
 use chrono::Weekday;
 use crumble_calendar::CalendarView;
 use crumble_eventkit::{Account, Calendar};
+use crumble_summarize::Provider;
 use db::State;
 use diesel::{Connection, QueryResult, SqliteConnection};
 
@@ -103,6 +106,53 @@ impl Store {
             self.state.calendar_view = view;
             self.write(db::write_app_state);
         }
+    }
+
+    /// The Summary Model's Provider: the one picked in Settings, else Apple's when
+    /// `apple_available`, else none.
+    pub fn summary_provider(&self, apple_available: bool) -> Option<Provider> {
+        self.state
+            .summary_provider
+            .or(apple_available.then_some(Provider::Apple))
+    }
+
+    /// Makes `provider` make Summaries.
+    pub fn set_summary_provider(&mut self, provider: Provider) {
+        self.state.summary_provider = Some(provider);
+        self.write(db::write_app_state);
+    }
+
+    /// The Claude Model id Summaries use.
+    pub fn claude_model(&self) -> &str {
+        &self.state.claude_model
+    }
+
+    /// Makes Summaries use the Claude Model `model`.
+    pub fn set_claude_model(&mut self, model: &str) {
+        self.state.claude_model = model.trim().to_owned();
+        self.write(db::write_app_state);
+    }
+
+    /// The OpenAI-compatible server's address up to `/chat/completions`; empty until set.
+    pub fn openai_base_url(&self) -> &str {
+        &self.state.openai_base_url
+    }
+
+    /// Sets the OpenAI-compatible server's address.
+    pub fn set_openai_base_url(&mut self, url: &str) {
+        self.state.openai_base_url = url.trim().to_owned();
+        self.write(db::write_app_state);
+    }
+
+    /// The Model Summaries use on the OpenAI-compatible server; empty until set.
+    pub fn openai_model(&self) -> &str {
+        &self.state.openai_model
+    }
+
+    /// Makes Summaries use the Model `model` on the OpenAI-compatible server.
+    pub fn set_openai_model(&mut self, model: &str) {
+        self.state.openai_model = model.trim().to_owned();
+        self.write(db::write_app_state);
     }
 
     /// Whether the Account `id` is Disabled.
@@ -303,6 +353,11 @@ mod tests {
         store.set_account_color("source-2", AccountColor::Custom(0x3366ff));
         store.set_account_alias("source-3", "Work", "me@example.com");
         store.set_listed_order(&accounts, vec!["source-3".into(), "source-2".into()]);
+        store.set_summary_provider(crumble_summarize::Provider::OpenAiCompatible);
+        store.set_claude_model(" claude-opus-5-5 ");
+        store.set_openai_base_url("http://localhost:11434/v1");
+        store.set_openai_model("llama3.2");
+        assert_eq!(store.claude_model(), "claude-opus-5-5");
         assert_eq!(
             store.state.account_order,
             ["source-1", "source-3", "source-2"]
@@ -345,6 +400,18 @@ mod tests {
         let reopened = open().state;
         let _ = std::fs::remove_file(&path);
         assert_eq!(reopened, written);
+    }
+
+    #[test]
+    fn the_summary_provider_is_the_picked_one_else_apples_when_available() {
+        use crumble_summarize::Provider;
+        let mut store = Store::in_memory();
+        assert_eq!(store.summary_provider(false), None);
+        assert_eq!(store.summary_provider(true), Some(Provider::Apple));
+        assert_eq!(store.claude_model(), "claude-sonnet-5-5");
+        store.set_summary_provider(Provider::Claude);
+        assert_eq!(store.summary_provider(true), Some(Provider::Claude));
+        assert_eq!(store.reloaded().summary_provider, Some(Provider::Claude));
     }
 
     #[test]

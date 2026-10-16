@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Weekday;
 use crumble_calendar::CalendarView;
 use crumble_db::schema::{accounts, app_state, calendars, folded_sections};
+use crumble_summarize::Provider;
 use diesel::prelude::*;
 use diesel::upsert::excluded;
 
@@ -27,7 +28,16 @@ pub(crate) struct State {
     /// Dot colors the user picked; the others use [`AccountColor::default_for`].
     pub(crate) account_colors: BTreeMap<String, AccountColor>,
     pub(crate) account_aliases: BTreeMap<String, String>,
+    /// The Summary Provider picked in Settings; `None` until one is.
+    pub(crate) summary_provider: Option<Provider>,
+    pub(crate) claude_model: String,
+    /// Empty until set.
+    pub(crate) openai_base_url: String,
+    pub(crate) openai_model: String,
 }
+
+/// The Claude Model Settings starts with, as the migration's default.
+pub(crate) const CLAUDE_MODEL: &str = "claude-sonnet-5-5";
 
 impl Default for State {
     fn default() -> Self {
@@ -41,6 +51,10 @@ impl Default for State {
             account_order: Vec::new(),
             account_colors: BTreeMap::new(),
             account_aliases: BTreeMap::new(),
+            summary_provider: None,
+            claude_model: CLAUDE_MODEL.to_owned(),
+            openai_base_url: String::new(),
+            openai_model: String::new(),
         }
     }
 }
@@ -59,13 +73,25 @@ struct AccountRow {
 /// Reads the whole database.
 pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
     let mut state = State::default();
-    if let Some((day, view)) = app_state::table
-        .select((app_state::first_day_of_week, app_state::calendar_view))
-        .first::<(i32, String)>(connection)
-        .optional()?
+    if let Some((day, view, provider, claude_model, openai_base_url, openai_model)) =
+        app_state::table
+            .select((
+                app_state::first_day_of_week,
+                app_state::calendar_view,
+                app_state::summary_provider,
+                app_state::claude_model,
+                app_state::openai_base_url,
+                app_state::openai_model,
+            ))
+            .first::<(i32, String, Option<String>, String, String, String)>(connection)
+            .optional()?
     {
         state.first_day_of_week = decode_weekday(day);
         state.calendar_view = decode_calendar_view(&view);
+        state.summary_provider = provider.as_deref().and_then(Provider::from_id);
+        state.claude_model = claude_model;
+        state.openai_base_url = openai_base_url;
+        state.openai_model = openai_model;
     }
     let mut rows = accounts::table.load::<AccountRow>(connection)?;
     rows.sort_by_key(|row| row.position);
@@ -106,6 +132,10 @@ pub(crate) fn write_app_state(connection: &mut SqliteConnection, state: &State) 
         .set((
             app_state::first_day_of_week.eq(encode_weekday(state.first_day_of_week)),
             app_state::calendar_view.eq(encode_calendar_view(state.calendar_view)),
+            app_state::summary_provider.eq(state.summary_provider.map(Provider::id)),
+            app_state::claude_model.eq(&state.claude_model),
+            app_state::openai_base_url.eq(&state.openai_base_url),
+            app_state::openai_model.eq(&state.openai_model),
         ))
         .execute(connection)?;
     Ok(())
