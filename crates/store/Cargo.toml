@@ -10,10 +10,9 @@ publish.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 crumble-calendar.workspace = true
+crumble-db.workspace = true
 crumble-eventkit.workspace = true
 diesel.workspace = true
-diesel_migrations.workspace = true
-dirs.workspace = true
 
 [lints]
 workspace = true
