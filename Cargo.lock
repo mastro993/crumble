@@ -1412,6 +1412,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumble-remote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "crumble-store"
 version = "0.1.0"
 dependencies = [
@@ -1429,8 +1438,8 @@ name = "crumble-summarize"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crumble-remote",
  "serde_json",
- "ureq",
 ]
 
 [[package]]
@@ -1457,6 +1466,9 @@ name = "crumble-transcribe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crumble-remote",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -1470,6 +1482,7 @@ dependencies = [
  "crumble-calendar",
  "crumble-eventkit",
  "crumble-notes",
+ "crumble-remote",
  "crumble-store",
  "crumble-summarize",
  "crumble-sync",
