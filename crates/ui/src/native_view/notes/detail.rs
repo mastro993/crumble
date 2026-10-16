@@ -25,7 +25,7 @@ impl NativeView {
         let when = match subject {
             Subject::Event(event) => when_text(&event.when),
             Subject::QuickNote(note) => note
-                .created_at
+                .listed_at()
                 .with_timezone(&Local)
                 .format("%a %-d %b · %H:%M")
                 .to_string(),
