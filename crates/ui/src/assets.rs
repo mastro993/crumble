@@ -51,6 +51,10 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/Cancel01Icon.svg"),
     ),
     (
+        "icons/delete.svg",
+        include_bytes!("../../../assets/hugeicons/Delete02Icon.svg"),
+    ),
+    (
         "icons/forward.svg",
         include_bytes!("../../../assets/hugeicons/ArrowTurnForwardIcon.svg"),
     ),
@@ -61,6 +65,14 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/home.svg",
         include_bytes!("../../../assets/hugeicons/Home01Icon.svg"),
+    ),
+    (
+        "icons/more.svg",
+        include_bytes!("../../../assets/hugeicons/MoreHorizontalIcon.svg"),
+    ),
+    (
+        "icons/note-add.svg",
+        include_bytes!("../../../assets/hugeicons/NoteAddIcon.svg"),
     ),
     (
         "icons/notes.svg",
