@@ -6,7 +6,7 @@
 use std::fmt;
 use std::io::ErrorKind;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
@@ -299,10 +299,31 @@ impl Notes {
         self.remove_audio(id)
     }
 
+    /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
+    /// its folder, and one with nothing readable is deleted. Run at launch, before anything
+    /// records; `crumble_audio::recorded_length` reads the files.
+    pub fn recover_recordings(
+        &mut self,
+        length: impl Fn(&Path) -> anyhow::Result<Duration>,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        for id in self.unfinished_recordings()? {
+            match length(&self.recording_dir(&id)) {
+                Ok(duration) => self.set_recording_finished(&id, duration, now)?,
+                Err(error) => {
+                    eprintln!(
+                        "Deleting the Recording of Note {id}, as none of it is readable: {error}"
+                    );
+                    self.delete_recording(&id, now)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The Notes whose Recording started but never finished, as when the app died while
-    /// recording. The caller reads what the files hold and calls
-    /// [`Notes::set_recording_finished`].
-    pub fn unfinished_recordings(&mut self) -> anyhow::Result<Vec<NoteId>> {
+    /// recording.
+    fn unfinished_recordings(&mut self) -> anyhow::Result<Vec<NoteId>> {
         let ids = notes::table
             .filter(notes::deleted_at.is_null())
             .filter(notes::recording_started_at.is_not_null())
