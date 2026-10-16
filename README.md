@@ -37,10 +37,10 @@ Crumble keeps its state in SQLite through [Diesel](https://diesel.rs/) ([ADR 000
 cargo install diesel_cli --no-default-features --features sqlite
 ```
 
-Then, from `crates/store` (where `diesel.toml` lives), add a migration, fill in its `up.sql` and `down.sql`, and regenerate `src/schema.rs` against a scratch database:
+Then, from `crates/db` (where `diesel.toml` lives), add a migration, fill in its `up.sql` and `down.sql`, and regenerate `src/schema.rs` against a scratch database:
 
 ```sh
-cd crates/store
+cd crates/db
 diesel migration generate <name>
 diesel migration run --database-url /tmp/crumble-scratch.sqlite3
 rm /tmp/crumble-scratch.sqlite3
