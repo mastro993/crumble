@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/notify", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -26,6 +26,7 @@ crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
 crumble-notes = { path = "crates/notes" }
+crumble-notify = { path = "crates/notify" }
 crumble-remote = { path = "crates/remote" }
 crumble-store = { path = "crates/store" }
 crumble-summarize = { path = "crates/summarize" }

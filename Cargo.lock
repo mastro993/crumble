@@ -1412,6 +1412,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumble-notify"
+version = "0.1.0"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "objc2-user-notifications",
+]
+
+[[package]]
 name = "crumble-remote"
 version = "0.1.0"
 dependencies = [
@@ -1482,6 +1492,7 @@ dependencies = [
  "crumble-calendar",
  "crumble-eventkit",
  "crumble-notes",
+ "crumble-notify",
  "crumble-remote",
  "crumble-store",
  "crumble-summarize",
