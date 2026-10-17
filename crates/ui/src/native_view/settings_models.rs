@@ -146,15 +146,27 @@ pub(super) fn model_settings(
                 cx.notify();
             },
         ),
-        saved_on_change(&claude_model, window, cx, |store, value| {
-            store.set_claude_model(value)
-        }),
-        saved_on_change(&openai_url, window, cx, |store, value| {
-            store.set_openai_base_url(value)
-        }),
-        saved_on_change(&openai_model, window, cx, |store, value| {
-            store.set_openai_model(value)
-        }),
+        saved_on_change(
+            &claude_model,
+            Provider::Claude,
+            window,
+            cx,
+            |store, value| store.set_claude_model(value),
+        ),
+        saved_on_change(
+            &openai_url,
+            Provider::OpenAiCompatible,
+            window,
+            cx,
+            |store, value| store.set_openai_base_url(value),
+        ),
+        saved_on_change(
+            &openai_model,
+            Provider::OpenAiCompatible,
+            window,
+            cx,
+            |store, value| store.set_openai_model(value),
+        ),
         cx.subscribe_in(&claude_key, window, |view, _, event, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 view.save_key(Provider::Claude, window, cx);
@@ -190,9 +202,11 @@ pub(super) fn model_settings(
     }
 }
 
-/// Keeps `input`'s text through `save` as it is typed.
+/// Keeps `input`'s text through `save` as it is typed, and forgets `provider`'s Test result,
+/// which no longer says anything about it.
 fn saved_on_change(
     input: &Entity<InputState>,
+    provider: Provider,
     window: &mut Window,
     cx: &mut Context<NativeView>,
     save: fn(&mut Store, &str),
@@ -201,7 +215,7 @@ fn saved_on_change(
         if matches!(event, InputEvent::Change) {
             let value = input.read(cx).value();
             save(&mut view.store, &value);
-            view.models.checks.clear();
+            view.models.checks.remove(&provider);
             cx.notify();
         }
     })

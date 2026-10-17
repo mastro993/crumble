@@ -78,14 +78,16 @@ impl NativeView {
     /// the Mac. A remote one gets an older Transcript only when the user asks, from its Note's
     /// Summary tab. Run at launch and when a Summary Model is picked.
     pub(in super::super) fn summarize_unsummarized(&mut self, cx: &mut Context<Self>) {
-        let local = self
-            .summary_provider()
-            .is_some_and(|provider| runs_locally(provider, self.store.openai_base_url()));
-        if !local {
+        let Some(provider) = self.summary_provider().filter(|&provider| {
+            runs_locally(provider, self.store.openai_base_url()) && self.is_configured(provider)
+        }) else {
             return;
-        }
+        };
+        // Each keeps this Provider, so a remote one picked while they wait never gets them.
         match self.notes.unsummarized() {
-            Ok(ids) => ids.into_iter().for_each(|id| self.summarize(id, None, cx)),
+            Ok(ids) => ids
+                .into_iter()
+                .for_each(|id| self.summarize(id, Some(provider), cx)),
             Err(error) => eprintln!("Could not find the Transcripts to summarize: {error:#}"),
         }
     }
@@ -230,7 +232,10 @@ impl NativeView {
             })
         };
         Ok(match provider {
-            Provider::Apple => Box::new(Apple),
+            Provider::Apple => match apple_availability().reason() {
+                Some(reason) => return Err(format!("Apple isn't available: {reason}")),
+                None => Box::new(Apple),
+            },
             Provider::Claude => Box::new(Claude {
                 api_key: key()?.ok_or("Add a Claude API key in Settings.")?,
                 model: self.store.claude_model().to_owned(),
@@ -353,7 +358,7 @@ impl NativeView {
                         })),
                 ))
             }
-            None if note.summary.is_none() && !detail.transcript.is_empty() => {
+            None if note.summary.is_none() && detail.spoken() => {
                 Some(match self.summary_provider() {
                     Some(provider) => (
                         "Not summarized yet".to_owned(),

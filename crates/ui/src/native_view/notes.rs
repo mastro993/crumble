@@ -147,6 +147,13 @@ impl NoteDetail {
         }
     }
 
+    /// Whether the shown Transcript holds speech, which a Summary can be made from.
+    pub(super) fn spoken(&self) -> bool {
+        self.transcript
+            .iter()
+            .any(|segment| !segment.text.trim().is_empty())
+    }
+
     /// The shown Note's tabs, and the one that shows.
     fn tabs(&self) -> (Vec<tabs::NoteTab>, tabs::NoteTab) {
         let (summary, transcript) = self.note.as_ref().map_or((false, false), |note| {
@@ -154,7 +161,7 @@ impl NoteDetail {
                 // Also a spoken Transcript no job took, which the tab offers to summarize.
                 note.summary.is_some()
                     || self.summarization.involves(&note.id)
-                    || (note.transcript.is_some() && !self.transcript.is_empty()),
+                    || (note.transcript.is_some() && self.spoken()),
                 note.transcript.is_some() || self.transcription.involves(&note.id),
             )
         });

@@ -761,6 +761,9 @@ fn only_a_spoken_transcript_without_a_summary_needs_one() {
     recorded(&mut notes);
     let silent = recorded(&mut notes);
     ok(notes.set_transcript(&silent.id, "Model", "en_US", &[], at(8)));
+    let empty = recorded(&mut notes);
+    let nothing = [line(super::Track::Mic, 0, "")];
+    ok(notes.set_transcript(&empty.id, "Model", "en_US", &nothing, at(8)));
     let waiting = transcribed(&mut notes);
     let done = transcribed(&mut notes);
     ok(notes.set_summary(&done.id, "apple", "m", "# Hi", at(9)));

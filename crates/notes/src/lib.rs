@@ -530,8 +530,11 @@ impl Notes {
     /// The Notes whose Transcript holds speech but has no Summary, oldest first, as when the app
     /// quit while summarizing. Run at launch, to summarize them.
     pub fn unsummarized(&mut self) -> anyhow::Result<Vec<NoteId>> {
+        // Speech recognition trims each segment, so an empty one said nothing.
         let spoken = diesel::dsl::exists(
-            transcript_segments::table.filter(transcript_segments::note_id.eq(notes::id)),
+            transcript_segments::table
+                .filter(transcript_segments::note_id.eq(notes::id))
+                .filter(transcript_segments::text.ne("")),
         );
         let ids = notes::table
             .filter(notes::deleted_at.is_null())
