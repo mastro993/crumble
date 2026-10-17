@@ -58,6 +58,9 @@ struct Feed {
     blocks: SyncSender<Block>,
     /// Frames dropped because the queue was full.
     dropped: AtomicU64,
+    /// Set before the IO proc is stopped: it sends nothing more, even if Core Audio keeps
+    /// calling it after a failed stop, so the writer can drain the queue and finish.
+    closed: AtomicBool,
 }
 
 /// A running Recording. Dropping it stops and finalizes it, as [`Recorder::stop`] does.
@@ -139,9 +142,9 @@ impl Recorder {
         }
     }
 
-    /// Stops, finalizes the files and returns the Recording's length: its longest track. Errors
-    /// when a track could not be written or closed in full, its file keeping what was written
-    /// before, and when no audio arrived at all.
+    /// Stops, finalizes the files and returns the Recording's length: its longest track, zero
+    /// when no audio arrived. Errors when a track could not be written or closed in full, its
+    /// file keeping what was written before.
     pub fn stop(mut self) -> anyhow::Result<Duration> {
         self.finish()
     }
@@ -169,15 +172,11 @@ impl Recorder {
         {
             bail!("the {track:?} track stopped being written: {error:#}");
         }
-        let length = written
+        Ok(written
             .iter()
             .map(Written::length)
             .max()
-            .unwrap_or_default();
-        if length.is_zero() {
-            bail!("no audio arrived before the Recording stopped");
-        }
-        Ok(length)
+            .unwrap_or_default())
     }
 }
 
@@ -440,6 +439,7 @@ impl Capture {
         let feed = Box::new(Feed {
             blocks,
             dropped: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
         });
         let mut proc_id: AudioDeviceIOProcID = None;
         // SAFETY: `feed` outlives the IO proc, which `Drop` destroys before freeing it.
@@ -474,13 +474,16 @@ impl Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        // SAFETY: stops and unregisters the IO proc created in `new`.
-        let status = unsafe {
-            if self.started {
-                AudioDeviceStop(self.source.device, self.proc_id);
+        self.feed.closed.store(true, Ordering::Release);
+        if self.started {
+            // SAFETY: stops the IO proc started in `start`.
+            let status = unsafe { AudioDeviceStop(self.source.device, self.proc_id) };
+            if let Err(error) = check(status, "stop recording") {
+                eprintln!("Recording: {:?}: {error:#}", self.track);
             }
-            AudioDeviceDestroyIOProcID(self.source.device, self.proc_id)
-        };
+        }
+        // SAFETY: unregisters the IO proc created in `new`.
+        let status = unsafe { AudioDeviceDestroyIOProcID(self.source.device, self.proc_id) };
         match check(status, "unregister from audio") {
             // SAFETY: Core Audio no longer calls the IO proc, and `feed` is dropped only here.
             Ok(()) => unsafe { ManuallyDrop::drop(&mut self.feed) },
@@ -503,6 +506,9 @@ unsafe extern "C-unwind" fn io_proc(
     // SAFETY: `client` is the `Feed` registered with this proc, alive until it is destroyed,
     // and Core Audio passes a valid input list for the cycle.
     let (feed, list) = unsafe { (&*client.cast::<Feed>(), input.as_ref()) };
+    if feed.closed.load(Ordering::Acquire) {
+        return 0;
+    }
     // `mBuffers` holds `mNumberBuffers` entries, so the first exists only when that is nonzero.
     if list.mNumberBuffers == 0 {
         return 0;
