@@ -118,7 +118,7 @@ impl NoteDetail {
             // Quitting within the pause still keeps what was typed, and a running Recording.
             cx.on_app_quit(|view, cx| {
                 view.save_note(cx);
-                // The next launch transcribes it.
+                // The next launch transcribes it with a local Model; a remote one waits to be asked.
                 let _ = view.stop_recording(cx);
                 async {}
             }),
