@@ -10,7 +10,9 @@ use super::agenda::Selected;
 use chrono::Utc;
 use crumble_eventkit::Event;
 use crumble_notes::{Note, NoteId};
+use gpui_kit::component::WindowExt;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::{App, AppContext, Bounds, Context, Entity, Pixels, Subscription, Task, Window};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -287,7 +289,8 @@ impl NativeView {
         let Some(note) = &mut detail.note else {
             return;
         };
-        if note.title == title {
+        // A title kept after a failed save is written again, even unchanged since.
+        if note.title == title && !detail.unsaved_titles.contains_key(&note.id) {
             return;
         }
         note.title.clone_from(&title);
@@ -315,8 +318,8 @@ impl NativeView {
             Ok(note) => note,
             Err(error) => {
                 eprintln!("Could not make a Note: {error}");
-                self.note_detail.save_failed = true;
-                cx.notify();
+                // A toast, as no Note may show to say it under.
+                window.push_notification(Notification::error("Couldn't make a note"), cx);
                 return;
             }
         };
