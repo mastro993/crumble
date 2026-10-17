@@ -9,7 +9,7 @@ use crumble_remote::Provider;
 use crate::{Segment, Track, Transcriber, ffi, merge, tracks};
 
 /// The Model Apple's [`Transcriber`] records on a Transcript.
-pub const MODEL: &str = "Apple SpeechAnalyzer";
+pub(crate) const MODEL: &str = "Apple SpeechAnalyzer";
 
 /// Apple's on-device SpeechAnalyzer. The locale's model must be installed first:
 /// [`model_status`](crate::model_status) says whether it is, and

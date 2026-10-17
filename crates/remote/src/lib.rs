@@ -5,8 +5,9 @@
 
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use serde_json::Value;
+use ureq::http::Uri;
 
 /// Where a Model runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -62,34 +63,82 @@ pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
     match provider {
         Provider::Apple => true,
         Provider::Claude => false,
-        Provider::OpenAiCompatible => {
-            let host = host(openai_base_url);
-            host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
-        }
+        Provider::OpenAiCompatible => is_loopback(openai_base_url),
     }
 }
 
-/// `url`'s host, without a port, credentials or IPv6 brackets: `api.openai.com` for
-/// `https://api.openai.com/v1`. Empty when there is none.
-pub fn host(url: &str) -> &str {
-    let url = url.trim();
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+/// Whether `url` can be sent to and its host is `localhost`, `127.0.0.1` or `::1`.
+fn is_loopback(url: &str) -> bool {
+    host(url).is_some_and(|host| host == "localhost" || host == "127.0.0.1" || host == "::1")
+}
+
+/// `url`'s host in lowercase, without a port, credentials or IPv6 brackets: `api.openai.com`
+/// for `https://api.openai.com/v1`. `None` when requests cannot go to `url`.
+pub fn host(url: &str) -> Option<String> {
+    let uri = parse(url)?;
+    let host = uri.host()?;
+    Some(
+        host.trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase(),
+    )
+}
+
+/// `url` with its spaces and trailing `/` trimmed, for a path to follow; or, for the user, why
+/// requests cannot go to it.
+pub fn base_url(url: &str) -> anyhow::Result<&str> {
+    let base = url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        bail!("Enter the server's address in Settings.");
+    }
+    if !base.contains("://") {
+        bail!("Start the server's address with http:// or https://.");
+    }
+    if parse(base).is_none() {
+        bail!("Check the server's address in Settings.");
+    }
+    Ok(base)
+}
+
+/// `url` read as the HTTP client reads it, so what is judged local or asked about is where a
+/// request goes: `None` unless it has an `http` or `https` scheme and a host.
+fn parse(url: &str) -> Option<Uri> {
+    let uri: Uri = url.trim().parse().ok()?;
+    let sendable = matches!(uri.scheme_str(), Some("http" | "https")) && uri.host().is_some();
+    sendable.then_some(uri)
+}
+
+/// `url` without the `user:password@` before its host, to show in errors and logs, even when
+/// it cannot be sent to.
+pub fn without_userinfo(url: &str) -> String {
+    let [scheme, _, authority, rest] = url_parts(url);
+    format!("{scheme}{authority}{rest}")
+}
+
+/// `url` in four parts: its scheme with `://` (empty without one), any `user:password@`, its host
+/// and port, and the rest.
+fn url_parts(url: &str) -> [&str; 4] {
+    let start = url.find("://").map_or(0, |at| at + 3);
+    let end = url[start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |at| start + at);
     // Credentials before an `@` are not the host.
-    let authority = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    match authority.strip_prefix('[') {
-        Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
-        None => authority.split(':').next().unwrap_or_default(),
-    }
+    let host = url[start..end]
+        .rfind('@')
+        .map_or(start, |at| start + at + 1);
+    [
+        &url[..start],
+        &url[start..host],
+        &url[host..end],
+        &url[end..],
+    ]
 }
 
-/// How long a request may take in all: a local Model can take minutes on an hour's speech, and
-/// an upload of a long track takes a while too.
-const TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a JSON request may take in all, and the least an upload gets: a local Model can
+/// take minutes on an hour's speech.
+pub const TIMEOUT: Duration = Duration::from_secs(600);
 
-/// POSTs `body` as JSON. See [`post`].
+/// POSTs `body` as JSON, within [`TIMEOUT`]. See [`post`].
 pub fn post_json(
     url: &str,
     headers: &[(&str, &str)],
@@ -98,22 +147,22 @@ pub fn post_json(
     post(
         url,
         headers,
-        "application/json",
-        body.to_string().as_bytes(),
+        ("application/json", body.to_string().as_bytes()),
+        TIMEOUT,
     )
 }
 
-/// POSTs `body` as `content_type` and returns the status and the response's text, whatever the
-/// status, within 10 minutes. Only a request that got no response errors; its error holds no
-/// header.
+/// POSTs `body`, a content type and its bytes, and returns the status and the response's text,
+/// whatever the status, within `timeout`. Only a request that got no response errors; its
+/// error holds no header.
 pub fn post(
     url: &str,
     headers: &[(&str, &str)],
-    content_type: &str,
-    body: &[u8],
+    (content_type, body): (&str, &[u8]),
+    timeout: Duration,
 ) -> Result<(u16, String), ureq::Error> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into();
@@ -124,6 +173,20 @@ pub fn post(
     let mut response = request.send(body)?;
     let status = response.status().as_u16();
     Ok((status, response.body_mut().read_to_string()?))
+}
+
+/// What to tell the user when a request to `who` got no response, with `hint` saying what to
+/// check; the cause is logged. One that ran out of its `timeout` says so, as a slow Model is no
+/// unreachable server.
+pub fn no_response(who: &str, hint: &str, timeout: Duration, error: &ureq::Error) -> anyhow::Error {
+    eprintln!("Could not reach {who}: {error}");
+    match error {
+        ureq::Error::Timeout(_) => anyhow!(
+            "{who} didn't answer within {} minutes. Try again later.",
+            timeout.as_secs() / 60
+        ),
+        _ => anyhow!("Couldn't reach {who}. {hint}"),
+    }
 }
 
 /// What to tell the user when `provider` answered a request for `model` with `status` and
@@ -143,7 +206,13 @@ pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyh
     match status {
         401 => anyhow!("{who} didn't accept the API key. Check it in Settings."),
         403 => anyhow!("{who} didn't allow this API key to use {model}."),
-        404 => anyhow!("{who} has no Model named {model}. Check the Model in Settings."),
+        // Blame the Model only when the server names it; a bare 404 is an address with nothing
+        // behind it.
+        404 if said.contains(model) => {
+            anyhow!("{who} has no Model named {model}. Check the Model in Settings.")
+        }
+        404 if !said.is_empty() => anyhow!("{who} turned the request down: {said}"),
+        404 => anyhow!("{who} has nothing at that address. Check the address in Settings."),
         413 => anyhow!("{who} turned the request down as too large."),
         429 => anyhow!("{who} is getting too many requests. Try again in a minute."),
         500.. => anyhow!("{who} had a problem ({status}). Try again later."),
@@ -154,7 +223,10 @@ pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyh
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, failure, host, runs_locally};
+    use super::{
+        Provider, TIMEOUT, base_url, failure, host, no_response, runs_locally, without_userinfo,
+    };
+    use std::time::Duration;
 
     #[test]
     fn provider_ids_round_trip() {
@@ -174,13 +246,13 @@ mod tests {
             "http://LOCALHOST:1234/v1/",
             "http://127.0.0.1:8765/v1",
             "https://[::1]:8080/v1",
-            "localhost:11434/v1",
             " http://user:pw@127.0.0.1/v1 ",
         ] {
             assert!(runs_locally(OpenAiCompatible, local), "{local}");
         }
         for remote in [
             "",
+            "localhost:11434/v1",
             "http://192.168.1.20:8765/v1",
             "https://api.openai.com/v1",
             "http://localhost.example.com/v1",
@@ -188,6 +260,9 @@ mod tests {
             "http://localhost@evil.example.com/v1",
             "http://[::2]/v1",
             "http://10.0.0.1/localhost",
+            "evil.example.com/p?u=http://localhost/v1",
+            "http://evil.example.com\\@localhost/v1",
+            "ftp://localhost/v1",
         ] {
             assert!(!runs_locally(OpenAiCompatible, remote), "{remote}");
         }
@@ -195,12 +270,87 @@ mod tests {
 
     #[test]
     fn a_host_drops_scheme_port_path_and_credentials() {
-        assert_eq!(host("https://api.openai.com/v1"), "api.openai.com");
-        assert_eq!(host(" http://user:pw@whisper.lan:8000/v1/ "), "whisper.lan");
-        assert_eq!(host("https://[::1]:8080/v1"), "::1");
-        assert_eq!(host("localhost:11434"), "localhost");
-        assert_eq!(host("http://example.com?x=1"), "example.com");
-        assert_eq!(host(""), "");
+        let host = |url| host(url);
+        assert_eq!(
+            host("https://API.openai.com/v1").as_deref(),
+            Some("api.openai.com")
+        );
+        assert_eq!(
+            host(" http://user:pw@whisper.lan:8000/v1/ ").as_deref(),
+            Some("whisper.lan")
+        );
+        assert_eq!(host("https://[::1]:8080/v1").as_deref(), Some("::1"));
+        assert_eq!(
+            host("http://example.com?x=1").as_deref(),
+            Some("example.com")
+        );
+        for unsendable in [
+            "",
+            "localhost:11434",
+            "evil.example.com/p?u=http://localhost/v1",
+        ] {
+            assert_eq!(host(unsendable), None, "{unsendable}");
+        }
+    }
+
+    #[test]
+    fn a_base_url_must_be_sendable() {
+        assert_eq!(
+            base_url(" http://localhost:8000/v1/ ").ok(),
+            Some("http://localhost:8000/v1")
+        );
+        let error = |url| base_url(url).map_err(|error| error.to_string()).err();
+        assert_eq!(
+            error(" ").as_deref(),
+            Some("Enter the server's address in Settings.")
+        );
+        assert_eq!(
+            error("whisper.lan:8000/v1").as_deref(),
+            Some("Start the server's address with http:// or https://.")
+        );
+        assert_eq!(
+            error("evil.example.com/p?u=http://localhost/v1").as_deref(),
+            Some("Check the server's address in Settings.")
+        );
+    }
+
+    #[test]
+    fn an_address_loses_its_user_name_and_password() {
+        assert_eq!(
+            without_userinfo("http://me:pw@127.0.0.1:11434/v1"),
+            "http://127.0.0.1:11434/v1"
+        );
+        assert_eq!(
+            without_userinfo("http://localhost:11434/v1/a@b"),
+            "http://localhost:11434/v1/a@b"
+        );
+        assert_eq!(without_userinfo("me@host/v1"), "host/v1");
+    }
+
+    #[test]
+    fn no_response_tells_a_timeout_apart() {
+        let timeout = ureq::Error::Timeout(ureq::Timeout::Global);
+        assert_eq!(
+            no_response(
+                "http://whisper.lan/v1",
+                "Check that the server is running.",
+                Duration::from_secs(80 * 60),
+                &timeout
+            )
+            .to_string(),
+            "http://whisper.lan/v1 didn't answer within 80 minutes. Try again later."
+        );
+        let refused = ureq::Error::ConnectionFailed;
+        assert_eq!(
+            no_response(
+                "Claude",
+                "Check the internet connection.",
+                TIMEOUT,
+                &refused
+            )
+            .to_string(),
+            "Couldn't reach Claude. Check the internet connection."
+        );
     }
 
     #[test]
@@ -219,6 +369,18 @@ mod tests {
                 r#"{"error":"model 'm1' not found"}"#
             ),
             "The server has no Model named m1. Check the Model in Settings."
+        );
+        assert_eq!(
+            message(
+                Provider::OpenAiCompatible,
+                404,
+                r#"{"error":{"message":"Invalid URL (POST /chat/completions)"}}"#
+            ),
+            "The server turned the request down: Invalid URL (POST /chat/completions)"
+        );
+        assert_eq!(
+            message(Provider::OpenAiCompatible, 404, "404 page not found"),
+            "The server has nothing at that address. Check the address in Settings."
         );
         assert_eq!(
             message(Provider::OpenAiCompatible, 413, ""),

@@ -96,9 +96,10 @@ public func tokenCounts(
   let result: Result<String, Error> = blocking {
     do {
       var counts: [String] = []
+      let languageModel = model()
       for text in texts {
         if #available(macOS 26.4, *) {
-          counts.append(String(try await model().tokenCount(for: text)))
+          counts.append(String(try await languageModel.tokenCount(for: text)))
         } else {
           counts.append(String(text.utf8.count / 3 + 1))
         }

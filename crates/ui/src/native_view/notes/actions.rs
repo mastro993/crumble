@@ -5,6 +5,7 @@
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
 use super::super::menu::{MenuItem, OpenMenu};
+use super::consent::TRANSCRIBERS;
 use crumble_remote::Provider;
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::{Sizable, WindowExt};
@@ -103,14 +104,16 @@ impl NativeView {
     /// Transcript or sending audio. `None` while its Transcript is being made.
     fn transcribe_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
         let note = self.note_detail.note.as_ref()?;
-        if self.note_detail.transcription.busy(&note.id) {
+        if self.note_detail.transcription.busy(&note.id)
+            || self.note_detail.unsaved_recordings.contains_key(&note.id)
+        {
             return None;
         }
         let made_by = note
             .transcript
             .as_ref()
             .map(|transcript| transcript.provider.as_str());
-        let providers: Vec<MenuItem> = Provider::ALL
+        let providers: Vec<MenuItem> = TRANSCRIBERS
             .into_iter()
             .filter(|provider| self.can_transcribe(*provider))
             .map(|provider| {
@@ -140,10 +143,13 @@ impl NativeView {
     /// "Summarize again with…", or "Summarize with…" before there is a Summary: a submenu of the
     /// Providers ready to summarize, the one that made the shown Note's Summary checked.
     /// Picking one is the Note's own choice over Settings'. `None` while the Note has no
-    /// Transcript, or its Summary is being made.
+    /// Transcript with speech, or its Summary is being made.
     fn summarize_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
         let note = self.note_detail.note.as_ref()?;
-        if note.transcript.is_none() || self.note_detail.summarization.busy(&note.id) {
+        if note.transcript.is_none()
+            || !self.note_detail.spoken()
+            || self.note_detail.summarization.busy(&note.id)
+        {
             return None;
         }
         let made_by = note

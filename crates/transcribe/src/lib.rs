@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::bail;
 use crumble_remote::Provider;
 
-pub use apple::{Apple, MODEL};
+pub use apple::Apple;
 pub use ffi::{current_locale, install_model, language_name, model_status, supported_locales};
 pub use remote::OpenAiCompatible;
 
@@ -27,7 +27,7 @@ pub use remote::OpenAiCompatible;
 pub trait Transcriber {
     /// Who runs the Model.
     fn provider(&self) -> Provider;
-    /// The Model, as the Transcript records it: its id, or [`MODEL`] for Apple's.
+    /// The Model, as the Transcript records it: its id, or "Apple SpeechAnalyzer" for Apple's.
     fn model(&self) -> &str;
     /// The Transcript of the Recording in `dir`, in `locale` such as `en_US`: each of its tracks
     /// that exists, merged in time order. Blocks, so call it off the main thread; `progress`

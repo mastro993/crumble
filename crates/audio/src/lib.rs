@@ -34,11 +34,12 @@ pub enum Access {
 pub struct RecorderStatus {
     /// Time since the Recording started.
     pub elapsed: Duration,
-    /// Whether the microphone track has had anything but digital silence so far.
-    pub mic_heard: bool,
-    /// Whether the system track has had anything but digital silence so far. macOS feeds a
-    /// process tap silence while Crumble may not record system audio, so this stays false then.
-    pub system_heard: bool,
+    /// Whether the microphone track is recorded and has had only digital silence so far.
+    pub mic_silent: bool,
+    /// Whether the system track is recorded and has had only digital silence so far. macOS
+    /// feeds a process tap silence while Crumble may not record system audio, so this stays
+    /// true then.
+    pub system_silent: bool,
 }
 
 /// One of a Recording's two tracks.

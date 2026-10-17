@@ -71,6 +71,9 @@ pub(crate) fn context_size() -> usize {
 
 /// The token count of each of `texts`, in order.
 pub(crate) fn token_counts(texts: &[&str]) -> anyhow::Result<Vec<usize>> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
     // U+001E, the record separator, never comes out of speech recognition or the model.
     let joined = c_string(&texts.join("\u{1e}"));
     let counts = run(|out| {

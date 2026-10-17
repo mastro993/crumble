@@ -37,6 +37,18 @@ gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb4
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
 uuid = { version = "1.28", features = ["v7"] }
+# The objc2 family behind crumble-eventkit and crumble-audio, kept on one version. Each crate
+# turns on the features it calls.
+block2 = "0.6.2"
+objc2 = "0.6.5"
+objc2-audio-toolbox = { version = "0.3.2", default-features = false }
+objc2-avf-audio = { version = "0.3.2", default-features = false }
+objc2-core-audio = { version = "0.3.2", default-features = false }
+objc2-core-audio-types = { version = "0.3.2", default-features = false }
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = { version = "0.3.2", default-features = false }
+objc2-event-kit = { version = "0.3.2", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false }
 # Summaries and Transcripts from remote Providers: a small blocking HTTP client, as jobs already
 # run on a background thread (ADRs 0007 and 0008).
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }

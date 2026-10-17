@@ -4,12 +4,16 @@
 
 use super::super::NativeView;
 use crumble_notes::NoteId;
-use crumble_remote::{Provider, host, runs_locally};
+use crumble_remote::{Provider, base_url, host, runs_locally};
 use crumble_store::secrets;
 use crumble_transcribe::{Apple, OpenAiCompatible, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::{Context, Window};
+
+/// The Providers that transcribe, in the order Settings and the Note actions menu list them.
+pub(in super::super) const TRANSCRIBERS: [Provider; 2] =
+    [Provider::Apple, Provider::OpenAiCompatible];
 
 /// What the user agrees to before audio goes to a remote Model.
 pub(super) struct Consent {
@@ -33,30 +37,31 @@ impl NativeView {
     }
 
     /// Whether `provider` can transcribe with what Settings holds: Apple always offers to, and
-    /// the OpenAI-compatible server needs its address and Transcription Model.
+    /// the OpenAI-compatible server needs an address requests can go to and a Transcription
+    /// Model, as its Transcriber checks before it uploads.
     pub(in super::super) fn can_transcribe(&self, provider: Provider) -> bool {
         match provider {
             Provider::Apple => true,
             Provider::Claude => false,
             Provider::OpenAiCompatible => {
-                !self.store.openai_base_url().is_empty()
+                base_url(self.store.openai_base_url()).is_ok()
                     && !self.store.transcription_model().is_empty()
             }
         }
     }
 
     /// What the user must agree to before `provider` gets a Recording's audio; `None` when it
-    /// runs on the Mac, has no address to send to, or the user already agreed for its Model and
-    /// host.
+    /// runs on the Mac, has no address requests can go to, or the user already agreed for its
+    /// Model and host.
     pub(super) fn consent_needed(&self, provider: Provider) -> Option<Consent> {
         let url = self.store.openai_base_url();
-        if runs_locally(provider, url) || host(url).is_empty() {
+        if runs_locally(provider, url) {
             return None;
         }
         let consent = Consent {
             provider,
             model: self.store.transcription_model().to_owned(),
-            host: host(url).to_ascii_lowercase(),
+            host: host(url)?,
         };
         let agreed = self
             .store

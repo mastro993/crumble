@@ -7,7 +7,7 @@ use super::super::controls::button;
 use super::super::route::Route;
 use chrono::Utc;
 use crumble_notes::{NoteId, Track};
-use crumble_remote::{Provider, runs_locally};
+use crumble_remote::{Provider, base_url, runs_locally};
 use crumble_store::secrets;
 use crumble_summarize::{
     Apple, Availability, Claude, OpenAiCompatible, Speaker, Summarizer, apple_availability,
@@ -22,8 +22,8 @@ use std::collections::{HashMap, VecDeque};
 /// The Summaries being made, for whichever Note shows.
 #[derive(Default)]
 pub(super) struct Summarization {
-    /// Notes waiting their turn, first come first, each with the Provider asked for, if any.
-    queue: VecDeque<(NoteId, Option<Provider>)>,
+    /// Notes waiting their turn, first come first.
+    queue: VecDeque<Queued>,
     running: Option<Job>,
     /// Why each Note's last attempt failed, until it is tried again.
     failed: HashMap<NoteId, Failure>,
@@ -37,7 +37,7 @@ impl Summarization {
 
     /// Whether the Note `id` is waiting or being summarized.
     pub(super) fn busy(&self, id: &NoteId) -> bool {
-        self.job(id).is_some() || self.queue.iter().any(|(queued, _)| queued == id)
+        self.job(id).is_some() || self.queue.iter().any(|queued| &queued.note == id)
     }
 
     /// The job running for the Note `id`, unless it was cancelled.
@@ -46,6 +46,14 @@ impl Summarization {
             .as_ref()
             .filter(|job| &job.note == id && !job.cancelled)
     }
+}
+
+struct Queued {
+    note: NoteId,
+    /// The Provider asked for, else the Summary Model picked in Settings when it starts.
+    provider: Option<Provider>,
+    /// Whether it is an older Transcript, which only a Provider that runs locally may get.
+    backlog: bool,
 }
 
 struct Job {
@@ -61,10 +69,13 @@ struct Job {
     _updates: Task<()>,
 }
 
-/// Why the Model failed, for the user, and the Provider to try again with.
+/// Why the Model failed, for the user.
 struct Failure {
     message: String,
-    provider: Option<Provider>,
+    /// The Provider asked for, to try again with.
+    asked: Option<Provider>,
+    /// The Provider that failed.
+    ran: Provider,
 }
 
 /// What the job sends back to the main thread.
@@ -79,14 +90,21 @@ impl NativeView {
     /// the Mac. A remote one gets an older Transcript only when the user asks, from its Note's
     /// Summary tab. Run at launch and when a Summary Model is picked.
     pub(in super::super) fn summarize_unsummarized(&mut self, cx: &mut Context<Self>) {
-        let local = self
-            .summary_provider()
-            .is_some_and(|provider| runs_locally(provider, self.store.openai_base_url()));
-        if !local {
+        let Some(provider) = self.summary_provider().filter(|&provider| {
+            runs_locally(provider, self.store.openai_base_url()) && self.is_configured(provider)
+        }) else {
             return;
-        }
+        };
+        // Each keeps this Provider, so a remote one picked while they wait never gets them. A
+        // Note that failed keeps its error and Try again rather than running again unasked.
         match self.notes.unsummarized() {
-            Ok(ids) => ids.into_iter().for_each(|id| self.summarize(id, None, cx)),
+            Ok(ids) => {
+                for id in ids {
+                    if !self.note_detail.summarization.failed.contains_key(&id) {
+                        self.queue_summary(id, Some(provider), true, cx);
+                    }
+                }
+            }
             Err(error) => eprintln!("Could not find the Transcripts to summarize: {error:#}"),
         }
     }
@@ -107,7 +125,8 @@ impl NativeView {
                 self.models.has_key(provider) && !self.store.claude_model().is_empty()
             }
             Provider::OpenAiCompatible => {
-                !self.store.openai_base_url().is_empty() && !self.store.openai_model().is_empty()
+                base_url(self.store.openai_base_url()).is_ok()
+                    && !self.store.openai_model().is_empty()
             }
         }
     }
@@ -120,21 +139,44 @@ impl NativeView {
         provider: Option<Provider>,
         cx: &mut Context<Self>,
     ) {
+        self.queue_summary(id, provider, false, cx);
+    }
+
+    fn queue_summary(
+        &mut self,
+        note: NoteId,
+        provider: Option<Provider>,
+        backlog: bool,
+        cx: &mut Context<Self>,
+    ) {
         let summarization = &mut self.note_detail.summarization;
-        if summarization.busy(&id) {
+        if summarization.busy(&note) {
             return;
         }
-        summarization.failed.remove(&id);
-        summarization.queue.push_back((id, provider));
+        summarization.failed.remove(&note);
+        summarization.queue.push_back(Queued {
+            note,
+            provider,
+            backlog,
+        });
         self.next_summary(cx);
         cx.notify();
+    }
+
+    /// Forgets the failures `provider` may have caused, as when its settings change, so the next
+    /// backfill tries those Notes again.
+    pub(in super::super) fn forget_summary_failures(&mut self, provider: Provider) {
+        self.note_detail
+            .summarization
+            .failed
+            .retain(|_, failure| failure.ran != provider);
     }
 
     /// Forgets the Note `id`'s Summary work, as when its Transcript changes or goes: a job
     /// running for it finishes unseen and its result is dropped.
     pub(super) fn cancel_summary(&mut self, id: &NoteId) {
         let summarization = &mut self.note_detail.summarization;
-        summarization.queue.retain(|(queued, _)| queued != id);
+        summarization.queue.retain(|queued| &queued.note != id);
         summarization.failed.remove(id);
         if let Some(job) = summarization.running.as_mut().filter(|job| &job.note == id) {
             job.cancelled = true;
@@ -146,7 +188,12 @@ impl NativeView {
         if self.note_detail.summarization.running.is_some() {
             return;
         }
-        while let Some((id, asked)) = self.note_detail.summarization.queue.pop_front() {
+        while let Some(Queued {
+            note: id,
+            provider: asked,
+            backlog,
+        }) = self.note_detail.summarization.queue.pop_front()
+        {
             let text = match self.transcript_text(&id) {
                 Ok(text) if text.is_empty() => continue,
                 Ok(text) => text,
@@ -160,6 +207,10 @@ impl NativeView {
                 // text on the Mac, and offers to otherwise.
                 continue;
             };
+            if backlog && !runs_locally(provider, self.store.openai_base_url()) {
+                // The server's address changed while it waited; the tab offers it again.
+                continue;
+            }
             let summarizer = match self.summarizer(provider) {
                 Ok(summarizer) => summarizer,
                 Err(message) => {
@@ -167,7 +218,8 @@ impl NativeView {
                         id,
                         Failure {
                             message,
-                            provider: asked,
+                            asked,
+                            ran: provider,
                         },
                     );
                     continue;
@@ -231,7 +283,10 @@ impl NativeView {
             })
         };
         Ok(match provider {
-            Provider::Apple => Box::new(Apple),
+            Provider::Apple => match apple_availability().reason() {
+                Some(reason) => return Err(format!("Apple isn't available: {reason}")),
+                None => Box::new(Apple),
+            },
             Provider::Claude => Box::new(Claude {
                 api_key: key()?.ok_or("Add a Claude API key in Settings.")?,
                 model: self.store.claude_model().to_owned(),
@@ -270,7 +325,8 @@ impl NativeView {
                             id.clone(),
                             Failure {
                                 message: error.to_string(),
-                                provider: asked,
+                                asked,
+                                ran: job.provider,
                             },
                         );
                     }
@@ -343,8 +399,8 @@ impl NativeView {
         // A failed attempt shows above the Summary the Note still has, if any. A Transcript no
         // job took, as one older than a remote Summary Model, waits for the user to ask.
         let line = match summarization.failed.get(&note.id) {
-            Some(Failure { message, provider }) => {
-                let provider = *provider;
+            Some(Failure { message, asked, .. }) => {
+                let provider = *asked;
                 Some((
                     message.clone(),
                     button("summary-retry")
@@ -356,7 +412,7 @@ impl NativeView {
                         })),
                 ))
             }
-            None if note.summary.is_none() && !detail.transcript.is_empty() => {
+            None if note.summary.is_none() && detail.spoken() => {
                 Some(match self.summary_provider() {
                     Some(provider) => (
                         "Not summarized yet".to_owned(),

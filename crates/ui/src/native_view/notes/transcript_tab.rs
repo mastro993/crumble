@@ -65,43 +65,25 @@ impl NativeView {
                 .into_any_element();
         }
         if let Some(failure) = transcription.failed.get(&note.id) {
-            let id = note.id.clone();
-            return match failure {
-                Failure::Unsupported { language } => div()
+            if matches!(failure, Failure::Unsupported { .. }) {
+                return div()
                     .text_sm()
                     .text_color(muted)
-                    .child(format!(
-                        "Transcription isn't available for {language} on this Mac."
-                    ))
-                    .into_any_element(),
-                Failure::Download => line(
-                    "Couldn't download the speech model.".to_owned(),
-                    button("transcript-retry")
-                        .outline()
-                        .small()
-                        .label("Try again")
-                        .on_click(cx.listener(move |view, _, _, cx| {
-                            view.queue_transcription(id.clone(), Provider::Apple, cx)
-                        })),
-                    muted,
-                ),
-                Failure::Transcribe { message, provider } => {
-                    let provider = *provider;
-                    line(
-                        message
-                            .clone()
-                            .unwrap_or_else(|| "Couldn't transcribe this recording.".to_owned()),
-                        button("transcript-retry")
-                            .outline()
-                            .small()
-                            .label("Try again")
-                            .on_click(cx.listener(move |view, _, window, cx| {
-                                view.transcribe(id.clone(), Some(provider), Some(window), cx)
-                            })),
-                        muted,
-                    )
-                }
-            };
+                    .child(failure.message())
+                    .into_any_element();
+            }
+            let (id, provider) = (note.id.clone(), failure.provider());
+            return line(
+                failure.message(),
+                button("transcript-retry")
+                    .outline()
+                    .small()
+                    .label("Try again")
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.transcribe(id.clone(), Some(provider), Some(window), cx)
+                    })),
+                muted,
+            );
         }
         let Some(made) = &note.transcript else {
             // A finished Recording no job took: one older than a remote Transcription Model, or

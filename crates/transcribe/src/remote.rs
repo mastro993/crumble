@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
-use crumble_remote::{Provider, failure, post};
+use anyhow::{Context, bail};
+use crumble_remote::{Provider, TIMEOUT, base_url, failure, no_response, post, without_userinfo};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -44,15 +44,12 @@ impl Transcriber for OpenAiCompatible {
         locale: &str,
         progress: &mut (dyn FnMut(f32) + Send),
     ) -> anyhow::Result<Vec<Segment>> {
-        let base = self.base_url.trim().trim_end_matches('/');
-        if base.is_empty() {
-            bail!("Enter the server's address in Settings.");
-        }
+        let base = base_url(&self.base_url)?;
         if self.model.trim().is_empty() {
             bail!("Enter the server's Transcription Model in Settings.");
         }
         let mut uploads = Vec::new();
-        for (track, path) in tracks(dir)? {
+        for (track, path) in tracks(dir).context("This Recording has no audio to transcribe.")? {
             let audio = std::fs::read(&path)
                 .with_context(|| format!("could not read {}", path.display()))
                 .context("Couldn't read the Recording's audio.")?;
@@ -70,7 +67,9 @@ impl Transcriber for OpenAiCompatible {
             let mut heard = Vec::new();
             for piece in pieces {
                 let m4a = scratch.m4a(&audio[piece.bytes.clone()])?;
-                let response = self.upload(&url, base, &m4a, language(locale))?;
+                // A local server may transcribe slower than the audio plays.
+                let timeout = TIMEOUT.max(piece.length * 2);
+                let response = self.upload(&url, base, &m4a, language(locale), timeout)?;
                 heard.extend(parse(&response, *track, piece)?);
                 done += 1;
                 #[allow(clippy::cast_precision_loss, reason = "a few pieces")]
@@ -83,8 +82,15 @@ impl Transcriber for OpenAiCompatible {
 }
 
 impl OpenAiCompatible {
-    /// Sends one piece of audio and returns the server's answer.
-    fn upload(&self, url: &str, base: &str, m4a: &[u8], language: &str) -> anyhow::Result<String> {
+    /// Sends one piece of audio and returns the server's answer, within `timeout`.
+    fn upload(
+        &self,
+        url: &str,
+        base: &str,
+        m4a: &[u8],
+        language: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
         let boundary = format!("crumble-{}", Uuid::now_v7().simple());
         let mut fields = vec![
             ("model", self.model.trim()),
@@ -101,10 +107,12 @@ impl OpenAiCompatible {
             .map(|value| ("authorization", value.as_str()))
             .collect();
         let content_type = format!("multipart/form-data; boundary={boundary}");
-        let (status, text) = post(url, &headers, &content_type, &body).map_err(|error| {
-            eprintln!("Could not reach {base}: {error}");
-            anyhow!("Couldn't reach {base}. Check that the server is running.")
-        })?;
+        let (status, text) =
+            post(url, &headers, (&content_type, &body), timeout).map_err(|error| {
+                // The address may hold a user name and password.
+                let base = without_userinfo(base);
+                no_response(&base, "Check that the server is running.", timeout, &error)
+            })?;
         if status != 200 {
             return Err(failure(
                 Provider::OpenAiCompatible,
@@ -147,38 +155,42 @@ fn multipart(boundary: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8]))
 }
 
 /// The segments of `track` in a server's answer for `piece`, at their place in the Recording.
-/// `verbose_json` gives timed segments; an answer with only `text`, as some Models give, is one
-/// segment spanning the piece.
+/// `verbose_json` gives timed segments; an answer with only `text`, as some servers give
+/// whatever was asked, is one segment spanning the piece. A time no Recording can hold, as a
+/// broken server may send, fails the answer.
 fn parse(response: &str, track: Track, piece: &Chunk) -> anyhow::Result<Vec<Segment>> {
-    let response: Value =
-        serde_json::from_str(response).context("The server's answer wasn't a transcription.")?;
-    let segment = |start: Duration, end: Duration, text: &str| {
+    const UNREADABLE: &str = "The server's answer wasn't a transcription.";
+    let response: Value = serde_json::from_str(response).context(UNREADABLE)?;
+    let segment = |start: Duration, end: Duration, text: &str| -> anyhow::Result<_> {
         let text = text.trim();
-        (!text.is_empty()).then(|| Segment {
+        let start = piece.start.checked_add(start).context(UNREADABLE)?;
+        let end = start.max(piece.start.checked_add(end).context(UNREADABLE)?);
+        Ok((!text.is_empty()).then(|| Segment {
             track,
-            start: piece.start + start,
-            end: piece.start + end.max(start),
+            start,
+            end,
             text: text.to_owned(),
-        })
+        }))
     };
     if let Some(segments) = response["segments"].as_array() {
-        let seconds =
-            |value: &Value| Duration::from_secs_f64(value.as_f64().unwrap_or(0.0).max(0.0));
-        return Ok(segments
-            .iter()
-            .filter_map(|item| {
-                segment(
-                    seconds(&item["start"]),
-                    seconds(&item["end"]),
-                    item["text"].as_str().unwrap_or_default(),
-                )
-            })
-            .collect());
+        let seconds = |value: &Value| {
+            Duration::try_from_secs_f64(value.as_f64().unwrap_or(0.0).max(0.0)).context(UNREADABLE)
+        };
+        let mut found = Vec::new();
+        for item in segments {
+            let text = item["text"].as_str().unwrap_or_default();
+            found.extend(segment(
+                seconds(&item["start"])?,
+                seconds(&item["end"])?,
+                text,
+            )?);
+        }
+        return Ok(found);
     }
     let Some(text) = response["text"].as_str() else {
-        bail!("The server's answer wasn't a transcription.");
+        bail!(UNREADABLE);
     };
-    Ok(segment(Duration::ZERO, piece.length, text)
+    Ok(segment(Duration::ZERO, piece.length, text)?
         .into_iter()
         .collect())
 }
@@ -291,6 +303,8 @@ Content-Type: audio/mp4\r\n\r\n"
         );
         assert!(parse("<html>", Track::Mic, &piece(0, 1)).is_err());
         assert!(parse(r#"{"error":"no"}"#, Track::Mic, &piece(0, 1)).is_err());
+        let huge = r#"{"segments":[{"start":1e300,"end":1e300,"text":"Hi."}]}"#;
+        assert!(parse(huge, Track::Mic, &piece(0, 1)).is_err());
     }
 
     #[test]
@@ -322,18 +336,24 @@ Content-Type: audio/mp4\r\n\r\n"
 
     #[test]
     fn missing_settings_fail_before_any_upload() {
-        let server = OpenAiCompatible {
-            base_url: " ".into(),
-            api_key: Some("sk-test-secret".into()),
-            model: "whisper-1".into(),
+        let error = |base_url: &str| {
+            let server = OpenAiCompatible {
+                base_url: base_url.into(),
+                api_key: Some("sk-test-secret".into()),
+                model: "whisper-1".into(),
+            };
+            server
+                .transcribe(Path::new("/nonexistent"), "en_US", &mut |_| {})
+                .map_err(|error| error.to_string())
+                .err()
         };
-        let error = server
-            .transcribe(Path::new("/nonexistent"), "en_US", &mut |_| {})
-            .map_err(|error| error.to_string())
-            .err();
         assert_eq!(
-            error.as_deref(),
+            error(" ").as_deref(),
             Some("Enter the server's address in Settings.")
+        );
+        assert_eq!(
+            error("whisper.lan:8000/v1").as_deref(),
+            Some("Start the server's address with http:// or https://.")
         );
     }
 }

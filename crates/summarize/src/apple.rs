@@ -9,8 +9,8 @@ use crumble_remote::Provider;
 
 /// The tokens left for each answer: notes on a part, or the Summary.
 const RESPONSE_TOKENS: usize = 1000;
-/// Tokens kept free for the prompt's label and the line breaks between items, which the
-/// per-item counts leave out.
+/// Tokens kept free for the prompt's label, and for counts of items apart that differ from
+/// their count together.
 const MARGIN: usize = 100;
 /// Rounds of notes on notes before giving up. Each round's notes fit in a fraction of the
 /// budget, so two rounds cover hours of speech.
@@ -68,7 +68,9 @@ fn in_parts<'a>(
     let (mut from_notes, mut answered, mut reported) = (false, 0_usize, 0.0_f32);
     for _ in 0..MAX_ROUNDS {
         let texts: Vec<&str> = items.iter().map(String::as_str).collect();
-        let parts = chunks(&count(&texts)?, budget);
+        // Each item also takes the line break that joins it to the next.
+        let costs: Vec<usize> = count(&texts)?.into_iter().map(|cost| cost + 1).collect();
+        let parts = chunks(&costs, budget);
         if parts.len() <= 1 {
             let summary = respond(
                 &prompt::summary_instructions(from_notes),
@@ -102,7 +104,7 @@ fn in_parts<'a>(
 mod tests {
     use super::in_parts;
 
-    /// One token per byte, and an answer that is its prompt's first line, cut to 6 bytes.
+    /// One token per byte, plus one per line break, and an answer that is its prompt's first line, cut to 6 bytes.
     fn run(lines: &[&str], budget: usize) -> (anyhow::Result<String>, Vec<String>, Vec<f32>) {
         let mut prompts = Vec::new();
         let mut fractions = Vec::new();
@@ -131,7 +133,7 @@ mod tests {
     #[test]
     fn a_long_transcript_is_summarized_from_notes_on_its_parts() {
         let lines = ["You: aaaaaaaaaa", "Others: bbbbbbbbb", "You: cccccccccc"];
-        let (summary, prompts, fractions) = run(&lines, 20);
+        let (summary, prompts, fractions) = run(&lines, 21);
         assert!(summary.is_ok());
         assert_eq!(
             prompts,
