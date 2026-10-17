@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 mod capture;
+mod echo;
 mod file;
 mod player;
 
@@ -80,7 +81,7 @@ pub fn recorded_length(dir: &Path) -> anyhow::Result<Duration> {
 mod tests {
     use super::{Track, file, recorded_length};
 
-    fn folder(name: &str) -> std::path::PathBuf {
+    pub(super) fn folder(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("crumble-audio-{}-{name}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         dir

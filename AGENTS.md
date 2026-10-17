@@ -15,7 +15,7 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `crates/db` (`crumble-db`): the one SQLite file, its migrations, and the Diesel schema; `open_file()` and `open(url)`. No GPUI.
 - `crates/store` (`crumble-store`): state kept across restarts, and Account rules: order, color, Alias, label, Disabled and Hidden filtering. No GPUI.
 - `crates/notes` (`crumble-notes`): Notes and Quick notes, how a Note finds its Event, and the folder each Recording lives in. No GPUI.
-- `crates/audio` (`crumble-audio`): Recordings: microphone and process-tap capture into AAC files, and playback. No GPUI.
+- `crates/audio` (`crumble-audio`): Recordings: microphone and process-tap capture into AAC files, echo removal from the microphone, and playback. No GPUI.
 - `crates/transcribe` (`crumble-transcribe`): Transcripts from the `Transcriber` trait: Apple's SpeechAnalyzer on the Mac through a Swift bridge, and OpenAI-compatible servers. No GPUI.
 - `crates/summarize` (`crumble-summarize`): Summaries from the `Summarizer` trait: Apple's on-device Foundation Models through a Swift bridge, the Claude API, and OpenAI-compatible servers. No GPUI.
 - `crates/remote` (`crumble-remote`): what Summaries and Transcripts share about Models: `Provider`, `runs_locally`, and the HTTP helpers. No GPUI.

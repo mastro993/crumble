@@ -10,6 +10,9 @@ publish.workspace = true
 anyhow.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+sonora.workspace = true
+sonora-aec3.workspace = true
+sonora-common-audio.workspace = true
 block2.workspace = true
 objc2.workspace = true
 objc2-audio-toolbox = { workspace = true, features = [
