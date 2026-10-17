@@ -104,7 +104,9 @@ impl NativeView {
     /// Transcript or sending audio. `None` while its Transcript is being made.
     fn transcribe_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
         let note = self.note_detail.note.as_ref()?;
-        if self.note_detail.transcription.busy(&note.id) {
+        if self.note_detail.transcription.busy(&note.id)
+            || self.note_detail.unsaved_recordings.contains_key(&note.id)
+        {
             return None;
         }
         let made_by = note

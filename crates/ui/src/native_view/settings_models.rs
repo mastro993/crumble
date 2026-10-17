@@ -287,6 +287,12 @@ pub(super) fn model_settings(
             cx,
             |store, value| store.set_openai_base_url(value),
         ),
+        // The server's address serves Transcripts too.
+        cx.subscribe_in(&openai_url, window, |view, _, event, _, cx| match event {
+            InputEvent::Change => view.forget_transcription_failures(Provider::OpenAiCompatible),
+            InputEvent::PressEnter { .. } | InputEvent::Blur => view.transcribe_untranscribed(cx),
+            InputEvent::Focus => {}
+        }),
         saved_on_change(
             &openai_model,
             Provider::OpenAiCompatible,
@@ -351,15 +357,10 @@ fn saved_on_change(
                 save(&mut view.store, &value);
                 view.models.checks.remove(&provider);
                 view.forget_summary_failures(provider);
-                // The server's address serves Transcripts too.
-                view.forget_transcription_failures(provider);
                 cx.notify();
             }
-            // A finished address or Model may make a Model ready to backfill.
-            InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                view.summarize_unsummarized(cx);
-                view.transcribe_untranscribed(cx);
-            }
+            // A finished address or Model may make the Summary Model ready to backfill.
+            InputEvent::PressEnter { .. } | InputEvent::Blur => view.summarize_unsummarized(cx),
             InputEvent::Focus => {}
         },
     )

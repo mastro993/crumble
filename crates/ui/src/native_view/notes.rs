@@ -167,12 +167,14 @@ impl NoteDetail {
                 note.summary.is_some()
                     || self.summarization.involves(&note.id)
                     || (note.transcript.is_some() && self.spoken()),
-                // Also a finished Recording no job took, which the tab offers to transcribe.
+                // Also a finished Recording no job took, which the tab offers to transcribe,
+                // once its length is stored, as a Transcript needs.
                 note.transcript.is_some()
                     || self.transcription.involves(&note.id)
-                    || note
+                    || (note
                         .recording
-                        .is_some_and(|recording| recording.duration.is_some()),
+                        .is_some_and(|recording| recording.duration.is_some())
+                        && !self.unsaved_recordings.contains_key(&note.id)),
             )
         });
         let tabs = tabs::tabs(summary, transcript);

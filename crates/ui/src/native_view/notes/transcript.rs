@@ -151,6 +151,10 @@ impl NativeView {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
+        // A Transcript needs the Recording's length stored; it is transcribed once that saves.
+        if self.note_detail.unsaved_recordings.contains_key(&id) {
+            return;
+        }
         let provider = provider.unwrap_or_else(|| self.transcription_provider());
         if !self.can_transcribe(provider) {
             // Its Transcript tab points to Settings instead.
