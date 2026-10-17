@@ -28,6 +28,7 @@ Split on one question: does this code need GPUI?
 - A schema change is a new migration in `crates/store/migrations/` plus a regenerated `crates/store/src/schema.rs` ([ADR 0003](docs/adr/0003-app-state-in-sqlite-via-diesel.md); the README has the commands).
 - Presentation-only pure helpers (route history, row reordering, menu stepping, sidebar sizing) stay in `crumble-ui` as GPUI-free modules with plain `#[test]`s.
 - Keep `gpui-kit` and the `mcp` feature out of domain crates.
+- Link anything kept about an Event, such as a Note, by `series_uid` and `occurrence` ([ADR 0004](docs/adr/0004-event-identity-for-notes.md)). `Event::id` changes when the Event moves.
 
 ## New crates
 

@@ -50,7 +50,7 @@ Said of an Account or a Calendar that Crumble leaves out entirely. It is chosen 
 _Avoid_: muted, removed, off
 
 **Event page**:
-The page that shows everything about one Event. Clicking an Event opens it.
+The page that shows everything about one Event and its Note. Clicking an Event in the Calendar page, or selecting it in the Agenda page, opens it.
 _Avoid_: event detail view, event screen
 
 **Details card**:
@@ -79,7 +79,7 @@ _Avoid_: preferences, options
 ### Agenda
 
 **Agenda page**:
-The page that lists every Event that has started, newest first, grouped by day.
+The page that lists every Event that has started and every Quick note, newest first, grouped by day.
 _Avoid_: history, timeline, feed
 
 **Agenda list**:
@@ -89,6 +89,40 @@ _Avoid_: secondary sidebar, feed
 **In progress**:
 Said of a timed Event that has started and not yet ended. An all-day Event is never In progress.
 _Avoid_: current, live, ongoing
+
+### Notes
+
+**Note**:
+What the user keeps about one conversation: an optional title, at most one Recording with its Transcript and Summary, and a Memo. A Note is attached to one occurrence of an Event, or stands alone as a Quick note.
+_Avoid_: session, meeting note, document
+
+**Quick note**:
+A Note not attached to any Event. The Agenda page lists it at the time its Recording started, or else when it was made.
+_Avoid_: standalone note, ad-hoc note
+
+**Memo**:
+What the user types into a Note.
+_Avoid_: notes, manual notes, text
+
+**Recording**:
+The audio of a Note, taken from the microphone and from the Mac's own sound together. It is kept on the Mac until the user deletes it, and is sent away only to a remote Model the user picked to make its Transcript, after Crumble warns that it will be.
+_Avoid_: registration, capture, audio file
+
+**Transcript**:
+The text of what was said in a Recording. It can be made again from the same Recording.
+_Avoid_: transcription, captions
+
+**Summary**:
+A short account of a Transcript. Each Note has at most one.
+_Avoid_: recap, digest, minutes
+
+**Model**:
+What turns a Recording into a Transcript, or a Transcript into a Summary. The user picks one for each job.
+_Avoid_: engine, backend, AI
+
+**Provider**:
+Where a Model runs: on the Mac, such as Apple's on-device Models, or remotely, such as Anthropic or any OpenAI-compatible server.
+_Avoid_: vendor, service, backend
 
 ## Relationships
 
@@ -102,6 +136,9 @@ _Avoid_: current, live, ongoing
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
 - An **Event** is drawn in its **Account**'s color, whatever its **Calendar**'s color is in macOS
+- One occurrence of an **Event** has at most one **Note**, which every **Calendar** showing that occurrence shares; a **Note** belongs to at most one occurrence, never to a whole repeating series
+- A **Note** has at most one **Recording**; its **Transcript** comes from that **Recording** and its **Summary** from that **Transcript** only, never from the **Memo**
+- A **Note** follows its **Event**'s **Disabled** and **Hidden** state; a **Quick note** is always shown
 
 ## Example dialogue
 
