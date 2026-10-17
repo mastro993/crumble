@@ -258,7 +258,10 @@ impl NativeView {
     /// save; a failure keeps the text and says so under the card.
     fn save_memo(&mut self, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
-        if !detail.memo_dirty {
+        // A Memo kept after a failed save is written again, even unchanged since.
+        let kept =
+            (detail.note.as_ref()).is_some_and(|note| detail.unsaved_memos.contains_key(&note.id));
+        if !detail.memo_dirty && !kept {
             return;
         }
         detail.memo_dirty = false;
