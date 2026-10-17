@@ -7,9 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6.2"
-objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
+block2.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = [
     "std",
     "NSArray",
     "NSBundle",
@@ -18,7 +18,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSSet",
     "NSString",
 ] }
-objc2-user-notifications = { version = "0.3.2", default-features = false, features = [
+objc2-user-notifications = { workspace = true, features = [
     "std",
     "bitflags",
     "block2",
