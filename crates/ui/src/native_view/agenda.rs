@@ -234,6 +234,8 @@ impl NativeView {
         self.agenda.step_scroll_to_top(window, cx);
         let sync = self.calendar_sync.read(cx);
         if sync.access() != Access::Granted {
+            // The rows are gone, so is their selection.
+            self.agenda.selected = None;
             return;
         }
         let ids = self.store.shown_calendar_ids(sync.calendars());

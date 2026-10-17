@@ -11,6 +11,7 @@ use chrono::Utc;
 use crumble_eventkit::Event;
 use crumble_notes::{Note, NoteId};
 use gpui_kit::component::WindowExt;
+use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::{App, AppContext, Bounds, Context, Entity, Pixels, Subscription, Task, Window};
@@ -94,9 +95,9 @@ impl NoteDetail {
         ];
         // So does closing the window, which drops the view before the app quits.
         let view = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
-            let _ = view.update(cx, |view, cx| view.save_note(cx));
-            true
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |view, cx| view.may_close(window, cx))
+                .unwrap_or(true)
         });
         Self {
             subject: None,
@@ -158,12 +159,43 @@ impl NativeView {
         let note = match &self.note_detail.subject {
             None => None,
             Some(Subject::QuickNote(note)) => Some(note.clone()),
-            Some(Subject::Event(event)) => self.notes.for_event(event).unwrap_or_else(|error| {
-                eprintln!("Could not read the Event's Note: {error}");
-                None
-            }),
+            Some(Subject::Event(event)) => match self.notes.for_event(event) {
+                Ok(note) => note,
+                Err(error) => {
+                    eprintln!("Could not read the Event's Note: {error}");
+                    // Shows nothing rather than "No note yet", and reads again on a later
+                    // render; not redrawing now keeps a failing read from repeating each frame.
+                    let detail = &mut self.note_detail;
+                    detail.subject = None;
+                    detail.note = None;
+                    return;
+                }
+            },
         };
         self.show_note(note, window, cx);
+    }
+
+    /// Saves the shown Note before the window closes. While a title or Memo still fails to
+    /// save, asks first instead, as closing drops the text kept in memory.
+    fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.save_note(cx);
+        let detail = &self.note_detail;
+        if detail.unsaved_titles.is_empty() && detail.unsaved_memos.is_empty() {
+            return true;
+        }
+        window.open_alert_dialog(cx, |alert, _, _| {
+            alert
+                .title("Close without saving?")
+                .description("Some notes couldn't be saved. Closing loses their changes.")
+                .show_cancel(true)
+                .ok_text("Close")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(|_, window, _| {
+                    window.remove_window();
+                    true
+                })
+        });
+        false
     }
 
     /// Shows `note` and fills the fields with it, with a title or Memo that failed to save in
