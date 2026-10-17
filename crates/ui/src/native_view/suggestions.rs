@@ -173,8 +173,8 @@ impl NativeView {
         .detach();
     }
 
-    /// Opens the page of the Event `response` names, and for "Record" starts recording it in a
-    /// new Note unless a Recording runs. Before today's Events are first read, the click waits
+    /// Opens the page of the Event `response` names, and for "Record" records its Note unless a
+    /// Recording runs or the Note has one. Before today's Events are first read, the click waits
     /// for them; an Event not among them then opens the Agenda page.
     fn open_suggestion(&mut self, response: Response, window: &mut Window, cx: &mut Context<Self>) {
         let today = self.suggestions.today.read(cx);

@@ -436,8 +436,8 @@ impl NativeView {
             .into_any_element()
     }
 
-    /// Makes a Note for the shown Event and records it, unless a Recording runs: the empty
-    /// state's Record, and a Suggestion's.
+    /// Makes the shown Event's Note, or takes the one it has, and records it unless a Recording
+    /// runs or the Note has one: the empty state's Record, and a Suggestion's.
     pub(in super::super) fn record_new_note(
         &mut self,
         window: &mut Window,
