@@ -109,18 +109,22 @@ impl Player {
             );
             for track in &self.tracks {
                 #[allow(clippy::cast_possible_truncation, reason = "a frame index")]
-                let start = (self.from * track.sample_rate) as i64;
-                let left = u32::try_from(track.file.length() - start).unwrap_or(0);
-                if left > 0 {
+                let mut start = (self.from * track.sample_rate) as i64;
+                let end = track.file.length();
+                // A segment counts its frames in a u32, about 24 hours at 48 kHz, so a longer
+                // track is queued in several.
+                while start < end {
+                    let frames = u32::try_from(end - start).unwrap_or(u32::MAX);
                     track
                         .node
                         .scheduleSegment_startingFrame_frameCount_atTime_completionHandler(
                             &track.file,
                             start,
-                            left,
+                            frames,
                             None,
                             std::ptr::null_mut(),
                         );
+                    start += i64::from(frames);
                 }
                 track.node.playAtTime(Some(&at));
             }

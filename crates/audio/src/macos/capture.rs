@@ -39,6 +39,9 @@ use crate::{RecorderStatus, Track, downmix, is_silent};
 const BLOCK: usize = 1024;
 /// Blocks the queue holds per track: about 10 s at 48 kHz, allocated once at start.
 const QUEUE: usize = 512;
+/// Blocks the writer takes from one queue before it turns to the next, so a busy track cannot
+/// starve the other.
+const BATCH: usize = 16;
 /// How long the writer sleeps once both queues are empty. It polls, so an IO proc never has to
 /// wake it, which could take a lock.
 const WRITER_NAP: Duration = Duration::from_millis(20);
@@ -68,41 +71,37 @@ pub struct Recorder {
 
 impl Recorder {
     /// Starts capturing into `dir` (created if missing): the microphone and the system tap, one
-    /// file each. A track that cannot open is logged and left out; it errors only when neither
-    /// opens. The first tap asks macOS for system audio access, and the first microphone read
-    /// for microphone access, unless asked before.
+    /// file each. A track that cannot open or start is logged and left out, with no file; it
+    /// errors only when neither starts. The first tap asks macOS for system audio access, and
+    /// the first microphone read for microphone access, unless asked before.
     pub fn start(dir: &Path) -> anyhow::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let heard = [Arc::default(), Arc::default()];
-        let mut captures = Vec::new();
-        let mut written = Vec::new();
+        let mut tracks = Vec::new();
         for (track, heard) in Track::BOTH.into_iter().zip(&heard) {
-            let source = match Source::open(track) {
-                Ok(source) => source,
-                Err(error) => {
-                    eprintln!("Recording: no {track:?} track: {error}");
-                    continue;
-                }
-            };
-            let file = AacFile::create(&track.path(dir), source.sample_rate)?;
-            let (sender, blocks) = sync_channel(QUEUE);
-            written.push(Written {
-                track,
-                blocks,
-                file: Some(file),
-                frames: 0,
-                sample_rate: source.sample_rate,
-                heard: Arc::clone(heard),
-            });
-            captures.push(Capture::new(track, source, sender)?);
-        }
-        if captures.is_empty() {
-            bail!("neither the microphone nor the Mac's sound can be recorded");
+            match prepare(track, dir, heard) {
+                Ok(prepared) => tracks.push(prepared),
+                Err(error) => eprintln!("Recording: no {track:?} track: {error:#}"),
+            }
         }
         // Started back to back, so the tracks begin within a few milliseconds of each other.
-        for capture in &mut captures {
-            capture.start()?;
+        tracks.retain_mut(|(_, capture)| {
+            capture
+                .start()
+                .inspect_err(|error| {
+                    eprintln!("Recording: no {:?} track: {error:#}", capture.track)
+                })
+                .is_ok()
+        });
+        for track in Track::BOTH {
+            if !tracks.iter().any(|(written, _)| written.track == track) {
+                let _ = std::fs::remove_file(track.path(dir));
+            }
         }
+        if tracks.is_empty() {
+            bail!("neither the microphone nor the Mac's sound can be recorded");
+        }
+        let (written, captures): (Vec<_>, Vec<_>) = tracks.into_iter().unzip();
         let writer = thread::Builder::new()
             .name("crumble-recording".into())
             .spawn(move || write(written))?;
@@ -123,7 +122,8 @@ impl Recorder {
         }
     }
 
-    /// Stops, finalizes the files and returns the Recording's length: its longest track.
+    /// Stops, finalizes the files and returns the Recording's length: its longest track. Errors
+    /// when a track could not be written in full; its file keeps what was written before.
     pub fn stop(mut self) -> anyhow::Result<Duration> {
         self.finish()
     }
@@ -144,6 +144,12 @@ impl Recorder {
         let written = writer
             .join()
             .map_err(|_| anyhow!("the Recording's writer panicked"))?;
+        if let Some((track, error)) = written
+            .iter()
+            .find_map(|track| Some((track.track, track.failed.as_ref()?)))
+        {
+            bail!("the {track:?} track stopped being written: {error:#}");
+        }
         Ok(written
             .iter()
             .map(Written::length)
@@ -169,6 +175,9 @@ struct Written {
     frames: u64,
     sample_rate: f64,
     heard: Arc<AtomicBool>,
+    /// The first write that failed. The file then takes no more, so it holds the audio up to
+    /// the failure rather than skipping a gap.
+    failed: Option<anyhow::Error>,
 }
 
 impl Written {
@@ -181,23 +190,32 @@ impl Written {
     }
 }
 
-/// The writer thread: drains every queue into its file until each closes, then returns.
+/// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
+/// until each closes, then returns.
 fn write(mut written: Vec<Written>) -> Vec<Written> {
     while written.iter().any(|track| track.file.is_some()) {
+        let mut idle = true;
         for track in &mut written {
             let Some(file) = &mut track.file else {
                 continue;
             };
-            loop {
+            for _ in 0..BATCH {
                 match track.blocks.try_recv() {
                     Ok(block) => {
+                        idle = false;
+                        if track.failed.is_some() {
+                            continue;
+                        }
                         let samples = &block.samples[..block.len];
                         if !is_silent(samples) {
                             track.heard.store(true, Ordering::Relaxed);
                         }
                         match file.write(samples) {
                             Ok(()) => track.frames += block.len as u64,
-                            Err(error) => eprintln!("Recording: {:?}: {error}", track.track),
+                            Err(error) => {
+                                eprintln!("Recording: {:?}: {error:#}", track.track);
+                                track.failed = Some(error);
+                            }
                         }
                     }
                     Err(TryRecvError::Empty) => break,
@@ -209,9 +227,33 @@ fn write(mut written: Vec<Written>) -> Vec<Written> {
                 }
             }
         }
-        thread::sleep(WRITER_NAP);
+        if idle {
+            thread::sleep(WRITER_NAP);
+        }
     }
     written
+}
+
+/// A track's file and its IO proc, registered but not started.
+fn prepare(
+    track: Track,
+    dir: &Path,
+    heard: &Arc<AtomicBool>,
+) -> anyhow::Result<(Written, Capture)> {
+    let source = Source::open(track)?;
+    let sample_rate = source.sample_rate;
+    let file = AacFile::create(&track.path(dir), sample_rate)?;
+    let (sender, blocks) = sync_channel(QUEUE);
+    let written = Written {
+        track,
+        blocks,
+        file: Some(file),
+        frames: 0,
+        sample_rate,
+        heard: Arc::clone(heard),
+        failed: None,
+    };
+    Ok((written, Capture::new(track, source, sender)?))
 }
 
 /// Where a track's audio comes from.
