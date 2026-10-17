@@ -126,14 +126,16 @@ impl AgendaPage {
         self.quick_notes.iter().find(|note| &note.id == id)
     }
 
-    /// Keeps the listed copy of a Quick note current, and its row when its title changed.
+    /// Keeps the listed copy of a Quick note current, and its row when its title or its time
+    /// changed.
     pub(super) fn note_changed(&mut self, note: &Note) {
         if let Some(listed) = self
             .quick_notes
             .iter_mut()
             .find(|listed| listed.id == note.id)
         {
-            if listed.title != note.title {
+            // The row shows the title at the time the Note is listed at.
+            if listed.title != note.title || listed.listed_at() != note.listed_at() {
                 self.built = None;
             }
             listed.clone_from(note);
@@ -267,7 +269,7 @@ impl NativeView {
                 .map(|note| {
                     Rc::new(QuickNote {
                         id: note.id.to_string(),
-                        at: note.created_at.with_timezone(&Local),
+                        at: note.listed_at().with_timezone(&Local),
                         label: quick_note_label(note),
                     })
                 })
@@ -471,7 +473,7 @@ impl NativeView {
     }
 }
 
-/// The Quick notes made from `from` through `today`, newest first; `None` when they cannot be
+/// The Quick notes listed from `from` through `today`, newest first; `None` when they cannot be
 /// read, which is logged, so the listed ones stay.
 fn read_quick_notes(notes: &mut Notes, from: NaiveDate, today: NaiveDate) -> Option<Vec<Note>> {
     let start = |day: NaiveDate| local_midnight(day).map(|start| start.with_timezone(&Utc));

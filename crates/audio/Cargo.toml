@@ -1,0 +1,68 @@
+[package]
+name = "crumble-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-audio-toolbox = { workspace = true, features = [
+    "std",
+    "AudioFile",
+    "ExtendedAudioFile",
+    "objc2-core-audio-types",
+    "objc2-core-foundation",
+] }
+objc2-avf-audio = { workspace = true, features = [
+    "std",
+    "block2",
+    "objc2-core-audio-types",
+    "AVAudioApplication",
+    "AVAudioEngine",
+    "AVAudioFile",
+    "AVAudioFormat",
+    "AVAudioIONode",
+    "AVAudioMixerNode",
+    "AVAudioNode",
+    "AVAudioPlayerNode",
+    "AVAudioTime",
+    "AVAudioTypes",
+] }
+objc2-core-audio = { workspace = true, features = [
+    "std",
+    "AudioHardware",
+    "HostTime",
+    "objc2",
+    "objc2-core-audio-types",
+    "objc2-foundation",
+] }
+objc2-core-audio-types = { workspace = true, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation.workspace = true
+objc2-foundation = { workspace = true, features = [
+    "std",
+    "NSArray",
+    "NSBundle",
+    "NSDictionary",
+    "NSObject",
+    "NSString",
+    "NSURL",
+    "NSUUID",
+    "NSValue",
+] }
+
+# Every Core Audio call is `unsafe`, so this crate cannot take the workspace's `forbid`
+# (see docs/adr/0005-recording-with-a-process-tap.md). The other lints match the workspace.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"

@@ -1,15 +1,17 @@
 //! The Note detail view's state: the Note of the selected Agenda row or of the opened Event,
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
+//! The Recording, its player and the header pill are in `recording`.
 
 mod actions;
 mod detail;
+mod recording;
 
 use super::NativeView;
 use super::agenda::Selected;
 use chrono::Utc;
 use crumble_eventkit::Event;
-use crumble_notes::{Note, NoteId};
+use crumble_notes::{Note, NoteId, RecordingInfo};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
@@ -61,10 +63,19 @@ pub(super) struct NoteDetail {
     /// lost; each later save tries them again.
     unsaved_titles: HashMap<NoteId, Option<String>>,
     unsaved_memos: HashMap<NoteId, String>,
+    /// Finished Recordings whose length failed to save, shown as finished and written again
+    /// with every later save. A restart's crash recovery reads the length from the files too.
+    unsaved_recordings: HashMap<NoteId, RecordingInfo>,
     /// Whether the last save failed.
     save_failed: bool,
     /// Where the Note actions button was last drawn; its menu opens below it.
     actions: Rc<Cell<Bounds<Pixels>>>,
+    /// The one Recording running in the app, whichever Note shows.
+    recording: Option<recording::Active>,
+    /// The shown Note's finished Recording.
+    playback: Option<recording::Playback>,
+    /// The Note whose Recording last failed to start, stop in full, or delete.
+    recording_failed: Option<NoteId>,
     _subscriptions: [Subscription; 3],
 }
 
@@ -87,9 +98,10 @@ impl NoteDetail {
                 InputEvent::Blur => view.save_memo(cx),
                 _ => {}
             }),
-            // Quitting within the pause still keeps what was typed.
+            // Quitting within the pause still keeps what was typed, and a running Recording.
             cx.on_app_quit(|view, cx| {
                 view.save_note(cx);
+                view.stop_recording(cx);
                 async {}
             }),
         ];
@@ -108,8 +120,12 @@ impl NoteDetail {
             memo_save: Task::ready(()),
             unsaved_titles: HashMap::new(),
             unsaved_memos: HashMap::new(),
+            unsaved_recordings: HashMap::new(),
             save_failed: false,
             actions: Rc::default(),
+            recording: None,
+            playback: None,
+            recording_failed: None,
             _subscriptions: subscriptions,
         }
     }
@@ -175,22 +191,27 @@ impl NativeView {
         self.show_note(note, window, cx);
     }
 
-    /// Saves the shown Note before the window closes. While a title or Memo still fails to
-    /// save, asks first instead, as closing drops the text kept in memory.
+    /// Saves the shown Note and stops a running Recording before the window closes. While a
+    /// title or Memo still fails to save, asks first instead, as closing drops the text kept in
+    /// memory.
     fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.save_note(cx);
         let detail = &self.note_detail;
         if detail.unsaved_titles.is_empty() && detail.unsaved_memos.is_empty() {
+            self.stop_recording(cx);
             return true;
         }
-        window.open_alert_dialog(cx, |alert, _, _| {
+        let view = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let view = view.clone();
             alert
                 .title("Close without saving?")
                 .description("Some notes couldn't be saved. Closing loses their changes.")
                 .show_cancel(true)
                 .ok_text("Close")
                 .ok_variant(ButtonVariant::Danger)
-                .on_ok(|_, window, _| {
+                .on_ok(move |_, window, cx| {
+                    let _ = view.update(cx, |view, cx| view.stop_recording(cx));
                     window.remove_window();
                     true
                 })
@@ -198,8 +219,8 @@ impl NativeView {
         false
     }
 
-    /// Shows `note` and fills the fields with it, with a title or Memo that failed to save in
-    /// place of the stored one.
+    /// Shows `note` and fills the fields with it, with a title, Memo or Recording length that
+    /// failed to save in place of the stored one.
     fn show_note(&mut self, mut note: Option<Note>, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
         if let Some(note) = &mut note {
@@ -208,6 +229,9 @@ impl NativeView {
             }
             if let Some(memo) = detail.unsaved_memos.get(&note.id) {
                 note.memo.clone_from(memo);
+            }
+            if let Some(recording) = detail.unsaved_recordings.get(&note.id) {
+                note.recording = Some(*recording);
             }
         }
         detail.memo_dirty = false;
@@ -226,6 +250,7 @@ impl NativeView {
         detail
             .memo
             .update(cx, |input, cx| input.set_value(memo, window, cx));
+        self.show_player(cx);
         cx.notify();
     }
 
@@ -237,8 +262,8 @@ impl NativeView {
         self.retry_unsaved();
     }
 
-    /// Writes again the titles and Memos that failed to save, and says "Couldn't save" while
-    /// any still fails.
+    /// Writes again the titles, Memos and Recording lengths that failed to save, and says
+    /// "Couldn't save" while any still fails.
     fn retry_unsaved(&mut self) {
         let detail = &mut self.note_detail;
         let notes = &mut self.notes;
@@ -259,7 +284,14 @@ impl NativeView {
             }
             failed
         });
-        detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
+        detail.unsaved_recordings.retain(|id, recording| {
+            recording
+                .duration
+                .is_some_and(|duration| notes.finish_recording(id, duration, now).is_err())
+        });
+        detail.save_failed = !detail.unsaved_titles.is_empty()
+            || !detail.unsaved_memos.is_empty()
+            || !detail.unsaved_recordings.is_empty();
         // A rebuilt Agenda listed a Quick note as stored before, so it takes the saved edits.
         for (id, title) in saved_titles {
             self.update_quick_note(&id, |note| note.title = title);
@@ -370,10 +402,21 @@ impl NativeView {
 
     /// Deletes the shown Note; a Quick note's row leaves the Agenda.
     fn delete_note(&mut self, id: &NoteId, window: &mut Window, cx: &mut Context<Self>) {
-        let detail = &mut self.note_detail;
-        if detail.note.as_ref().is_none_or(|note| &note.id != id) {
+        if self
+            .note_detail
+            .note
+            .as_ref()
+            .is_none_or(|note| &note.id != id)
+        {
             return;
         }
+        // The Recording goes with its Note: stop and keep it, so it stays whole if the delete
+        // fails, and close its files before they go.
+        if self.is_recording(id) {
+            self.stop_recording(cx);
+        }
+        self.note_detail.playback = None;
+        let detail = &mut self.note_detail;
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");
             detail.save_failed = true;
@@ -382,6 +425,7 @@ impl NativeView {
         }
         detail.unsaved_titles.remove(id);
         detail.unsaved_memos.remove(id);
+        detail.unsaved_recordings.remove(id);
         detail.memo_dirty = false;
         if matches!(detail.subject, Some(Subject::QuickNote(_))) {
             self.agenda.quick_note_deleted(id);

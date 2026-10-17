@@ -139,7 +139,7 @@ impl NativeView {
     }
 
     /// Borderless, transparent header; the Agenda, Calendar, and Event pages put their toolbars
-    /// here.
+    /// here. The Recording pill sits at its trailing end on every page while a Recording runs.
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (width, collapsed, left) = (
             self.sidebar_width,
@@ -154,8 +154,10 @@ impl NativeView {
             Route::Agenda => Some(self.render_agenda_toolbar(cx).into_any_element()),
             Route::Calendar => Some(self.render_calendar_toolbar(cx).into_any_element()),
             Route::Event(event) => Some(self.render_event_toolbar(event, cx)),
-            _ => None,
+            // Pushes the pill to the trailing end, as the toolbars do.
+            _ => Some(div().flex_1().into_any_element()),
         };
+        let pill = self.render_recording_pill(cx);
         if cfg!(target_os = "macos") {
             TitleBar::new()
                 .border_0()
@@ -165,6 +167,7 @@ impl NativeView {
                 .pr(px(CONTENT_PADDING))
                 .child(inset)
                 .children(toolbar)
+                .children(pill)
                 .into_any_element()
         } else {
             h_flex()
@@ -174,6 +177,7 @@ impl NativeView {
                 .pr(px(CONTENT_PADDING))
                 .child(inset)
                 .children(toolbar)
+                .children(pill)
                 .into_any_element()
         }
     }

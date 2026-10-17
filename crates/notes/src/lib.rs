@@ -1,14 +1,22 @@
 //! Notes kept in Crumble's database: each attached to one occurrence of an Event, or standing
 //! alone as a Quick note. A Note finds its Event again by the key and snapshot of ADR 0004.
+//! A Note's Recording is kept as files in its own folder, which this crate names and deletes;
+//! `crumble-audio` writes and reads the files in it (ADR 0005).
 
 use std::fmt;
+use std::io::ErrorKind;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use crumble_db::schema::notes;
 use crumble_eventkit::{Event, Occurrence, When};
+use diesel::dsl::sql;
+use diesel::expression::SqlLiteral;
 use diesel::prelude::*;
+use diesel::sql_types::Text;
 use uuid::Uuid;
 
 /// A Note as stored. See CONTEXT.md.
@@ -26,6 +34,28 @@ pub struct Note {
     pub created_at: DateTime<Utc>,
     /// When the Note last changed.
     pub updated_at: DateTime<Utc>,
+    /// The Note's Recording, if it has one.
+    pub recording: Option<RecordingInfo>,
+}
+
+impl Note {
+    /// When the Agenda lists the Note as a Quick note: its Recording's start, else when it was
+    /// made.
+    pub fn listed_at(&self) -> DateTime<Utc> {
+        self.recording
+            .as_ref()
+            .map_or(self.created_at, |recording| recording.started_at)
+    }
+}
+
+/// What the database keeps about a Note's Recording; the audio is in [`Notes::recording_dir`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordingInfo {
+    /// When the Recording started, to the millisecond.
+    pub started_at: DateTime<Utc>,
+    /// How long it is once finished; `None` while it runs, and after a crash until
+    /// [`Notes::set_recording_finished`] stores what the files hold.
+    pub duration: Option<Duration>,
 }
 
 /// What a Note keeps about the Event occurrence it is attached to (ADR 0004).
@@ -56,6 +86,10 @@ impl fmt::Display for NoteId {
 pub struct Notes {
     /// `None` only when not even an in-memory database opens; every call then errors.
     connection: Option<SqliteConnection>,
+    /// The folder holding one folder of audio per Recording.
+    recordings: PathBuf,
+    /// Whether `recordings` is a temporary folder, deleted with `Notes`.
+    temporary: bool,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -70,28 +104,41 @@ struct NoteRow {
     event_start: Option<String>,
     created_at: String,
     updated_at: String,
+    recording_started_at: Option<String>,
+    recording_duration_ms: Option<i32>,
 }
 
 impl Notes {
     /// The app's database file; when it cannot be opened, an in-memory one, logged like
     /// `Store::open`, so Notes made in that run are not kept.
+    /// Recordings go in `recordings/` beside the file.
     pub fn open() -> Self {
-        match crumble_db::open_file() {
-            Ok(connection) => Self {
+        let opened = crumble_db::open_file().and_then(|connection| {
+            Ok(Self {
                 connection: Some(connection),
-            },
-            Err(error) => {
-                eprintln!("Could not open the database, Notes are not kept: {error}");
-                Self::in_memory()
-            }
-        }
+                recordings: crumble_db::data_dir()?.join("recordings"),
+                temporary: false,
+            })
+        });
+        opened.unwrap_or_else(|error| {
+            eprintln!("Could not open the database, Notes are not kept: {error}");
+            Self::in_memory()
+        })
     }
 
+    /// An in-memory database, with Recordings in a fresh temporary folder deleted on drop, as
+    /// neither is kept.
     fn in_memory() -> Self {
         let connection = crumble_db::open(":memory:")
             .inspect_err(|error| eprintln!("Could not open an in-memory database: {error}"))
             .ok();
-        Self { connection }
+        let recordings =
+            std::env::temp_dir().join(format!("crumble-recordings-{}", Uuid::now_v7()));
+        Self {
+            connection,
+            recordings,
+            temporary: true,
+        }
     }
 
     fn connection(&mut self) -> anyhow::Result<&mut SqliteConnection> {
@@ -119,6 +166,8 @@ impl Notes {
             event_start: event.map(|event| encode_occurrence(start_of(&event.when))),
             created_at: encode_time(now),
             updated_at: encode_time(now),
+            recording_started_at: None,
+            recording_duration_ms: None,
         };
         diesel::insert_into(notes::table)
             .values(&row)
@@ -156,14 +205,14 @@ impl Notes {
         row.map(decode_note).transpose()
     }
 
-    /// Quick notes created in `range`, newest first, for the Agenda page.
+    /// Quick notes listed in `range` by [`Note::listed_at`], newest first, for the Agenda page.
     pub fn quick_notes(&mut self, range: Range<DateTime<Utc>>) -> anyhow::Result<Vec<Note>> {
         let rows = notes::table
             .filter(notes::event_start.is_null())
             .filter(notes::deleted_at.is_null())
-            .filter(notes::created_at.ge(encode_time(range.start)))
-            .filter(notes::created_at.lt(encode_time(range.end)))
-            .order((notes::created_at.desc(), notes::id.desc()))
+            .filter(listed_at().ge(encode_time(range.start)))
+            .filter(listed_at().lt(encode_time(range.end)))
+            .order((listed_at().desc(), notes::id.desc()))
             .select(NoteRow::as_select())
             .load(self.connection()?)?;
         rows.into_iter().map(decode_note).collect()
@@ -193,14 +242,163 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Soft delete: sets `deleted_at`; every read skips it.
+    /// Soft delete: sets `deleted_at`; every read skips it. The Recording's audio is deleted
+    /// for good, as the user deleted the Note.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first: once the Note is deleted, nothing can reach its folder again.
+        self.remove_audio(id)?;
         let now = encode_time(now);
         let updated = diesel::update(live(id))
             .set((notes::deleted_at.eq(&now), notes::updated_at.eq(&now)))
             .execute(self.connection()?)?;
         written(updated, id)
     }
+
+    /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
+    pub fn recording_dir(&self, id: &NoteId) -> PathBuf {
+        self.recordings.join(&id.0)
+    }
+
+    /// Marks the Note `id` as recording since `now`, and returns that as stored. Errors when it
+    /// already has a Recording: a Note has at most one.
+    pub fn set_recording_started(
+        &mut self,
+        id: &NoteId,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<RecordingInfo> {
+        let started_at = encode_time(now);
+        let updated = diesel::update(live(id).filter(notes::recording_started_at.is_null()))
+            .set((
+                notes::recording_started_at.eq(&started_at),
+                notes::updated_at.eq(&started_at),
+            ))
+            .execute(self.connection()?)?;
+        if updated == 0 {
+            bail!("no Note {id} without a Recording");
+        }
+        Ok(RecordingInfo {
+            started_at: decode_time(&started_at)?,
+            duration: None,
+        })
+    }
+
+    /// Keeps the Note `id`'s stopped or recovered Recording at `duration` and returns it as
+    /// stored. One zero long holds no audio, so it is deleted instead and `None` comes back.
+    pub fn finish_recording(
+        &mut self,
+        id: &NoteId,
+        duration: Duration,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Option<RecordingInfo>> {
+        if duration.is_zero() {
+            self.delete_recording(id, now)?;
+            return Ok(None);
+        }
+        self.set_recording_finished(id, duration, now)?;
+        let started_at = notes::table
+            .find(id.0.as_str())
+            .select(notes::recording_started_at)
+            .first::<Option<String>>(self.connection()?)?
+            .ok_or_else(|| anyhow!("Note {id} has no Recording"))?;
+        Ok(Some(RecordingInfo {
+            started_at: decode_time(&started_at)?,
+            duration: Some(duration),
+        }))
+    }
+
+    /// Stores how long the Note `id`'s Recording is.
+    fn set_recording_finished(
+        &mut self,
+        id: &NoteId,
+        duration: Duration,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let duration_ms = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
+        let updated = diesel::update(live(id).filter(notes::recording_started_at.is_not_null()))
+            .set((
+                notes::recording_duration_ms.eq(duration_ms),
+                notes::updated_at.eq(encode_time(now)),
+            ))
+            .execute(self.connection()?)?;
+        written(updated, id)
+    }
+
+    /// Removes the Note `id`'s Recording: deletes its folder, then forgets it.
+    pub fn delete_recording(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first, so a failure leaves the Recording listed for another try.
+        self.remove_audio(id)?;
+        let updated = diesel::update(live(id))
+            .set((
+                notes::recording_started_at.eq(None::<String>),
+                notes::recording_duration_ms.eq(None::<i32>),
+                notes::updated_at.eq(encode_time(now)),
+            ))
+            .execute(self.connection()?)?;
+        written(updated, id)
+    }
+
+    /// Finishes the Recordings a crash left running, as [`Notes::finish_recording`] does with
+    /// the length `length` reads from each folder. One `length` cannot read stays unfinished, as
+    /// its files may still hold audio, and is tried again at the next launch. A Recording that
+    /// fails does not stop the others; the first error comes back once all were tried. Run at
+    /// launch, before anything records; `crumble_audio::recorded_length` reads the files.
+    pub fn recover_recordings(
+        &mut self,
+        length: impl Fn(&Path) -> anyhow::Result<Duration>,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        let mut failed = None;
+        for id in self.unfinished_recordings()? {
+            let recovered = length(&self.recording_dir(&id))
+                .inspect_err(|error| {
+                    eprintln!("Could not read the Recording of Note {id}, so it is left for later: {error:#}");
+                })
+                .map_or(Ok(()), |duration| {
+                    self.finish_recording(&id, duration, now).map(drop)
+                });
+            if let Err(error) = recovered {
+                eprintln!("Could not recover the Recording of Note {id}: {error:#}");
+                failed.get_or_insert(error);
+            }
+        }
+        failed.map_or(Ok(()), Err)
+    }
+
+    /// The Notes whose Recording started but never finished, as when the app died while
+    /// recording.
+    fn unfinished_recordings(&mut self) -> anyhow::Result<Vec<NoteId>> {
+        let ids = notes::table
+            .filter(notes::deleted_at.is_null())
+            .filter(notes::recording_started_at.is_not_null())
+            .filter(notes::recording_duration_ms.is_null())
+            .select(notes::id)
+            .load::<String>(self.connection()?)?;
+        Ok(ids.into_iter().map(NoteId).collect())
+    }
+
+    /// Deletes the Note `id`'s Recording folder, if there is one.
+    fn remove_audio(&self, id: &NoteId) -> anyhow::Result<()> {
+        match std::fs::remove_dir_all(self.recording_dir(id)) {
+            Err(error) if error.kind() != ErrorKind::NotFound => Err(anyhow!(
+                "could not delete the Recording of Note {id}: {error}"
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl Drop for Notes {
+    fn drop(&mut self) {
+        if self.temporary {
+            let _ = std::fs::remove_dir_all(&self.recordings);
+        }
+    }
+}
+
+/// Where the Agenda lists a Quick note, as stored: its Recording's start, else its creation.
+/// The same expression as the `notes_quick` index, so SQLite uses it.
+fn listed_at() -> SqlLiteral<Text> {
+    sql::<Text>("COALESCE(recording_started_at, created_at)")
 }
 
 /// The Note `id`, unless it is deleted: writes never bring a deleted Note back.
@@ -278,6 +476,18 @@ fn decode_note(row: NoteRow) -> anyhow::Result<Note> {
         event,
         created_at: decode_time(&row.created_at)?,
         updated_at: decode_time(&row.updated_at)?,
+        recording: row
+            .recording_started_at
+            .as_deref()
+            .map(|started_at| {
+                anyhow::Ok(RecordingInfo {
+                    started_at: decode_time(started_at)?,
+                    duration: row
+                        .recording_duration_ms
+                        .map(|ms| Duration::from_millis(u64::try_from(ms).unwrap_or(0))),
+                })
+            })
+            .transpose()?,
     })
 }
 

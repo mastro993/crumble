@@ -8,7 +8,9 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 chrono.workspace = true
+crumble-audio.workspace = true
 crumble-calendar.workspace = true
 gpui-kit.workspace = true
 crumble-eventkit.workspace = true

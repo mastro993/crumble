@@ -11,11 +11,11 @@ anyhow.workspace = true
 chrono.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6.2"
-objc2 = { version = "0.6.5", features = ["exception"] }
-objc2-core-foundation = "0.3.2"
-objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColor", "CGColorSpace"] }
-objc2-event-kit = { version = "0.3.2", default-features = false, features = [
+block2.workspace = true
+objc2 = { workspace = true, features = ["exception"] }
+objc2-core-foundation.workspace = true
+objc2-core-graphics = { workspace = true, features = ["std", "CGColor", "CGColorSpace"] }
+objc2-event-kit = { workspace = true, features = [
     "std",
     "block2",
     "objc2-core-graphics",
@@ -28,7 +28,7 @@ objc2-event-kit = { version = "0.3.2", default-features = false, features = [
     "EKSource",
     "EKTypes",
 ] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
+objc2-foundation = { workspace = true, features = [
     "std",
     "block2",
     "NSArray",
