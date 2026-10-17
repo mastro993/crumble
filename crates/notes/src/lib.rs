@@ -100,9 +100,15 @@ impl Notes {
             .ok_or_else(|| anyhow!("no database"))
     }
 
-    /// A Note attached to `event`'s occurrence, or a Quick note when `event` is None. Its times
-    /// come back as stored: `now` to the millisecond, the Event's to the second.
+    /// A new Quick note when `event` is None. Otherwise the Note of `event`'s occurrence, made
+    /// only when [`Notes::for_event`] finds none, as an occurrence has at most one Note. A new
+    /// Note's times come back as stored: `now` to the millisecond, the Event's to the second.
     pub fn create(&mut self, event: Option<&Event>, now: DateTime<Utc>) -> anyhow::Result<Note> {
+        if let Some(event) = event
+            && let Some(note) = self.for_event(event)?
+        {
+            return Ok(note);
+        }
         let row = NoteRow {
             id: Uuid::now_v7().to_string(),
             title: None,
@@ -120,10 +126,10 @@ impl Notes {
         decode_note(row)
     }
 
-    /// Every Note of this occurrence, oldest first: those whose key matches the Event's, and
-    /// those whose snapshot matches its title and start, as for a Note made before the Event
-    /// synced. A read only; stored keys are never rewritten here.
-    pub fn for_event(&mut self, event: &Event) -> anyhow::Result<Vec<Note>> {
+    /// The Note of this occurrence: the one whose key matches the Event's, else the oldest whose
+    /// snapshot matches its title and start, as for a Note made before the Event synced. A read
+    /// only; stored keys are never rewritten here.
+    pub fn for_event(&mut self, event: &Event) -> anyhow::Result<Option<Note>> {
         let occurrence = event.occurrence.map(encode_occurrence);
         // With no UID, `event_series_uid = NULL` is never true, so only the snapshot matches.
         let key = notes::event_series_uid
@@ -132,13 +138,15 @@ impl Notes {
         let snapshot = notes::event_title
             .eq(&event.title)
             .and(notes::event_start.eq(encode_occurrence(start_of(&event.when))));
-        let rows = notes::table
+        let row = notes::table
             .filter(notes::deleted_at.is_null())
             .filter(key.or(snapshot))
-            .order((notes::created_at, notes::id))
+            // The key's match first: SQLite sorts its true before false and NULL.
+            .order((key.desc(), notes::created_at, notes::id))
             .select(NoteRow::as_select())
-            .load(self.connection()?)?;
-        rows.into_iter().map(decode_note).collect()
+            .first(self.connection()?)
+            .optional()?;
+        row.map(decode_note).transpose()
     }
 
     /// Quick notes created in `range`, newest first, for the Agenda page.
