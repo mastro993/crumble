@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -14,7 +14,8 @@ publish = false
 anyhow = "1.0"
 async-channel = "2.5"
 chrono = "0.4.45"
-diesel = { version = "2.3.14", default-features = false, features = ["sqlite"] }
+# `notes` has more than 16 columns since its Summary (ADR 0007).
+diesel = { version = "2.3.14", default-features = false, features = ["sqlite", "32-column-tables"] }
 diesel_migrations = { version = "2.3.2", default-features = false, features = ["sqlite"] }
 dirs = "6.0"
 gpui-kit = "=0.7.0"
@@ -26,6 +27,7 @@ crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
 crumble-notes = { path = "crates/notes" }
 crumble-store = { path = "crates/store" }
+crumble-summarize = { path = "crates/summarize" }
 crumble-sync = { path = "crates/sync" }
 crumble-transcribe = { path = "crates/transcribe" }
 # Agent automation for `--features mcp` builds. The rev matches the `gpui-mcp` server it talks to.
@@ -47,6 +49,12 @@ objc2-event-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false }
 # Pure-Rust WebRTC audio processing: crumble-audio uses its echo canceller (AEC3) only.
 sonora = "0.2.0"
+# Summaries from remote Providers: a small blocking HTTP client, as jobs already run on a
+# background thread (ADR 0007).
+ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
+serde_json = "1.0"
+# API keys in the macOS Keychain (ADR 0007).
+security-framework = "3.7"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

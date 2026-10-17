@@ -17,6 +17,7 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `crates/notes` (`crumble-notes`): Notes and Quick notes, how a Note finds its Event, and the folder each Recording lives in. No GPUI.
 - `crates/audio` (`crumble-audio`): Recordings: microphone and process-tap capture into AAC files, echo removal from the microphone, and playback. No GPUI.
 - `crates/transcribe` (`crumble-transcribe`): Transcripts made on the Mac by Apple's SpeechAnalyzer, through a Swift bridge. No GPUI.
+- `crates/summarize` (`crumble-summarize`): Summaries from the `Summarizer` trait: Apple's on-device Foundation Models through a Swift bridge, the Claude API, and OpenAI-compatible servers. No GPUI.
 - `crates/theme` (`crumble-theme`): colors, typography, dimensions.
 - `crates/eventkit` (`crumble-eventkit`): read-only EventKit bridge, plain Rust data, no GPUI.
 
@@ -35,7 +36,8 @@ Split on one question: does this code need GPUI?
 - Keep `gpui-kit` and the `mcp` feature out of domain crates.
 - Link anything kept about an Event, such as a Note, by `series_uid` and `occurrence` ([ADR 0004](docs/adr/0004-event-identity-for-notes.md)). `Event::id` changes when the Event moves.
 - Core Audio callbacks never block; hand buffers to the writer thread ([ADR 0005](docs/adr/0005-recording-with-a-process-tap.md)).
-- Swift lives only in `crates/transcribe/swift/`; Rust calls it through the C ABI in `crates/transcribe/src/ffi.rs` ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)).
+- Swift lives only in `crates/<crate>/swift/`, called through that crate's `src/ffi.rs` ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)).
+- API keys go only through the Keychain module, `crumble_store::secrets`; keep them out of SQLite, logs, errors and UI text ([ADR 0007](docs/adr/0007-summaries-and-model-providers.md)).
 
 ## New crates
 
@@ -52,7 +54,7 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 - Use concrete types and functions. Add a trait only when it has two real implementations.
 - Keep crate APIs narrow: `pub(crate)` by default, `pub` only for items another crate uses, each with a doc comment.
 - Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`.
-- Only `crumble-eventkit`, `crumble-audio` and `crumble-transcribe` use `unsafe`, each under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md), [ADR 0005](docs/adr/0005-recording-with-a-process-tap.md), [ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)). Every other crate keeps `unsafe_code = "forbid"`.
+- Only `crumble-eventkit`, `crumble-audio`, `crumble-transcribe` and `crumble-summarize` use `unsafe`, each under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md), [ADR 0005](docs/adr/0005-recording-with-a-process-tap.md), [ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md), [ADR 0007](docs/adr/0007-summaries-and-model-providers.md)). Every other crate keeps `unsafe_code = "forbid"`.
 
 ## Testing
 

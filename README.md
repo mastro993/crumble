@@ -4,7 +4,7 @@ Native desktop app built with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https:
 
 ## Run
 
-Install Rust 1.96 through `rustup`, and Xcode with the macOS 26 SDK (Xcode 27 / Swift 6.4 is what the repository builds with). `crumble-transcribe` compiles its Swift bridge with `xcrun swiftc` during the build ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)); if `xcrun` points at an older toolchain, select Xcode with `sudo xcode-select -s /Applications/Xcode.app`. Then:
+Install Rust 1.96 through `rustup`, and Xcode with the macOS 26 SDK (Xcode 27 / Swift 6.4 is what the repository builds with). `crumble-transcribe` and `crumble-summarize` compile their Swift bridges with `xcrun swiftc` during the build ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)); if `xcrun` points at an older toolchain, select Xcode with `sudo xcode-select -s /Applications/Xcode.app`. Then:
 
 ```sh
 cargo run -p crumble --locked
@@ -29,7 +29,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+CI (`.github/workflows/ci.yml`) runs these three on macOS 26 for every pull request and every push to `main`.
+
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
+
+`cargo test -p crumble-summarize --locked -- --ignored --nocapture` summarizes an invented Transcript with Apple's on-device model (Apple Intelligence must be on) and with a local Ollama if one is running. `cargo test -p crumble-store --locked -- --ignored` saves, reads and removes a made-up key in the login Keychain.
 
 ## Changing the database schema
 

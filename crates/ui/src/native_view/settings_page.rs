@@ -1,4 +1,5 @@
-//! Settings page: choices kept across restarts through `Store`.
+//! Settings page: choices kept across restarts through `Store`. Its Models section is in
+//! `settings_models`.
 
 use super::NativeView;
 use super::account_dot::dot;
@@ -65,7 +66,12 @@ pub(super) fn first_day_select(
 }
 
 impl NativeView {
-    pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let models = self.render_model_settings(window, cx);
         v_flex()
             .max_w(px(560.0))
             .gap_4()
@@ -88,6 +94,7 @@ impl NativeView {
                     ),
             )
             .children(self.render_calendar_settings(cx))
+            .child(models)
     }
 
     /// Each Account with a switch, and its Calendars with a checkbox each. A Disabled Account
@@ -190,7 +197,7 @@ impl NativeView {
     }
 }
 
-fn group_title(title: &'static str, cx: &Context<NativeView>) -> Div {
+pub(super) fn group_title(title: &'static str, cx: &Context<NativeView>) -> Div {
     div()
         .text_sm()
         .font_semibold()
