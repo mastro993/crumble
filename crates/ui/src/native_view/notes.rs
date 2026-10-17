@@ -11,7 +11,7 @@ use super::NativeView;
 use super::agenda::Selected;
 use chrono::Utc;
 use crumble_eventkit::Event;
-use crumble_notes::{Note, NoteId};
+use crumble_notes::{Note, NoteId, RecordingInfo};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
@@ -63,6 +63,9 @@ pub(super) struct NoteDetail {
     /// lost; each later save tries them again.
     unsaved_titles: HashMap<NoteId, Option<String>>,
     unsaved_memos: HashMap<NoteId, String>,
+    /// Finished Recordings whose length failed to save, shown as finished and written again
+    /// with every later save. A restart's crash recovery reads the length from the files too.
+    unsaved_recordings: HashMap<NoteId, RecordingInfo>,
     /// Whether the last save failed.
     save_failed: bool,
     /// Where the Note actions button was last drawn; its menu opens below it.
@@ -117,6 +120,7 @@ impl NoteDetail {
             memo_save: Task::ready(()),
             unsaved_titles: HashMap::new(),
             unsaved_memos: HashMap::new(),
+            unsaved_recordings: HashMap::new(),
             save_failed: false,
             actions: Rc::default(),
             recording: None,
@@ -215,8 +219,8 @@ impl NativeView {
         false
     }
 
-    /// Shows `note` and fills the fields with it, with a title or Memo that failed to save in
-    /// place of the stored one.
+    /// Shows `note` and fills the fields with it, with a title, Memo or Recording length that
+    /// failed to save in place of the stored one.
     fn show_note(&mut self, mut note: Option<Note>, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
         if let Some(note) = &mut note {
@@ -225,6 +229,9 @@ impl NativeView {
             }
             if let Some(memo) = detail.unsaved_memos.get(&note.id) {
                 note.memo.clone_from(memo);
+            }
+            if let Some(recording) = detail.unsaved_recordings.get(&note.id) {
+                note.recording = Some(*recording);
             }
         }
         detail.memo_dirty = false;
@@ -255,8 +262,8 @@ impl NativeView {
         self.retry_unsaved();
     }
 
-    /// Writes again the titles and Memos that failed to save, and says "Couldn't save" while
-    /// any still fails.
+    /// Writes again the titles, Memos and Recording lengths that failed to save, and says
+    /// "Couldn't save" while any still fails.
     fn retry_unsaved(&mut self) {
         let detail = &mut self.note_detail;
         let notes = &mut self.notes;
@@ -277,7 +284,14 @@ impl NativeView {
             }
             failed
         });
-        detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
+        detail.unsaved_recordings.retain(|id, recording| {
+            recording
+                .duration
+                .is_some_and(|duration| notes.set_recording_finished(id, duration, now).is_err())
+        });
+        detail.save_failed = !detail.unsaved_titles.is_empty()
+            || !detail.unsaved_memos.is_empty()
+            || !detail.unsaved_recordings.is_empty();
         // A rebuilt Agenda listed a Quick note as stored before, so it takes the saved edits.
         for (id, title) in saved_titles {
             self.update_quick_note(&id, |note| note.title = title);
@@ -410,6 +424,7 @@ impl NativeView {
         }
         detail.unsaved_titles.remove(id);
         detail.unsaved_memos.remove(id);
+        detail.unsaved_recordings.remove(id);
         detail.memo_dirty = false;
         if matches!(detail.subject, Some(Subject::QuickNote(_))) {
             self.agenda.quick_note_deleted(id);

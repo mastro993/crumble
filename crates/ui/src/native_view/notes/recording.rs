@@ -170,15 +170,20 @@ impl NativeView {
                 eprintln!("Deleting the Recording, as it holds no audio");
                 self.notes.delete_recording(&id, now).map(|()| None)
             }
-            Ok(duration) => self
-                .notes
-                .set_recording_finished(&id, duration, now)
-                .map(|()| {
-                    Some(RecordingInfo {
-                        started_at: active.started_at,
-                        duration: Some(duration),
-                    })
-                }),
+            Ok(duration) => {
+                let info = RecordingInfo {
+                    started_at: active.started_at,
+                    duration: Some(duration),
+                };
+                // The files are complete, so the Recording shows as finished; its length is
+                // kept in memory and written again with every later save, as a failed Memo is.
+                if let Err(error) = self.notes.set_recording_finished(&id, duration, now) {
+                    eprintln!("Could not save the Recording's length: {error:#}");
+                    self.note_detail.unsaved_recordings.insert(id.clone(), info);
+                    self.note_detail.save_failed = true;
+                }
+                Ok(Some(info))
+            }
             Err(error) => Err(error),
         };
         match info {
@@ -322,6 +327,7 @@ impl NativeView {
         self.note_detail.playback = None;
         match self.notes.delete_recording(id, Utc::now()) {
             Ok(()) => {
+                self.note_detail.unsaved_recordings.remove(id);
                 self.recording_changed(id, None);
                 self.note_detail.recording_failed = None;
             }
