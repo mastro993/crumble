@@ -153,13 +153,12 @@ impl NativeView {
 
     /// Stops the Recording and keeps it as [`Notes::finish_recording`] does; on quit, window
     /// close and Note deletion too. A stop that fails keeps what the files hold. One whose
-    /// files cannot be read stays unfinished, for the next launch to read again.
+    /// files cannot be read stays unfinished, for the next launch to read again. Returns the
+    /// Note when its finished Recording is stored, so Stop can transcribe it.
     ///
     /// [`Notes::finish_recording`]: crumble_notes::Notes::finish_recording
-    pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
-        let Some(active) = self.note_detail.recording.take() else {
-            return;
-        };
+    pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) -> Option<NoteId> {
+        let active = self.note_detail.recording.take()?;
         let id = active.target.note;
         let dir = self.notes.recording_dir(&id);
         let stopped = active.recorder.stop();
@@ -186,6 +185,9 @@ impl NativeView {
                 finished => finished,
             }
         });
+        let stored = (finished.as_ref().ok()).is_some_and(|info| {
+            info.is_some() && !self.note_detail.unsaved_recordings.contains_key(&id)
+        });
         match finished {
             Ok(info) => {
                 self.recording_changed(&id, info);
@@ -205,25 +207,12 @@ impl NativeView {
             self.show_player(cx);
         }
         cx.notify();
+        stored.then_some(id)
     }
 
     /// Keeps every in-memory copy of the Note `id` in step with its Recording.
     fn recording_changed(&mut self, id: &NoteId, info: Option<RecordingInfo>) {
-        let detail = &mut self.note_detail;
-        if let Some(note) = &mut detail.note
-            && &note.id == id
-        {
-            note.recording = info;
-        }
-        if let Some(Subject::QuickNote(note)) = &mut detail.subject
-            && &note.id == id
-        {
-            note.recording = info;
-        }
-        if let Some(mut note) = self.agenda.quick_note(id).cloned() {
-            note.recording = info;
-            self.agenda.note_changed(&note);
-        }
+        self.note_changed(id, |note| note.recording = info);
     }
 
     /// Opens the shown Note's finished Recording in the player, replacing any other.
@@ -333,18 +322,36 @@ impl NativeView {
         if self.is_recording(id) {
             return;
         }
-        // Closes the files before they go.
+        // Closes the files before they go, and the Transcript goes with them.
         self.note_detail.playback = None;
+        self.cancel_transcription(id);
         match self.notes.delete_recording(id, Utc::now()) {
             Ok(()) => {
                 self.note_detail.unsaved_recordings.remove(id);
-                self.recording_changed(id, None);
+                self.note_changed(id, |note| {
+                    note.recording = None;
+                    note.transcript = None;
+                });
+                self.show_transcript();
                 self.note_detail
                     .recording_failed
                     .take_if(|failed| failed == id);
             }
             Err(error) => self.recording_failed(id, &format!("{error:#}"), cx),
         }
+        cx.notify();
+    }
+
+    /// Moves the shown Note's player to `to`, as when a Transcript line's time is clicked.
+    pub(super) fn seek(&mut self, to: Duration, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(playback) = &mut self.note_detail.playback else {
+            return;
+        };
+        playback.player.seek(to);
+        let at = playback.player.position().as_secs_f32();
+        playback
+            .scrubber
+            .update(cx, |scrubber, cx| scrubber.set_value(at, window, cx));
         cx.notify();
     }
 
@@ -397,7 +404,11 @@ impl NativeView {
                             .small()
                             .icon(app_icon("stop").size_4())
                             .label("Stop")
-                            .on_click(cx.listener(|view, _, _, cx| view.stop_recording(cx))),
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                if let Some(id) = view.stop_recording(cx) {
+                                    view.transcribe(id, cx);
+                                }
+                            })),
                     )
                     .into_any_element(),
             );
@@ -568,7 +579,7 @@ fn red_dot(cx: &Context<NativeView>) -> impl IntoElement {
 }
 
 /// `0:07`, `12:03`, or `1:02:03`.
-fn clock(time: Duration) -> String {
+pub(super) fn clock(time: Duration) -> String {
     let seconds = time.as_secs();
     let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if hours > 0 {

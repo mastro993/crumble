@@ -1414,6 +1414,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumble-transcribe"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "crumble-ui"
 version = "0.1.0"
 dependencies = [
@@ -1427,6 +1434,7 @@ dependencies = [
  "crumble-store",
  "crumble-sync",
  "crumble-theme",
+ "crumble-transcribe",
  "gpui-kit",
 ]
 

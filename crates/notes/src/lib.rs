@@ -1,7 +1,8 @@
 //! Notes kept in Crumble's database: each attached to one occurrence of an Event, or standing
 //! alone as a Quick note. A Note finds its Event again by the key and snapshot of ADR 0004.
 //! A Note's Recording is kept as files in its own folder, which this crate names and deletes;
-//! `crumble-audio` writes and reads the files in it (ADR 0005).
+//! `crumble-audio` writes and reads the files in it (ADR 0005). Its Transcript is kept here as
+//! segments, replaced wholesale each time it is made (ADR 0006).
 
 use std::fmt;
 use std::io::ErrorKind;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
-use crumble_db::schema::notes;
+use crumble_db::schema::{notes, transcript_segments};
 use crumble_eventkit::{Event, Occurrence, When};
 use diesel::dsl::sql;
 use diesel::expression::SqlLiteral;
@@ -36,6 +37,8 @@ pub struct Note {
     pub updated_at: DateTime<Utc>,
     /// The Note's Recording, if it has one.
     pub recording: Option<RecordingInfo>,
+    /// How the Note's Transcript was made, if it has one; [`Notes::transcript`] reads its text.
+    pub transcript: Option<TranscriptInfo>,
 }
 
 impl Note {
@@ -46,6 +49,39 @@ impl Note {
             .as_ref()
             .map_or(self.created_at, |recording| recording.started_at)
     }
+}
+
+/// How a Note's Transcript was made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TranscriptInfo {
+    /// The Model that made it, such as "Apple SpeechAnalyzer".
+    pub model: String,
+    /// The locale it was made in, such as `en_US`.
+    pub locale: String,
+    /// When it was made, to the millisecond.
+    pub transcribed_at: DateTime<Utc>,
+}
+
+/// One stretch of speech in a Transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TranscriptSegment {
+    /// The track it was heard on, which says who spoke.
+    pub track: Track,
+    /// Where it starts in the Recording, to the millisecond.
+    pub start: Duration,
+    /// Where it ends in the Recording, to the millisecond.
+    pub end: Duration,
+    /// What was said.
+    pub text: String,
+}
+
+/// One of a Recording's two tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Track {
+    /// The microphone: the user's side.
+    Mic,
+    /// The Mac's sound: the others on the call.
+    System,
 }
 
 /// What the database keeps about a Note's Recording; the audio is in [`Notes::recording_dir`].
@@ -106,6 +142,20 @@ struct NoteRow {
     updated_at: String,
     recording_started_at: Option<String>,
     recording_duration_ms: Option<i32>,
+    transcript_model: Option<String>,
+    transcript_locale: Option<String>,
+    transcribed_at: Option<String>,
+}
+
+#[derive(Queryable, Selectable, Insertable)]
+#[diesel(table_name = transcript_segments, check_for_backend(diesel::sqlite::Sqlite))]
+struct SegmentRow {
+    id: String,
+    note_id: String,
+    track: String,
+    start_ms: i32,
+    end_ms: i32,
+    text: String,
 }
 
 impl Notes {
@@ -168,6 +218,9 @@ impl Notes {
             updated_at: encode_time(now),
             recording_started_at: None,
             recording_duration_ms: None,
+            transcript_model: None,
+            transcript_locale: None,
+            transcribed_at: None,
         };
         diesel::insert_into(notes::table)
             .values(&row)
@@ -242,16 +295,35 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Soft delete: sets `deleted_at`; every read skips it. The Recording's audio is deleted
-    /// for good, as the user deleted the Note.
+    /// Soft delete: sets `deleted_at`, and every read skips the Note. Its row stays only as a
+    /// tombstone for sync: what the user wrote or said goes for good, the Recording's audio
+    /// first, then its title, Memo, Event link, Recording and Transcript in one transaction.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
         // The audio goes first: once the Note is deleted, nothing can reach its folder again.
         self.remove_audio(id)?;
         let now = encode_time(now);
-        let updated = diesel::update(live(id))
-            .set((notes::deleted_at.eq(&now), notes::updated_at.eq(&now)))
-            .execute(self.connection()?)?;
-        written(updated, id)
+        self.connection()?.transaction(|connection| {
+            let updated = diesel::update(live(id))
+                .set((
+                    notes::deleted_at.eq(&now),
+                    notes::updated_at.eq(&now),
+                    notes::title.eq(None::<String>),
+                    notes::memo.eq(""),
+                    notes::event_series_uid.eq(None::<String>),
+                    notes::event_occurrence.eq(None::<String>),
+                    notes::event_title.eq(None::<String>),
+                    notes::event_start.eq(None::<String>),
+                    notes::recording_started_at.eq(None::<String>),
+                    notes::recording_duration_ms.eq(None::<i32>),
+                    notes::transcript_model.eq(None::<String>),
+                    notes::transcript_locale.eq(None::<String>),
+                    notes::transcribed_at.eq(None::<String>),
+                ))
+                .execute(connection)?;
+            written(updated, id)?;
+            diesel::delete(segments_of(id)).execute(connection)?;
+            anyhow::Ok(())
+        })
     }
 
     /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
@@ -313,7 +385,7 @@ impl Notes {
         duration: Duration,
         now: DateTime<Utc>,
     ) -> anyhow::Result<()> {
-        let duration_ms = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
+        let duration_ms = millis(duration);
         let updated = diesel::update(live(id).filter(notes::recording_started_at.is_not_null()))
             .set((
                 notes::recording_duration_ms.eq(duration_ms),
@@ -323,18 +395,109 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Removes the Note `id`'s Recording: deletes its folder, then forgets it.
+    /// Removes the Note `id`'s Recording and the Transcript made from it, which nothing can make
+    /// again: deletes the audio's folder, then forgets both.
     pub fn delete_recording(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
         // The audio goes first, so a failure leaves the Recording listed for another try.
         self.remove_audio(id)?;
-        let updated = diesel::update(live(id))
-            .set((
-                notes::recording_started_at.eq(None::<String>),
-                notes::recording_duration_ms.eq(None::<i32>),
-                notes::updated_at.eq(encode_time(now)),
-            ))
-            .execute(self.connection()?)?;
-        written(updated, id)
+        self.connection()?.transaction(|connection| {
+            let updated = diesel::update(live(id))
+                .set((
+                    notes::recording_started_at.eq(None::<String>),
+                    notes::recording_duration_ms.eq(None::<i32>),
+                    notes::transcript_model.eq(None::<String>),
+                    notes::transcript_locale.eq(None::<String>),
+                    notes::transcribed_at.eq(None::<String>),
+                    notes::updated_at.eq(encode_time(now)),
+                ))
+                .execute(connection)?;
+            written(updated, id)?;
+            diesel::delete(segments_of(id)).execute(connection)?;
+            anyhow::Ok(())
+        })
+    }
+
+    /// Stores `segments`, in order, as the Transcript of the Note `id`, made by `model` in
+    /// `locale`, and returns how it was made as stored. It replaces any Transcript the Note had,
+    /// in one transaction. Errors unless the Note has a finished Recording.
+    pub fn set_transcript(
+        &mut self,
+        id: &NoteId,
+        model: &str,
+        locale: &str,
+        segments: &[TranscriptSegment],
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<TranscriptInfo> {
+        let transcribed_at = encode_time(now);
+        let rows: Vec<SegmentRow> = segments
+            .iter()
+            .map(|segment| SegmentRow {
+                id: Uuid::now_v7().to_string(),
+                note_id: id.0.clone(),
+                track: encode_track(segment.track).to_owned(),
+                start_ms: millis(segment.start),
+                end_ms: millis(segment.end),
+                text: segment.text.clone(),
+            })
+            .collect();
+        self.connection()?.transaction(|connection| {
+            let updated =
+                diesel::update(live(id).filter(notes::recording_duration_ms.is_not_null()))
+                    .set((
+                        notes::transcript_model.eq(model),
+                        notes::transcript_locale.eq(locale),
+                        notes::transcribed_at.eq(&transcribed_at),
+                        notes::updated_at.eq(&transcribed_at),
+                    ))
+                    .execute(connection)?;
+            if updated == 0 {
+                bail!("no Note {id} with a finished Recording");
+            }
+            diesel::delete(segments_of(id)).execute(connection)?;
+            diesel::insert_into(transcript_segments::table)
+                .values(&rows)
+                .execute(connection)?;
+            anyhow::Ok(())
+        })?;
+        Ok(TranscriptInfo {
+            model: model.to_owned(),
+            locale: locale.to_owned(),
+            transcribed_at: decode_time(&transcribed_at)?,
+        })
+    }
+
+    /// The Transcript of the Note `id` in time order; empty when it has none, or is deleted.
+    pub fn transcript(&mut self, id: &NoteId) -> anyhow::Result<Vec<TranscriptSegment>> {
+        let rows = transcript_segments::table
+            .inner_join(notes::table)
+            .filter(transcript_segments::note_id.eq(&id.0))
+            .filter(notes::deleted_at.is_null())
+            .order((transcript_segments::start_ms, transcript_segments::id))
+            .select(SegmentRow::as_select())
+            .load(self.connection()?)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(TranscriptSegment {
+                    track: decode_track(&row.track)?,
+                    start: duration(row.start_ms),
+                    end: duration(row.end_ms),
+                    text: row.text,
+                })
+            })
+            .collect()
+    }
+
+    /// The Notes with a finished Recording but no Transcript, oldest first, as when the app quit
+    /// while transcribing. Run at launch, to transcribe them.
+    pub fn untranscribed(&mut self) -> anyhow::Result<Vec<NoteId>> {
+        let ids = notes::table
+            .filter(notes::deleted_at.is_null())
+            .filter(notes::recording_duration_ms.is_not_null())
+            .filter(notes::transcript_model.is_null())
+            .order(notes::id)
+            .select(notes::id)
+            .load::<String>(self.connection()?)?;
+        Ok(ids.into_iter().map(NoteId).collect())
     }
 
     /// Finishes the Recordings a crash left running, as [`Notes::finish_recording`] does with
@@ -413,6 +576,40 @@ fn live(
         .filter(notes::deleted_at.is_null())
 }
 
+/// The Transcript segments of the Note `id`.
+fn segments_of(
+    id: &NoteId,
+) -> diesel::dsl::Filter<
+    transcript_segments::table,
+    diesel::dsl::Eq<transcript_segments::note_id, &str>,
+> {
+    transcript_segments::table.filter(transcript_segments::note_id.eq(id.0.as_str()))
+}
+
+/// Milliseconds as stored, at most `i32::MAX` (24 days).
+fn millis(duration: Duration) -> i32 {
+    i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
+}
+
+fn duration(ms: i32) -> Duration {
+    Duration::from_millis(u64::try_from(ms).unwrap_or(0))
+}
+
+fn encode_track(track: Track) -> &'static str {
+    match track {
+        Track::Mic => "mic",
+        Track::System => "system",
+    }
+}
+
+fn decode_track(track: &str) -> anyhow::Result<Track> {
+    match track {
+        "mic" => Ok(Track::Mic),
+        "system" => Ok(Track::System),
+        _ => Err(anyhow!("bad stored track {track:?}")),
+    }
+}
+
 /// Errors when a write to `id` changed no row: the Note is deleted or unknown.
 fn written(updated: usize, id: &NoteId) -> anyhow::Result<()> {
     if updated == 0 {
@@ -482,12 +679,22 @@ fn decode_note(row: NoteRow) -> anyhow::Result<Note> {
             .map(|started_at| {
                 anyhow::Ok(RecordingInfo {
                     started_at: decode_time(started_at)?,
-                    duration: row
-                        .recording_duration_ms
-                        .map(|ms| Duration::from_millis(u64::try_from(ms).unwrap_or(0))),
+                    duration: row.recording_duration_ms.map(duration),
                 })
             })
             .transpose()?,
+        transcript: match (
+            row.transcript_model,
+            row.transcript_locale,
+            row.transcribed_at,
+        ) {
+            (Some(model), Some(locale), Some(at)) => Some(TranscriptInfo {
+                model,
+                locale,
+                transcribed_at: decode_time(&at)?,
+            }),
+            _ => None,
+        },
     })
 }
 
