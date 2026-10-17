@@ -306,11 +306,6 @@ fn writing_an_unknown_note_errors() {
     assert!(notes.set_memo(&unknown, "memo", at(8)).is_err());
 }
 
-/// Deletes the temporary folder an in-memory `Notes` keeps its Recordings in.
-fn remove_recordings(notes: Notes) {
-    let _ = std::fs::remove_dir_all(&notes.recordings);
-}
-
 /// Puts a stand-in audio file in the Note's Recording folder.
 fn record_audio(notes: &Notes, note: &Note) -> std::path::PathBuf {
     let dir = notes.recording_dir(&note.id);
@@ -380,7 +375,6 @@ fn deleting_the_recording_forgets_it_and_its_audio() {
     // The Note may record again, and deleting with no audio left is fine.
     ok(notes.set_recording_started(&note.id, at(9)));
     ok(notes.delete_recording(&note.id, at(10)));
-    remove_recordings(notes);
 }
 
 #[test]
@@ -391,7 +385,33 @@ fn deleting_a_note_deletes_its_audio() {
     let dir = record_audio(&notes, &note);
     ok(notes.delete(&note.id, at(8)));
     assert!(!dir.exists());
-    remove_recordings(notes);
+}
+
+#[test]
+fn audio_that_cannot_be_deleted_keeps_the_note_for_another_try() {
+    let mut notes = Notes::in_memory();
+    let note = ok(notes.create(None, at(6)));
+    ok(notes.set_recording_started(&note.id, at(7)));
+    // A file where the folder should be, so deleting the folder fails.
+    let dir = notes.recording_dir(&note.id);
+    ok(std::fs::create_dir_all(&notes.recordings).map_err(anyhow::Error::from));
+    ok(std::fs::write(&dir, b"audio").map_err(anyhow::Error::from));
+    assert!(notes.delete_recording(&note.id, at(8)).is_err());
+    assert!(notes.delete(&note.id, at(8)).is_err());
+    let listed = ok(notes.quick_notes(at(0)..at(23)));
+    assert!(listed[0].recording.is_some());
+    ok(std::fs::remove_file(&dir).map_err(anyhow::Error::from));
+    ok(notes.delete(&note.id, at(9)));
+}
+
+#[test]
+fn an_in_memory_notes_deletes_its_recordings_when_dropped() {
+    let notes = Notes::in_memory();
+    let note_dir = notes.recordings.join("note");
+    ok(std::fs::create_dir_all(&note_dir).map_err(anyhow::Error::from));
+    let recordings = notes.recordings.clone();
+    drop(notes);
+    assert!(!recordings.exists());
 }
 
 #[test]

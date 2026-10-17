@@ -88,6 +88,8 @@ pub struct Notes {
     connection: Option<SqliteConnection>,
     /// The folder holding one folder of audio per Recording.
     recordings: PathBuf,
+    /// Whether `recordings` is a temporary folder, deleted with `Notes`.
+    temporary: bool,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -115,6 +117,7 @@ impl Notes {
             Ok(Self {
                 connection: Some(connection),
                 recordings: crumble_db::data_dir()?.join("recordings"),
+                temporary: false,
             })
         });
         opened.unwrap_or_else(|error| {
@@ -123,7 +126,8 @@ impl Notes {
         })
     }
 
-    /// An in-memory database, with Recordings in a fresh temporary folder, as neither is kept.
+    /// An in-memory database, with Recordings in a fresh temporary folder deleted on drop, as
+    /// neither is kept.
     fn in_memory() -> Self {
         let connection = crumble_db::open(":memory:")
             .inspect_err(|error| eprintln!("Could not open an in-memory database: {error}"))
@@ -133,6 +137,7 @@ impl Notes {
         Self {
             connection,
             recordings,
+            temporary: true,
         }
     }
 
@@ -240,12 +245,13 @@ impl Notes {
     /// Soft delete: sets `deleted_at`; every read skips it. The Recording's audio is deleted
     /// for good, as the user deleted the Note.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first: once the Note is deleted, nothing can reach its folder again.
+        self.remove_audio(id)?;
         let now = encode_time(now);
         let updated = diesel::update(live(id))
             .set((notes::deleted_at.eq(&now), notes::updated_at.eq(&now)))
             .execute(self.connection()?)?;
-        written(updated, id)?;
-        self.remove_audio(id)
+        written(updated, id)
     }
 
     /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
@@ -293,8 +299,10 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Removes the Note `id`'s Recording: forgets it, then deletes its folder.
+    /// Removes the Note `id`'s Recording: deletes its folder, then forgets it.
     pub fn delete_recording(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first, so a failure leaves the Recording listed for another try.
+        self.remove_audio(id)?;
         let updated = diesel::update(live(id))
             .set((
                 notes::recording_started_at.eq(None::<String>),
@@ -302,8 +310,7 @@ impl Notes {
                 notes::updated_at.eq(encode_time(now)),
             ))
             .execute(self.connection()?)?;
-        written(updated, id)?;
-        self.remove_audio(id)
+        written(updated, id)
     }
 
     /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
@@ -347,6 +354,14 @@ impl Notes {
                 "could not delete the Recording of Note {id}: {error}"
             )),
             _ => Ok(()),
+        }
+    }
+}
+
+impl Drop for Notes {
+    fn drop(&mut self) {
+        if self.temporary {
+            let _ = std::fs::remove_dir_all(&self.recordings);
         }
     }
 }
