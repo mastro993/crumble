@@ -282,8 +282,32 @@ impl Notes {
         })
     }
 
-    /// Stores how long the Note `id`'s Recording is, once it stopped or was recovered.
-    pub fn set_recording_finished(
+    /// Keeps the Note `id`'s stopped or recovered Recording at `duration` and returns it as
+    /// stored. One zero long holds no audio, so it is deleted instead and `None` comes back.
+    pub fn finish_recording(
+        &mut self,
+        id: &NoteId,
+        duration: Duration,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Option<RecordingInfo>> {
+        if duration.is_zero() {
+            self.delete_recording(id, now)?;
+            return Ok(None);
+        }
+        self.set_recording_finished(id, duration, now)?;
+        let started_at = notes::table
+            .find(id.0.as_str())
+            .select(notes::recording_started_at)
+            .first::<Option<String>>(self.connection()?)?
+            .ok_or_else(|| anyhow!("Note {id} has no Recording"))?;
+        Ok(Some(RecordingInfo {
+            started_at: decode_time(&started_at)?,
+            duration: Some(duration),
+        }))
+    }
+
+    /// Stores how long the Note `id`'s Recording is.
+    fn set_recording_finished(
         &mut self,
         id: &NoteId,
         duration: Duration,
@@ -313,28 +337,31 @@ impl Notes {
         written(updated, id)
     }
 
-    /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
-    /// its folder, and one zero long is deleted. One `length` cannot read stays unfinished, as
-    /// its files may still hold audio, and is tried again at the next launch. Run at launch,
-    /// before anything records; `crumble_audio::recorded_length` reads the files.
+    /// Finishes the Recordings a crash left running, as [`Notes::finish_recording`] does with
+    /// the length `length` reads from each folder. One `length` cannot read stays unfinished, as
+    /// its files may still hold audio, and is tried again at the next launch. A Recording that
+    /// fails does not stop the others; the first error comes back once all were tried. Run at
+    /// launch, before anything records; `crumble_audio::recorded_length` reads the files.
     pub fn recover_recordings(
         &mut self,
         length: impl Fn(&Path) -> anyhow::Result<Duration>,
         now: DateTime<Utc>,
     ) -> anyhow::Result<()> {
+        let mut failed = None;
         for id in self.unfinished_recordings()? {
-            match length(&self.recording_dir(&id)) {
-                Ok(duration) if duration.is_zero() => {
-                    eprintln!("Deleting the Recording of Note {id}, as it holds no audio");
-                    self.delete_recording(&id, now)?;
-                }
-                Ok(duration) => self.set_recording_finished(&id, duration, now)?,
-                Err(error) => eprintln!(
-                    "Could not read the Recording of Note {id}, so it is left for later: {error:#}"
-                ),
+            let recovered = length(&self.recording_dir(&id))
+                .inspect_err(|error| {
+                    eprintln!("Could not read the Recording of Note {id}, so it is left for later: {error:#}");
+                })
+                .map_or(Ok(()), |duration| {
+                    self.finish_recording(&id, duration, now).map(drop)
+                });
+            if let Err(error) = recovered {
+                eprintln!("Could not recover the Recording of Note {id}: {error:#}");
+                failed.get_or_insert(error);
             }
         }
-        Ok(())
+        failed.map_or(Ok(()), Err)
     }
 
     /// The Notes whose Recording started but never finished, as when the app died while
