@@ -73,7 +73,7 @@ _Avoid_: nickname, display name, rename
 The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
 
 **Settings page**:
-The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, and picks the Model that makes Summaries with what its Provider needs. Written "Settings" when nothing else could be meant.
+The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, and picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. Written "Settings" when nothing else could be meant.
 _Avoid_: preferences, options
 
 ### Agenda
