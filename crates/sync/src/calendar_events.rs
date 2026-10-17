@@ -21,6 +21,8 @@ pub struct CalendarEvents {
     /// The read the shown Events answer, or will once `read` finishes.
     wanted: Option<EventsRead>,
     read: Task<()>,
+    /// Finished reads, so callers can tell whether the Events were read yet.
+    reads: u64,
 }
 
 impl Default for CalendarEvents {
@@ -29,6 +31,7 @@ impl Default for CalendarEvents {
             events: Vec::new(),
             wanted: None,
             read: Task::ready(()),
+            reads: 0,
         }
     }
 }
@@ -37,6 +40,11 @@ impl CalendarEvents {
     /// The Events last read.
     pub fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    /// How many reads have finished, so callers can tell whether the Events were read yet.
+    pub fn reads(&self) -> u64 {
+        self.reads
     }
 
     /// Reads the Events from the first date of `range` up to the day before its end in
@@ -81,6 +89,7 @@ impl CalendarEvents {
             let _ = this.update(cx, |loaded, cx| match result {
                 Ok(events) => {
                     loaded.events = events;
+                    loaded.reads += 1;
                     cx.notify();
                 }
                 Err(error) => eprintln!("Could not read events: {error}"),

@@ -116,6 +116,10 @@ _Avoid_: transcription, captions
 A short account of a Transcript. Each Note has at most one.
 _Avoid_: recap, digest, minutes
 
+**Suggestion**:
+A macOS notification, posted as a meeting starts while Crumble runs, that offers to record it. Only its Record button starts a Recording.
+_Avoid_: reminder, alert, prompt
+
 **Model**:
 What turns a Recording into a Transcript, or a Transcript into a Summary. The user picks one for each job.
 _Avoid_: engine, backend, AI

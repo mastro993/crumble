@@ -15,6 +15,7 @@ crumble-calendar.workspace = true
 gpui-kit.workspace = true
 crumble-eventkit.workspace = true
 crumble-notes.workspace = true
+crumble-notify.workspace = true
 crumble-remote.workspace = true
 crumble-store.workspace = true
 crumble-summarize.workspace = true

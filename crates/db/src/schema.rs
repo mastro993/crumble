@@ -23,6 +23,7 @@ diesel::table! {
         transcription_provider -> Text,
         transcription_model -> Text,
         transcription_locale -> Nullable<Text>,
+        suggest_recording -> Bool,
     }
 }
 

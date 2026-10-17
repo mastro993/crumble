@@ -9,6 +9,7 @@ use super::{Subject, event_title};
 use crate::native_view::agenda::Selected;
 use chrono::{DateTime, Utc};
 use crumble_audio::{Access, Player, Recorder};
+use crumble_eventkit::Event;
 use crumble_notes::{NoteId, RecordingInfo};
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState, SliderValue};
@@ -471,11 +472,30 @@ impl NativeView {
     pub(super) fn render_empty_record_button(&self, cx: &mut Context<Self>) -> AnyElement {
         record_button("note-empty-record", self.recording_elsewhere(), cx)
             .outline()
-            .on_click(cx.listener(|view, _, window, cx| {
-                view.new_note(false, window, cx);
-                view.record(cx);
-            }))
+            .on_click(cx.listener(|view, _, window, cx| view.record_new_note(window, cx)))
             .into_any_element()
+    }
+
+    /// Makes the shown Event's Note, or takes the one it has, and records it unless a Recording
+    /// runs or the Note has one: the empty state's Record, and a Suggestion's.
+    pub(in super::super) fn record_new_note(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.note_detail.recording.is_some() {
+            return;
+        }
+        self.new_note(false, window, cx);
+        self.record(cx);
+    }
+
+    /// The Event being recorded, when a Recording of an Event's Note runs.
+    pub(in super::super) fn recording_event(&self) -> Option<&Event> {
+        match &self.note_detail.recording.as_ref()?.target.subject {
+            Subject::Event(event) => Some(event),
+            Subject::QuickNote(_) => None,
+        }
     }
 
     /// Under the card, while the shown Note records: a line for each track that has stayed

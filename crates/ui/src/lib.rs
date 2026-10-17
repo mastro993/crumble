@@ -4,6 +4,8 @@ mod assets;
 mod native_view;
 
 pub use assets::Assets;
+#[cfg(debug_assertions)]
+pub use native_view::SuggestSample;
 pub use native_view::{
     GoBack, GoForward, NativeView, NextPeriod, PreviousPeriod, ShowToday, ToggleSidebar,
 };
