@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 mod capture;
+mod echo;
 mod file;
 mod player;
 

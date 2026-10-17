@@ -33,7 +33,7 @@ A Note's Transcript is made from its Recording, and in this first version only o
 
 - Building needs Xcode, or its command-line tools with the macOS 26 SDK. Swift 6.4 / Xcode 27 is what the repository is built with. `cargo build`, `clippy` and `test` need nothing else.
 - Apple's model is downloaded once per language and shared with other apps. The English (United States) asset was about 390 MB on disk. The first Transcript in a language waits for that download.
-- There is no diarization within a track. Everyone on the call is "Others", and without headphones the microphone track also hears the call, so its speech can appear twice.
+- There is no diarization within a track. Everyone on the call is "Others". The microphone track has the Mac's sound removed (ADR 0005), so the call's speech is credited once; what the echo canceller cannot model, such as Crumble's own playback, can still leave a faint second copy.
 - The model hears names it has never seen as it can: "Crumble" came back as "Krumble". Custom vocabulary (`AnalysisContext`) is a follow-up.
 - `crumble-transcribe` uses `unsafe` for its FFI calls, so like `crumble-eventkit` and `crumble-audio` it sets `unsafe_code = "deny"`, with a `SAFETY` comment on each block.
 - The `Transcriber` trait waits for a second implementation (a remote Model). `transcribe(dir, locale, progress)` is shaped so that it can be extracted from that function unchanged.

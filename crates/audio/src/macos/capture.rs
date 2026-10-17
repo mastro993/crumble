@@ -1,7 +1,8 @@
 //! Taking a Recording: an IO proc on the default input device for the microphone, and one on a
 //! private aggregate device around a process tap for the Mac's own sound. The IO procs copy
 //! each cycle into fixed-size blocks and hand them to the writer thread without blocking or
-//! allocating; a full queue drops the block and counts it (ADR 0005).
+//! allocating; a full queue drops the block and counts it. With both tracks, the writer
+//! removes the Mac's sound from the microphone before encoding it (ADR 0005).
 
 use std::ffi::{CStr, c_void};
 use std::mem::ManuallyDrop;
@@ -18,21 +19,22 @@ use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_audio::{
-    AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
-    AudioDeviceStop, AudioHardwareCreateAggregateDevice, AudioHardwareCreateProcessTap,
-    AudioHardwareDestroyAggregateDevice, AudioHardwareDestroyProcessTap,
-    AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress, CATapDescription,
-    kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceNameKey,
-    kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey,
-    kAudioAggregateDeviceUIDKey, kAudioDevicePropertyNominalSampleRate,
-    kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyElementMain,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioObjectUnknown,
-    kAudioSubTapUIDKey,
+    AudioConvertHostTimeToNanos, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID,
+    AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioHardwareCreateAggregateDevice,
+    AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
+    AudioHardwareDestroyProcessTap, AudioObjectGetPropertyData, AudioObjectID,
+    AudioObjectPropertyAddress, CATapDescription, kAudioAggregateDeviceIsPrivateKey,
+    kAudioAggregateDeviceNameKey, kAudioAggregateDeviceTapAutoStartKey,
+    kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey,
+    kAudioDevicePropertyNominalSampleRate, kAudioHardwarePropertyDefaultInputDevice,
+    kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+    kAudioObjectUnknown, kAudioSubTapUIDKey,
 };
-use objc2_core_audio_types::{AudioBufferList, AudioTimeStamp};
+use objc2_core_audio_types::{AudioBufferList, AudioTimeStamp, AudioTimeStampFlags};
 use objc2_core_foundation::CFDictionary;
 use objc2_foundation::{NSArray, NSBundle, NSDictionary, NSNumber, NSString, NSUUID};
 
+use super::echo::Echo;
 use super::file::{AacFile, check};
 use crate::{RecorderStatus, Track, downmix, is_silent};
 
@@ -40,8 +42,8 @@ use crate::{RecorderStatus, Track, downmix, is_silent};
 const BLOCK: usize = 1024;
 /// Blocks the queue holds per track: about 10 s at 48 kHz, allocated once at start.
 const QUEUE: usize = 512;
-/// Blocks the writer takes from one queue before it turns to the next, so a busy track cannot
-/// starve the other.
+/// Microphone blocks the writer takes before it turns to the system queue, so a busy
+/// microphone cannot starve it.
 const BATCH: usize = 16;
 /// How long the writer sleeps once both queues are empty. It polls, so an IO proc never has to
 /// wake it, which could take a lock.
@@ -50,7 +52,27 @@ const WRITER_NAP: Duration = Duration::from_millis(20);
 /// Up to [`BLOCK`] mono frames, copied by value through the queue.
 struct Block {
     len: usize,
+    /// The host time of the IO cycle's first frame, or 0 when Core Audio gave none.
+    host_time: u64,
+    /// Where the block starts in its cycle, in frames.
+    offset: usize,
     samples: [f32; BLOCK],
+}
+
+impl Block {
+    /// The host time of the block's first frame, in seconds.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "host time and frame counts fit in f64"
+    )]
+    fn time(&self, sample_rate: f64) -> Option<f64> {
+        if self.host_time == 0 {
+            return None;
+        }
+        // SAFETY: a plain conversion with no preconditions.
+        let nanos = unsafe { AudioConvertHostTimeToNanos(self.host_time) };
+        Some(nanos as f64 / 1e9 + self.offset as f64 / sample_rate)
+    }
 }
 
 /// What an IO proc reaches through its client pointer.
@@ -203,6 +225,31 @@ struct Written {
 }
 
 impl Written {
+    /// Encodes `samples` into the file, unless an earlier write failed.
+    fn write(&mut self, samples: &[f32]) {
+        let Some(file) = &mut self.file else {
+            return;
+        };
+        if self.failed.is_some() || samples.is_empty() {
+            return;
+        }
+        match file.write(samples) {
+            Ok(()) => self.frames += samples.len() as u64,
+            Err(error) => {
+                eprintln!("Recording: {:?}: {error:#}", self.track);
+                self.failed = Some(error);
+            }
+        }
+    }
+
+    /// Finalizes the file; a failure to close is kept like a failed write.
+    fn close(&mut self) {
+        if let Some(Err(error)) = self.file.take().map(AacFile::close) {
+            eprintln!("Recording: {:?}: {error:#}", self.track);
+            self.failed.get_or_insert(error);
+        }
+    }
+
     #[allow(
         clippy::cast_precision_loss,
         reason = "frames of hours of audio fit in f64"
@@ -212,40 +259,61 @@ impl Written {
     }
 }
 
-/// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
-/// until each closes, or is empty once `done` is set, then returns.
+/// The writer thread: drains each queue into its file until each is empty or closed once
+/// `done` is set, then returns. The system queue goes first and is drained in full, as it is
+/// the reference the microphone is cleaned against, so the microphone never gives up on a
+/// reference still queued; then up to [`BATCH`] microphone blocks.
 fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
+    written.sort_by_key(|track| track.track == Track::Mic);
+    let mut echo = canceller(&written);
+    let mut cleaned = Vec::new();
     while written.iter().any(|track| track.file.is_some()) {
+        // Read once per pass, so the system track is drained in full before the microphone
+        // finishes against it.
+        let stopping = done.load(Ordering::Acquire);
         let mut idle = true;
         for track in &mut written {
-            let Some(file) = &mut track.file else {
+            if track.file.is_none() {
                 continue;
+            }
+            let batch = match track.track {
+                Track::System => QUEUE,
+                Track::Mic => BATCH,
             };
-            for _ in 0..BATCH {
+            for _ in 0..batch {
                 match track.blocks.try_recv() {
                     Ok(block) => {
                         idle = false;
-                        if track.failed.is_some() {
-                            continue;
-                        }
                         let samples = &block.samples[..block.len];
                         if !is_silent(samples) {
                             track.heard.store(true, Ordering::Relaxed);
                         }
-                        match file.write(samples) {
-                            Ok(()) => track.frames += block.len as u64,
-                            Err(error) => {
-                                eprintln!("Recording: {:?}: {error:#}", track.track);
-                                track.failed = Some(error);
+                        let at = block.time(track.sample_rate);
+                        let samples = match (track.track, &mut echo) {
+                            (Track::System, Some(echo)) => {
+                                echo.reference(at, samples);
+                                samples
                             }
-                        }
+                            // A file that failed takes nothing more, so nothing is cleaned for it.
+                            (Track::Mic, Some(echo)) if track.failed.is_none() => {
+                                cleaned.clear();
+                                echo.mic(at, samples, &mut cleaned);
+                                &cleaned
+                            }
+                            _ => samples,
+                        };
+                        track.write(samples);
                     }
-                    Err(TryRecvError::Empty) if !done.load(Ordering::Acquire) => break,
+                    // A queue is closed only once stop is signalled, so the system track has
+                    // been drained in full before the microphone finishes against it.
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) if !stopping => break,
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
-                        if let Some(Err(error)) = track.file.take().map(AacFile::close) {
-                            eprintln!("Recording: {:?}: {error:#}", track.track);
-                            track.failed.get_or_insert(error);
+                        if let (Track::Mic, Some(echo)) = (track.track, &mut echo) {
+                            cleaned.clear();
+                            echo.finish(&mut cleaned);
+                            track.write(&cleaned);
                         }
+                        track.close();
                         break;
                     }
                 }
@@ -256,6 +324,21 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
         }
     }
     written
+}
+
+/// The echo canceller for the microphone, when both tracks record.
+fn canceller(written: &[Written]) -> Option<Echo> {
+    let rate = |of: Track| {
+        written
+            .iter()
+            .find(|track| track.track == of)
+            .map(|track| track.sample_rate)
+    };
+    Echo::new(rate(Track::Mic)?, rate(Track::System)?, QUEUE * BLOCK)
+        .inspect_err(|error| {
+            eprintln!("Recording: the microphone keeps the Mac's sound: {error:#}")
+        })
+        .ok()
 }
 
 /// A track's file and its IO proc, registered but not started.
@@ -498,14 +581,15 @@ unsafe extern "C-unwind" fn io_proc(
     _device: AudioObjectID,
     _now: NonNull<AudioTimeStamp>,
     input: NonNull<AudioBufferList>,
-    _input_time: NonNull<AudioTimeStamp>,
+    input_time: NonNull<AudioTimeStamp>,
     _output: NonNull<AudioBufferList>,
     _output_time: NonNull<AudioTimeStamp>,
     client: *mut c_void,
 ) -> i32 {
     // SAFETY: `client` is the `Feed` registered with this proc, alive until it is destroyed,
-    // and Core Audio passes a valid input list for the cycle.
-    let (feed, list) = unsafe { (&*client.cast::<Feed>(), input.as_ref()) };
+    // and Core Audio passes a valid input list and time stamp for the cycle.
+    let (feed, list, time) =
+        unsafe { (&*client.cast::<Feed>(), input.as_ref(), input_time.as_ref()) };
     if feed.closed.load(Ordering::Acquire) {
         return 0;
     }
@@ -525,9 +609,16 @@ unsafe extern "C-unwind" fn io_proc(
             buffer.mDataByteSize as usize / size_of::<f32>(),
         )
     };
-    for chunk in samples.chunks(BLOCK * channels) {
+    let host_time = if time.mFlags.contains(AudioTimeStampFlags::HostTimeValid) {
+        time.mHostTime
+    } else {
+        0
+    };
+    for (index, chunk) in samples.chunks(BLOCK * channels).enumerate() {
         let mut block = Block {
             len: 0,
+            host_time,
+            offset: index * BLOCK,
             samples: [0.0; BLOCK],
         };
         block.len = downmix(chunk, channels, &mut block.samples);
