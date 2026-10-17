@@ -124,8 +124,7 @@ impl NativeView {
                     .then(|| div().text_xs().text_color(danger).child("Couldn't save")),
             )
             .children(
-                detail
-                    .recording_failed
+                self.shown_recording_failed()
                     .then(|| div().text_xs().text_color(danger).child("Couldn't record")),
             )
             .into_any_element()

@@ -71,8 +71,8 @@ pub(super) struct NoteDetail {
     recording: Option<recording::Active>,
     /// The shown Note's finished Recording.
     playback: Option<recording::Playback>,
-    /// Whether the last Recording failed to start, stop or delete.
-    recording_failed: bool,
+    /// The Note whose Recording last failed to start, stop in full, or delete.
+    recording_failed: Option<NoteId>,
     _subscriptions: [Subscription; 3],
 }
 
@@ -121,7 +121,7 @@ impl NoteDetail {
             actions: Rc::default(),
             recording: None,
             playback: None,
-            recording_failed: false,
+            recording_failed: None,
             _subscriptions: subscriptions,
         }
     }

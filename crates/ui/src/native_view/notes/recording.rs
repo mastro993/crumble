@@ -104,7 +104,7 @@ impl NativeView {
         let id = target.note.clone();
         let info = match self.notes.set_recording_started(&id, Utc::now()) {
             Ok(info) => info,
-            Err(error) => return self.recording_failed(&format!("{error:#}"), cx),
+            Err(error) => return self.recording_failed(&id, &format!("{error:#}"), cx),
         };
         let recorder = match Recorder::start(&self.notes.recording_dir(&id)) {
             Ok(recorder) => recorder,
@@ -112,7 +112,7 @@ impl NativeView {
                 if let Err(error) = self.notes.delete_recording(&id, Utc::now()) {
                     eprintln!("Could not forget the Recording that did not start: {error:#}");
                 }
-                return self.recording_failed(&format!("{error:#}"), cx);
+                return self.recording_failed(&id, &format!("{error:#}"), cx);
             }
         };
         let tick = cx.spawn(async move |view, cx| {
@@ -129,15 +129,24 @@ impl NativeView {
             recorder,
             _tick: tick,
         });
-        self.note_detail.recording_failed = false;
+        self.note_detail.recording_failed = None;
         self.recording_changed(&id, Some(info));
         cx.notify();
     }
 
-    fn recording_failed(&mut self, error: &str, cx: &mut Context<Self>) {
+    fn recording_failed(&mut self, id: &NoteId, error: &str, cx: &mut Context<Self>) {
         eprintln!("Could not record: {error}");
-        self.note_detail.recording_failed = true;
+        self.note_detail.recording_failed = Some(id.clone());
         cx.notify();
+    }
+
+    /// Whether "Couldn't record" shows: the shown Note's Recording last failed.
+    pub(super) fn shown_recording_failed(&self) -> bool {
+        let detail = &self.note_detail;
+        detail
+            .note
+            .as_ref()
+            .is_some_and(|note| detail.recording_failed.as_ref() == Some(&note.id))
     }
 
     /// Stops the Recording and keeps its length; on quit and window close too. A stop that
@@ -148,7 +157,9 @@ impl NativeView {
         };
         let id = active.target.note;
         let dir = self.notes.recording_dir(&id);
-        let length = active.recorder.stop().or_else(|error| {
+        let stopped = active.recorder.stop();
+        let clean = stopped.is_ok();
+        let length = stopped.or_else(|error| {
             eprintln!("The Recording did not stop cleanly: {error:#}");
             crumble_audio::recorded_length(&dir)
         });
@@ -169,8 +180,16 @@ impl NativeView {
             }
         };
         match info {
-            Ok(info) => self.recording_changed(&id, info),
-            Err(error) => self.recording_failed(&format!("{error:#}"), cx),
+            // What was kept stays, but part of it may be missing.
+            Ok(info) if !clean => {
+                self.recording_changed(&id, info);
+                self.recording_failed(&id, "kept what was written before it failed", cx);
+            }
+            Ok(info) => {
+                self.recording_changed(&id, info);
+                self.note_detail.recording_failed = None;
+            }
+            Err(error) => self.recording_failed(&id, &format!("{error:#}"), cx),
         }
         self.show_player(cx);
         cx.notify();
@@ -300,8 +319,11 @@ impl NativeView {
         // Closes the files before they go.
         self.note_detail.playback = None;
         match self.notes.delete_recording(id, Utc::now()) {
-            Ok(()) => self.recording_changed(id, None),
-            Err(error) => self.recording_failed(&format!("{error:#}"), cx),
+            Ok(()) => {
+                self.recording_changed(id, None);
+                self.note_detail.recording_failed = None;
+            }
+            Err(error) => self.recording_failed(id, &format!("{error:#}"), cx),
         }
         cx.notify();
     }
