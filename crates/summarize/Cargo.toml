@@ -1,0 +1,24 @@
+[package]
+name = "crumble-summarize"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+# Calling the Swift bridge's C functions is `unsafe`, so this crate cannot take the workspace's
+# `forbid` (see docs/adr/0007-summaries-and-model-providers.md). The other lints match the
+# workspace.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"

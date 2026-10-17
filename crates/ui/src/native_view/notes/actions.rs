@@ -1,9 +1,11 @@
 //! The Note actions in the page header: a "…" button opening a menu with Transcribe again and
-//! Delete recording when the Note has a finished Recording, and Delete note.
+//! Delete recording when the Note has a finished Recording, Summarize again with… when it has a
+//! Transcript, and Delete note.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
 use super::super::menu::{MenuItem, OpenMenu};
+use crumble_summarize::Provider;
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::{Sizable, WindowExt};
 use gpui_kit::{
@@ -46,8 +48,9 @@ impl NativeView {
         )
     }
 
-    /// Opens the Note actions menu below its button: Transcribe again and Delete recording when
-    /// the shown Note has a finished Recording, and Delete note.
+    /// Opens the Note actions menu below its button: Transcribe again when the shown Note has a
+    /// finished Recording, Summarize again with… when it has a Transcript, Delete recording, and
+    /// Delete note.
     fn open_note_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &self.note_detail;
         let Some(shown) = detail.note.as_ref().map(|note| note.id.clone()) else {
@@ -68,6 +71,9 @@ impl NativeView {
                         view.confirm_transcribe_again(id.clone(), window, cx)
                     })),
             );
+        }
+        if let Some(item) = self.summarize_again_item(&view) {
+            items.push(item);
         }
         if recorded {
             let id = shown.clone();
@@ -96,6 +102,49 @@ impl NativeView {
             cx,
             |view: &mut NativeView| &mut view.menu,
         ));
+    }
+
+    /// "Summarize again with…", or "Summarize with…" before there is a Summary: a submenu of the
+    /// Providers ready to summarize, the one that made the shown Note's Summary checked.
+    /// Picking one is the Note's own choice over Settings'. `None` while the Note has no
+    /// Transcript with speech, or its Summary is being made.
+    fn summarize_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
+        let note = self.note_detail.note.as_ref()?;
+        if note.transcript.is_none()
+            || !self.note_detail.spoken()
+            || self.note_detail.summarization.busy(&note.id)
+        {
+            return None;
+        }
+        let made_by = note
+            .summary
+            .as_ref()
+            .map(|summary| summary.provider.as_str());
+        let providers: Vec<MenuItem> = Provider::ALL
+            .into_iter()
+            .filter(|provider| self.is_configured(*provider))
+            .map(|provider| {
+                let id = note.id.clone();
+                MenuItem::new(format!("note-summarize-{}", provider.id()), provider.name())
+                    .checked(made_by == Some(provider.id()))
+                    .on_select(act(view, move |view, _, cx| {
+                        view.summarize(id.clone(), Some(provider), cx)
+                    }))
+            })
+            .collect();
+        if providers.is_empty() {
+            return None;
+        }
+        let label = if made_by.is_some() {
+            "Summarize again with…"
+        } else {
+            "Summarize with…"
+        };
+        Some(
+            MenuItem::new("note-summarize", label)
+                .icon("refresh")
+                .submenu(providers),
+        )
     }
 
     /// Asks before deleting the Note `id`, as nothing brings it back.
