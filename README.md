@@ -29,6 +29,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+CI (`.github/workflows/ci.yml`) runs these three on macOS 26 for every pull request and every push to `main`.
+
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
 
 ## Changing the database schema
