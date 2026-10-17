@@ -359,6 +359,13 @@ impl NativeView {
                 // Apple's row may have been shown as picked only because it could run.
                 select.set_selected_index(index_of(selected), window, cx);
             });
+            if apple == Availability::Available {
+                // Its failures may be only that it could not run; backfill once out of render.
+                cx.defer_in(window, |view, _, cx| {
+                    view.forget_summary_failures(Provider::Apple);
+                    view.summarize_unsummarized(cx);
+                });
+            }
         }
         let muted = cx.theme().muted_foreground;
         v_flex()
