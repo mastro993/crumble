@@ -1,0 +1,39 @@
+# On-device transcription through a Swift bridge
+
+A Note's Transcript is made from its Recording, and in this first version only on the Mac. Apple's SpeechAnalyzer framework (`SpeechAnalyzer` with a `SpeechTranscriber` module, macOS 26) transcribes long-form, far-field speech on device. It is free and needs no account, and its model is a shared system asset that macOS keeps updated. Nothing leaves the Mac. Its API is Swift-only (an actor, async sequences, `AttributedString` results), so neither `objc2` nor a C header can reach it. `crumble-transcribe` therefore compiles one Swift file into a static library and calls it through a few C functions. anarlog, the open-source meeting-notes app ADR 0005 mentions, transcribes with the same framework behind `@_cdecl` functions.
+
+## Rules
+
+- **The bridge**: `crates/transcribe/swift/Transcribe.swift` is the only Swift in the repository. `build.rs` compiles it with `xcrun swiftc -parse-as-library -emit-library -static` into `OUT_DIR`, then links it with the frameworks it uses (Foundation, AVFAudio, CoreMedia, Speech) and with the SDK's `usr/lib/swift`, against which the Swift runtime that ships with macOS links. It builds in Swift 5 language mode: Swift 6 rejects handing the caller's context pointer to another thread, and handing it over is exactly what the progress callback does. Other platforms compile no Swift, and their functions report that transcription needs macOS.
+- **The C ABI** (`src/ffi.rs` declares it, and every call is wrapped there):
+  - `crumble_transcribe_file(path, locale, progress, context, out) -> i32` and `crumble_transcribe_install_model(locale, progress, context, out) -> i32`. Each returns 0 with its answer in `*out`, or 1 with an error message there. `progress` is `extern "C" fn(context, f32)`, called with 0 to 1.
+  - `crumble_transcribe_model_status(locale) -> i32`: 0 unsupported, 1 downloadable, 2 downloading, 3 installed.
+  - `crumble_transcribe_current_locale()` and `crumble_transcribe_locale_name(locale)` return strings.
+  - Every returned string is a `strdup` copy that Rust frees with `crumble_transcribe_free`.
+- **The output format**: one line per final result, `start_ms\tend_ms\ttext`, in time order, with tabs and newlines in the text turned into spaces. Rust parses it. This is simpler than JSON and needs no `serde`.
+- **Async to sync**: each C function starts a detached `Task` and blocks its caller on a `DispatchSemaphore` until the task ends. The caller is always a Rust background thread, never one of Swift's cooperative threads, so waiting cannot starve them. Progress arrives on a Swift thread while the caller waits. That is why the Rust closures are `FnMut(f32) + Send`, and why the bridge never calls one closure from two tasks at once.
+- **Transcribing**: `SpeechTranscriber` asks for final results only, each with its audio time range (`attributeOptions: [.audioTimeRange]`). `AVAudioFile` reads the ADTS track, and `analyzeSequence(from:)` then `finalizeAndFinish(through:)` drive the analyzer. Progress is each result's end divided by the file's length. `transcribe` runs `mic.aac` then `system.aac`, whichever exist, each counting as half the work.
+- **Speakers are tracks**: a segment from `mic.aac` is the user ("You") and one from `system.aac` is the call ("Others"). The two tracks merge into one list by start, then end, then the microphone first. Speech that overlaps stays as two segments.
+- **The model**: `AssetInventory.status(forModules:)` tells whether the locale's model is installed. `assetInstallationRequest(supporting:)` and `downloadAndInstall()` fetch it, reserving the locale on the app's behalf, and the bridge polls the request's `Progress`. A download can return before the asset is installed, so the bridge then waits up to 5 minutes for the status to say installed, and fails otherwise.
+- **The locale** is `Locale.current` until the Settings page offers a choice. The bridge maps it through `SpeechTranscriber.supportedLocale(equivalentTo:)` and accepts the answer only if `supportedLocales` lists it, as that function can echo back a locale Apple does not transcribe. An unsupported locale is reported as such, and Crumble does not guess another language.
+- **No permission**: SpeechAnalyzer on a file needs no entitlement and no `NSSpeechRecognitionUsageDescription`, unlike `SFSpeechRecognizer`. The smoke test transcribes from a bare test binary with no `Info.plist` and no prompt.
+- **Storage**: `notes` gains `transcript_model`, `transcript_locale` and `transcribed_at`, all set or all `NULL`. The segments go in `transcript_segments` (`note_id`, `track` `mic` or `system`, `start_ms`, `end_ms`, `text`, a UUID v7 `id`), indexed on `(note_id, start_ms)`. A Note has at most one Transcript, and making it again replaces it wholesale: one transaction updates the Note's columns and `updated_at`, deletes the old segments for good, and inserts the new ones. Segments get no soft delete, because a segment is never edited or deleted on its own, and the Note's `updated_at` is what marks the change for a future sync. Deleting the Recording deletes its Transcript, which nothing can make again. Soft-deleting the Note deletes its segments in the same transaction, as the row it leaves is only a sync tombstone (ADR 0003).
+- **When it runs**: once a Recording stops, and at launch for every finished Recording without a Transcript, as when the app quit mid-transcription. Nothing partial is stored. One job runs at a time on GPUI's background executor, queued per Note, and the result is stored through `Notes` on the main thread. A job cannot be stopped inside Swift, so a cancelled one runs to its end with its result dropped, and the next job waits for it.
+
+## Considered Options
+
+- **`swift-rs`**: anarlog's choice. Its `SRString` and `SRData` types and its SwiftPM linker remove a little glue, but they add a dependency plus a `Package.swift` and its build directory, for five functions that pass C strings.
+- **`swift-bridge`**: generates both sides from a Rust module, which is more machinery than a handful of C functions need.
+- **A SwiftPM package built by `build.rs`**: brings incremental builds and editor support, but one file compiles in about 2 s with `swiftc` alone, and only when it changes.
+- **`SFSpeechRecognizer`**: reachable through `objc2`, but it is built for short dictation, needs speech-recognition permission, and may send audio to Apple.
+- **Whisper on device** (`whisper.cpp` and similar): no Apple dependency, but Crumble would have to ship and update its own models, hundreds of MB to over a GB, and run them on the GPU.
+- **JSON output**: richer, such as word timings and alternatives, but nothing here uses them yet.
+
+## Consequences
+
+- Building needs Xcode, or its command-line tools with the macOS 26 SDK. Swift 6.4 / Xcode 27 is what the repository is built with. `cargo build`, `clippy` and `test` need nothing else.
+- Apple's model is downloaded once per language and shared with other apps. The English (United States) asset was about 390 MB on disk. The first Transcript in a language waits for that download.
+- There is no diarization within a track. Everyone on the call is "Others", and without headphones the microphone track also hears the call, so its speech can appear twice.
+- The model hears names it has never seen as it can: "Crumble" came back as "Krumble". Custom vocabulary (`AnalysisContext`) is a follow-up.
+- `crumble-transcribe` uses `unsafe` for its FFI calls, so like `crumble-eventkit` and `crumble-audio` it sets `unsafe_code = "deny"`, with a `SAFETY` comment on each block.
+- The `Transcriber` trait waits for a second implementation (a remote Model). `transcribe(dir, locale, progress)` is shaped so that it can be extracted from that function unchanged.

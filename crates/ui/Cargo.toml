@@ -18,6 +18,7 @@ crumble-notes.workspace = true
 crumble-store.workspace = true
 crumble-sync.workspace = true
 crumble-theme.workspace = true
+crumble-transcribe.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

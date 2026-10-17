@@ -436,3 +436,171 @@ fn a_crash_left_recording_keeps_what_its_files_hold() {
     assert!(recordings.contains(&(finished.id, Some(std::time::Duration::from_secs(9)))));
     assert_eq!(ok(notes.unfinished_recordings()), []);
 }
+
+fn line(track: super::Track, start_s: u64, text: &str) -> super::TranscriptSegment {
+    super::TranscriptSegment {
+        track,
+        start: std::time::Duration::from_secs(start_s),
+        end: std::time::Duration::from_secs(start_s + 1),
+        text: text.into(),
+    }
+}
+
+/// A Quick note with a finished Recording.
+fn recorded(notes: &mut Notes) -> Note {
+    let note = ok(notes.create(None, at(5)));
+    ok(notes.set_recording_started(&note.id, at(6)));
+    ok(notes.set_recording_finished(&note.id, std::time::Duration::from_secs(60), at(7)));
+    note
+}
+
+#[test]
+fn a_transcript_is_kept_in_order_and_replaced_whole() {
+    use super::Track::{Mic, System};
+    let mut notes = Notes::in_memory();
+    let note = recorded(&mut notes);
+    let first = [
+        line(Mic, 0, "Hi."),
+        line(System, 0, "Hello."),
+        line(Mic, 4, "Bye."),
+    ];
+    let info = ok(notes.set_transcript(&note.id, "Model", "en_US", &first, at(8)));
+    assert_eq!(info.transcribed_at, at(8));
+    assert_eq!(ok(notes.transcript(&note.id)), first);
+    let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
+    assert_eq!(found.transcript, Some(info));
+    assert_eq!(found.updated_at, at(8));
+
+    let again = [line(System, 2, "Only this.")];
+    ok(notes.set_transcript(&note.id, "Other", "it_IT", &again, at(9)));
+    assert_eq!(ok(notes.transcript(&note.id)), again);
+    let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
+    assert_eq!(
+        found.transcript.map(|info| (info.model, info.locale)),
+        Some(("Other".into(), "it_IT".into()))
+    );
+}
+
+#[test]
+fn a_transcript_needs_a_finished_recording() {
+    let mut notes = Notes::in_memory();
+    let plain = ok(notes.create(None, at(5)));
+    let running = ok(notes.create(None, at(5)));
+    ok(notes.set_recording_started(&running.id, at(6)));
+    for note in [&plain, &running] {
+        assert!(
+            notes
+                .set_transcript(&note.id, "Model", "en_US", &[], at(8))
+                .is_err()
+        );
+        assert_eq!(ok(notes.transcript(&note.id)), []);
+    }
+}
+
+#[test]
+fn only_a_finished_recording_without_a_transcript_needs_one() {
+    let mut notes = Notes::in_memory();
+    ok(notes.create(None, at(5)));
+    let running = ok(notes.create(None, at(5)));
+    ok(notes.set_recording_started(&running.id, at(6)));
+    let waiting = recorded(&mut notes);
+    let done = recorded(&mut notes);
+    ok(notes.set_transcript(&done.id, "Model", "en_US", &[], at(8)));
+    let deleted = recorded(&mut notes);
+    ok(notes.delete(&deleted.id, at(8)));
+    assert_eq!(ok(notes.untranscribed()), [waiting.id]);
+    remove_recordings(notes);
+}
+
+#[test]
+fn deleting_the_recording_deletes_its_transcript() {
+    let mut notes = Notes::in_memory();
+    let note = recorded(&mut notes);
+    ok(notes.set_transcript(
+        &note.id,
+        "Model",
+        "en_US",
+        &[line(super::Track::Mic, 0, "Hi.")],
+        at(8),
+    ));
+    ok(notes.delete_recording(&note.id, at(9)));
+    assert_eq!(ok(notes.transcript(&note.id)), []);
+    assert_eq!(ok(notes.quick_notes(at(0)..at(23)))[0].transcript, None);
+    remove_recordings(notes);
+}
+
+#[test]
+fn a_deleted_note_keeps_only_its_id_and_timestamps() {
+    use crumble_db::schema::{notes as table, transcript_segments};
+    use diesel::prelude::*;
+    let mut notes = Notes::in_memory();
+    let standup = event(
+        Some("uid"),
+        Some(Occurrence::At(at(7))),
+        "Standup",
+        timed(at(7)),
+    );
+    let note = ok(notes.create(Some(&standup), at(5)));
+    ok(notes.set_title(&note.id, Some("Plans"), at(6)));
+    ok(notes.set_memo(&note.id, "Secret plans", at(6)));
+    ok(notes.set_recording_started(&note.id, at(6)));
+    ok(notes.set_recording_finished(&note.id, std::time::Duration::from_secs(60), at(7)));
+    let dir = record_audio(&notes, &note);
+    ok(notes.set_transcript(
+        &note.id,
+        "Model",
+        "en_US",
+        &[line(super::Track::Mic, 0, "Hi.")],
+        at(8),
+    ));
+    ok(notes.delete(&note.id, at(9)));
+
+    let connection = ok(notes.connection());
+    let row = ok(table::table
+        .find(&note.id.0)
+        .select(super::NoteRow::as_select())
+        .first(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(row.title, None);
+    assert_eq!(row.memo, "");
+    assert_eq!(
+        (
+            row.event_series_uid,
+            row.event_occurrence,
+            row.event_title,
+            row.event_start
+        ),
+        (None, None, None, None)
+    );
+    assert_eq!(
+        (
+            row.transcript_model,
+            row.transcript_locale,
+            row.transcribed_at
+        ),
+        (None, None, None)
+    );
+    assert_eq!(
+        (row.recording_started_at, row.recording_duration_ms),
+        (None, None)
+    );
+    assert_eq!(row.updated_at, encode_time(at(9)));
+    let deleted_at: Option<String> = ok(table::table
+        .find(&note.id.0)
+        .select(table::deleted_at)
+        .first(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(deleted_at, Some(encode_time(at(9))));
+    let segments: i64 = ok(transcript_segments::table
+        .count()
+        .get_result(connection)
+        .map_err(anyhow::Error::from));
+    assert_eq!(segments, 0);
+    assert!(!dir.exists());
+
+    assert_eq!(ok(notes.for_event(&standup)), None);
+    assert_eq!(ok(notes.quick_notes(at(0)..at(23))), []);
+    assert_eq!(ok(notes.transcript(&note.id)), []);
+    assert_eq!(ok(notes.untranscribed()), []);
+    remove_recordings(notes);
+}

@@ -110,7 +110,7 @@ impl NativeView {
             cx.notify();
         })
         .detach();
-        Self {
+        let mut view = Self {
             focus,
             route: Route::Home,
             history: History::default(),
@@ -136,7 +136,10 @@ impl NativeView {
             renaming: None,
             menu: None,
             _minute_tick: calendar::tick_minutes(cx),
-        }
+        };
+        // Recordings left without a Transcript, as when the app quit while transcribing.
+        view.transcribe_untranscribed(cx);
+        view
     }
 
     /// Opens `route` and records the current one for Back.

@@ -1,9 +1,10 @@
 //! The Note detail view, shared by the Agenda content area and the Event page: the Note's title
 //! big at the top with when it happened below, then a card holding the tab bar, the Recording
-//! controls on its trailing side, and the tab.
+//! controls on its trailing side, and the tab: the Memo, or the Transcript once there is one.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
+use super::tabs::NoteTab;
 use super::{Subject, event_title};
 use chrono::Local;
 use crumble_calendar::events::when_text;
@@ -53,7 +54,14 @@ impl NativeView {
                 .child(title)
                 .into_any_element()
         };
-        let body = if detail.note.is_some() {
+        let body = if detail.note.as_ref().is_some() {
+            let (tabs, shown) = detail.tabs();
+            let tab = match shown {
+                NoteTab::Memo => Textarea::new(&detail.memo)
+                    .appearance(false)
+                    .into_any_element(),
+                NoteTab::Transcript => self.render_transcript(cx),
+            };
             v_flex()
                 .child(
                     h_flex()
@@ -65,17 +73,25 @@ impl NativeView {
                             TabBar::new("note-tabs")
                                 .underline()
                                 .small()
-                                .selected_index(0)
-                                .child(Tab::new().label("Memo")),
+                                .selected_index(
+                                    tabs.iter().position(|tab| *tab == shown).unwrap_or(0),
+                                )
+                                .on_click(cx.listener(move |view, index: &usize, _, cx| {
+                                    let (tabs, _) = view.note_detail.tabs();
+                                    if let Some(tab) = tabs.get(*index) {
+                                        view.note_detail.tab = Some(*tab);
+                                        cx.notify();
+                                    }
+                                }))
+                                .children(
+                                    tabs.iter()
+                                        .map(|tab| Tab::new().label(tab.label()).cursor_pointer()),
+                                ),
                         )
                         .child(div().flex_1())
                         .children(self.render_recording_controls(cx)),
                 )
-                .child(
-                    div()
-                        .p_3()
-                        .child(Textarea::new(&detail.memo).appearance(false)),
-                )
+                .child(div().p_3().child(tab))
                 .into_any_element()
         } else {
             v_flex()
