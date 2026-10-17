@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::{Provider, Summarizer, prompt};
+use crate::{Provider, Summarizer, prompt, url_parts};
 
 /// The Claude API's address.
 const CLAUDE_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -127,6 +127,9 @@ impl OpenAiCompatible {
         if base.is_empty() {
             bail!("Enter the server's address in Settings.");
         }
+        if !base.contains("://") {
+            bail!("Start the server's address with http:// or https://.");
+        }
         if self.model.trim().is_empty() {
             bail!("Enter the server's Model in Settings.");
         }
@@ -157,17 +160,8 @@ impl OpenAiCompatible {
 
 /// `url` without the `user:password@` before its host.
 fn without_userinfo(url: &str) -> String {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
-    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let rest = match rest[..host_end].rfind('@') {
-        Some(at) => &rest[at + 1..],
-        None => rest,
-    };
-    if scheme.is_empty() {
-        rest.to_owned()
-    } else {
-        format!("{scheme}://{rest}")
-    }
+    let [scheme, _, authority, rest] = url_parts(url);
+    format!("{scheme}{authority}{rest}")
 }
 
 /// Errors when `transcript` is longer than any remote Model reads.
@@ -399,6 +393,19 @@ mod tests {
             model: "llama3.2".into(),
         };
         assert!(server.check().is_err());
+        let schemeless = OpenAiCompatible {
+            base_url: "localhost:11434/v1".into(),
+            api_key: None,
+            model: "llama3.2".into(),
+        };
+        assert_eq!(
+            schemeless
+                .check()
+                .map_err(|error| error.to_string())
+                .err()
+                .as_deref(),
+            Some("Start the server's address with http:// or https://.")
+        );
         let keyless = Claude {
             api_key: String::new(),
             model: "claude-sonnet-5-5".into(),

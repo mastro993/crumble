@@ -203,7 +203,8 @@ pub(super) fn model_settings(
 }
 
 /// Keeps `input`'s text through `save` as it is typed, and forgets `provider`'s Test result,
-/// which no longer says anything about it.
+/// which no longer says anything about it. Enter or leaving the field backfills Summaries when
+/// the Summary Model is now ready to.
 fn saved_on_change(
     input: &Entity<InputState>,
     provider: Provider,
@@ -211,14 +212,21 @@ fn saved_on_change(
     cx: &mut Context<NativeView>,
     save: fn(&mut Store, &str),
 ) -> Subscription {
-    cx.subscribe_in(input, window, move |view, input, event, _, cx| {
-        if matches!(event, InputEvent::Change) {
-            let value = input.read(cx).value();
-            save(&mut view.store, &value);
-            view.models.checks.remove(&provider);
-            cx.notify();
-        }
-    })
+    cx.subscribe_in(
+        input,
+        window,
+        move |view, input, event, _, cx| match event {
+            InputEvent::Change => {
+                let value = input.read(cx).value();
+                save(&mut view.store, &value);
+                view.models.checks.remove(&provider);
+                cx.notify();
+            }
+            // A finished address or Model may make the Summary Model ready to backfill.
+            InputEvent::PressEnter { .. } | InputEvent::Blur => view.summarize_unsummarized(cx),
+            InputEvent::Focus => {}
+        },
+    )
 }
 
 impl NativeView {

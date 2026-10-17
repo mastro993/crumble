@@ -21,8 +21,8 @@ use std::collections::{HashMap, VecDeque};
 /// The Summaries being made, for whichever Note shows.
 #[derive(Default)]
 pub(super) struct Summarization {
-    /// Notes waiting their turn, first come first, each with the Provider asked for, if any.
-    queue: VecDeque<(NoteId, Option<Provider>)>,
+    /// Notes waiting their turn, first come first.
+    queue: VecDeque<Queued>,
     running: Option<Job>,
     /// Why each Note's last attempt failed, until it is tried again.
     failed: HashMap<NoteId, Failure>,
@@ -36,7 +36,7 @@ impl Summarization {
 
     /// Whether the Note `id` is waiting or being summarized.
     pub(super) fn busy(&self, id: &NoteId) -> bool {
-        self.job(id).is_some() || self.queue.iter().any(|(queued, _)| queued == id)
+        self.job(id).is_some() || self.queue.iter().any(|queued| &queued.note == id)
     }
 
     /// The job running for the Note `id`, unless it was cancelled.
@@ -45,6 +45,14 @@ impl Summarization {
             .as_ref()
             .filter(|job| &job.note == id && !job.cancelled)
     }
+}
+
+struct Queued {
+    note: NoteId,
+    /// The Provider asked for, else the Summary Model picked in Settings when it starts.
+    provider: Option<Provider>,
+    /// Whether it is an older Transcript, which only a Provider that runs locally may get.
+    backlog: bool,
 }
 
 struct Job {
@@ -87,7 +95,7 @@ impl NativeView {
         match self.notes.unsummarized() {
             Ok(ids) => ids
                 .into_iter()
-                .for_each(|id| self.summarize(id, Some(provider), cx)),
+                .for_each(|id| self.queue_summary(id, Some(provider), true, cx)),
             Err(error) => eprintln!("Could not find the Transcripts to summarize: {error:#}"),
         }
     }
@@ -121,12 +129,26 @@ impl NativeView {
         provider: Option<Provider>,
         cx: &mut Context<Self>,
     ) {
+        self.queue_summary(id, provider, false, cx);
+    }
+
+    fn queue_summary(
+        &mut self,
+        note: NoteId,
+        provider: Option<Provider>,
+        backlog: bool,
+        cx: &mut Context<Self>,
+    ) {
         let summarization = &mut self.note_detail.summarization;
-        if summarization.busy(&id) {
+        if summarization.busy(&note) {
             return;
         }
-        summarization.failed.remove(&id);
-        summarization.queue.push_back((id, provider));
+        summarization.failed.remove(&note);
+        summarization.queue.push_back(Queued {
+            note,
+            provider,
+            backlog,
+        });
         self.next_summary(cx);
         cx.notify();
     }
@@ -135,7 +157,7 @@ impl NativeView {
     /// running for it finishes unseen and its result is dropped.
     pub(super) fn cancel_summary(&mut self, id: &NoteId) {
         let summarization = &mut self.note_detail.summarization;
-        summarization.queue.retain(|(queued, _)| queued != id);
+        summarization.queue.retain(|queued| &queued.note != id);
         summarization.failed.remove(id);
         if let Some(job) = summarization.running.as_mut().filter(|job| &job.note == id) {
             job.cancelled = true;
@@ -147,7 +169,12 @@ impl NativeView {
         if self.note_detail.summarization.running.is_some() {
             return;
         }
-        while let Some((id, asked)) = self.note_detail.summarization.queue.pop_front() {
+        while let Some(Queued {
+            note: id,
+            provider: asked,
+            backlog,
+        }) = self.note_detail.summarization.queue.pop_front()
+        {
             let text = match self.transcript_text(&id) {
                 Ok(text) if text.is_empty() => continue,
                 Ok(text) => text,
@@ -161,6 +188,10 @@ impl NativeView {
                 // text on the Mac, and offers to otherwise.
                 continue;
             };
+            if backlog && !runs_locally(provider, self.store.openai_base_url()) {
+                // The server's address changed while it waited; the tab offers it again.
+                continue;
+            }
             let summarizer = match self.summarizer(provider) {
                 Ok(summarizer) => summarizer,
                 Err(message) => {

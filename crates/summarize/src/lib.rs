@@ -86,18 +86,31 @@ pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
 
 /// Whether `url`'s host is `localhost`, `127.0.0.1` or `::1`.
 fn is_loopback(url: &str) -> bool {
-    let url = url.trim();
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    // Credentials before an `@` are not the host.
-    let authority = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
+    let [_, _, authority, _] = url_parts(url.trim());
     let host = match authority.strip_prefix('[') {
         Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
         None => authority.split(':').next().unwrap_or_default(),
     };
     host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+}
+
+/// `url` in four parts: its scheme with `://` (empty without one), any `user:password@`, its host
+/// and port, and the rest.
+pub(crate) fn url_parts(url: &str) -> [&str; 4] {
+    let start = url.find("://").map_or(0, |at| at + 3);
+    let end = url[start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |at| start + at);
+    // Credentials before an `@` are not the host.
+    let host = url[start..end]
+        .rfind('@')
+        .map_or(start, |at| start + at + 1);
+    [
+        &url[..start],
+        &url[start..host],
+        &url[host..end],
+        &url[end..],
+    ]
 }
 
 /// Whether Apple's on-device model can run on this Mac now.
