@@ -268,6 +268,9 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     let mut echo = echo(&written);
     let mut cleaned = Vec::new();
     while written.iter().any(|track| track.file.is_some()) {
+        // Read once per pass, so the system track is drained in full before the microphone
+        // finishes against it.
+        let stopping = done.load(Ordering::Acquire);
         let mut idle = true;
         for track in &mut written {
             if track.file.is_none() {
@@ -299,7 +302,7 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
                         }
                         track.write(samples);
                     }
-                    Err(TryRecvError::Empty) if !done.load(Ordering::Acquire) => break,
+                    Err(TryRecvError::Empty) if !stopping => break,
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                         if let (Track::Mic, Some(echo)) = (track.track, &mut echo) {
                             cleaned.clear();

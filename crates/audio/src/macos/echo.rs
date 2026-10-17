@@ -21,9 +21,10 @@ const TOLERANCE: f64 = 0.002;
 /// How long the microphone waits for its reference before it is cleaned against silence, so a
 /// stalled tap never holds the microphone back for long.
 const MAX_WAIT: f64 = 0.5;
-/// How much reference is kept: well past [`MAX_WAIT`], and a bound for when the microphone
-/// stops delivering while the tap goes on.
-const KEPT: f64 = 2.0;
+/// How much reference is kept: more than a full system queue holds (about 11 s at 48 kHz), so
+/// a stalled writer drains it all before the microphone still needing it, and a bound for when
+/// the microphone stops delivering while the tap goes on.
+const KEPT: f64 = 15.0;
 
 /// The echo canceller and the samples of each track still waiting to be paired.
 pub(super) struct Echo {
@@ -81,12 +82,15 @@ impl Echo {
     /// Adds what the Mac played, starting at host time `at` in seconds when known. Only the
     /// last [`KEPT`] seconds are kept.
     pub(super) fn reference(&mut self, at: Option<f64>, samples: &[f32]) {
+        if self.failed {
+            return;
+        }
         self.note_untimed(at);
         self.reference.push(at, samples);
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
-            reason = "a few seconds of samples"
+            reason = "seconds of samples"
         )]
         let kept = (KEPT * self.reference.rate) as usize;
         let excess = self.reference.samples.len().saturating_sub(kept);
@@ -97,6 +101,12 @@ impl Echo {
     /// `out` the cleaned samples that are ready. Some wait for their reference, at most
     /// [`MAX_WAIT`].
     pub(super) fn mic(&mut self, at: Option<f64>, samples: &[f32], out: &mut Vec<f32>) {
+        if self.failed {
+            // What waited goes first, so the samples stay in order.
+            out.extend(self.mic.samples.drain(..));
+            out.extend_from_slice(samples);
+            return;
+        }
         self.note_untimed(at);
         self.mic.push(at, samples);
         while self.mic.samples.len() >= self.mic_in.len() {
@@ -157,14 +167,14 @@ impl Echo {
         self.reference_in[..silence].fill(0.0);
         let taken = self
             .reference
-            .take(wanted, &mut self.reference_in[silence..]);
+            .take(&mut self.reference_in[silence..silence + wanted]);
         self.reference_in[silence + taken..].fill(0.0);
         true
     }
 
     /// Feeds `reference_in`, then cleans the microphone's next frame and appends it to `out`.
     fn clean_frame(&mut self, out: &mut Vec<f32>) {
-        self.mic.take(self.mic_in.len(), &mut self.mic_in);
+        self.mic.take(&mut self.mic_in);
         if !self.failed {
             let processed = self
                 .processing
@@ -213,33 +223,43 @@ impl Stream {
         if let Some(at) = at {
             self.anchors
                 .push_back((self.taken + self.samples.len() as u64, at));
+            self.forget_anchors();
         }
         self.samples.extend(samples);
     }
 
     /// The host time of the front sample, from the last block that started at or before it.
-    fn front_time(&mut self) -> Option<f64> {
-        while self.anchors.len() > 1 && self.anchors[1].0 <= self.taken {
-            self.anchors.pop_front();
-        }
+    fn front_time(&self) -> Option<f64> {
         let &(index, at) = self.anchors.front()?;
         Some(at + (self.taken as f64 - index as f64) / self.rate)
     }
 
-    /// Moves up to `into.len()` samples from the front into `into`; returns how many.
-    fn take(&mut self, count: usize, into: &mut [f32]) -> usize {
-        let count = count.min(into.len()).min(self.samples.len());
+    /// Moves samples from the front into `into`, as many as fit or are there; returns how many.
+    fn take(&mut self, into: &mut [f32]) -> usize {
+        let count = into.len().min(self.samples.len());
         for (slot, sample) in into.iter_mut().zip(self.samples.drain(..count)) {
             *slot = sample;
         }
-        self.taken += count as u64;
+        self.advance(count);
         count
     }
 
     fn drop_front(&mut self, count: usize) {
         let count = count.min(self.samples.len());
         self.samples.drain(..count);
+        self.advance(count);
+    }
+
+    fn advance(&mut self, count: usize) {
         self.taken += count as u64;
+        self.forget_anchors();
+    }
+
+    /// Forgets the anchors no sample left needs: only the last one at or before the front stays.
+    fn forget_anchors(&mut self) {
+        while self.anchors.len() > 1 && self.anchors[1].0 <= self.taken {
+            self.anchors.pop_front();
+        }
     }
 }
 
@@ -301,12 +321,16 @@ mod tests {
         /// Whether block `index` of the microphone (`true`) or of the reference arrives.
         arrives: fn(bool, usize) -> bool,
         timed: bool,
+        mic_rate: f64,
+        reference_rate: f64,
     }
 
     const ALL: Delivery = Delivery {
         reference_start: 0.0,
         arrives: |_, _| true,
         timed: true,
+        mic_rate: RATE,
+        reference_rate: RATE,
     };
 
     /// The blocks of `samples` that arrive, with their host times.
@@ -316,11 +340,16 @@ mod tests {
         start: f64,
         delivery: Delivery,
     ) -> Vec<(f64, bool, &[f32])> {
+        let rate = if is_mic {
+            delivery.mic_rate
+        } else {
+            delivery.reference_rate
+        };
         samples
             .chunks(BLOCK)
             .enumerate()
             .filter(|(index, _)| (delivery.arrives)(is_mic, *index))
-            .map(|(index, block)| (start + (index * BLOCK) as f64 / RATE, is_mic, block))
+            .map(|(index, block)| (start + (index * BLOCK) as f64 / rate, is_mic, block))
             .collect()
     }
 
@@ -414,6 +443,52 @@ mod tests {
         assert_cancelled(cancelled(0, untimed));
     }
 
+    /// Forty tones from a fixed seed, sampled at `rate` from `start` seconds for `seconds`,
+    /// standing in for a call at any rate.
+    fn tones(rate: f64, start: f64, seconds: f64) -> Vec<f32> {
+        let mut state = 17_u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f64::from(state >> 8) / f64::from(1 << 24)
+        };
+        let parts: Vec<(f64, f64)> = (0..40)
+            .map(|_| (100.0 + next() * 7_000.0, next() * std::f64::consts::TAU))
+            .collect();
+        (0..(seconds * rate) as usize)
+            .map(|index| {
+                let time = start + index as f64 / rate;
+                let sum: f64 = parts
+                    .iter()
+                    .map(|(hertz, phase)| (std::f64::consts::TAU * hertz * time + phase).sin())
+                    .sum();
+                (sum / 40.0) as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_microphone_at_another_rate_is_cleaned_too() {
+        let (mic_rate, reference_rate) = (44_100.0, RATE);
+        // The microphone hears the call 40 ms after the Mac plays it, at half the level.
+        let mic: Vec<f32> = tones(mic_rate, -0.04, 10.0)
+            .iter()
+            .map(|sample| sample * 0.5)
+            .collect();
+        let reference = tones(reference_rate, 0.0, 10.0);
+        let delivery = Delivery {
+            mic_rate,
+            reference_rate,
+            ..ALL
+        };
+        let mut echo =
+            Echo::new(mic_rate, reference_rate).unwrap_or_else(|error| panic!("{error:#}"));
+        let [out, arrived] = run(&mut echo, &mic, &reference, delivery);
+        assert_eq!(out.len(), arrived.len());
+        let tail = arrived.len() - 44_100 * 5..;
+        let reduction = 10.0 * (energy(&arrived[tail.clone()]) / energy(&out[tail])).log10();
+        assert_cancelled(reduction);
+    }
+
     #[test]
     fn a_voice_with_no_echo_stays() {
         let near = noise(48_000 * 6, 11);
@@ -444,10 +519,11 @@ mod tests {
     #[test]
     fn the_reference_is_bounded_when_the_microphone_stops() {
         let mut echo = echo();
-        for (index, block) in noise(48_000 * 10, 9).chunks(BLOCK).enumerate() {
+        for (index, block) in noise(48_000 * 20, 9).chunks(BLOCK).enumerate() {
             echo.reference(Some((index * BLOCK) as f64 / RATE), block);
         }
         assert!(echo.reference.samples.len() as f64 <= KEPT * RATE);
+        assert!(echo.reference.anchors.len() as f64 <= KEPT * RATE / BLOCK as f64 + 1.0);
     }
 
     #[test]
