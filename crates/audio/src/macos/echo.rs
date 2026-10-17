@@ -21,16 +21,16 @@ const TOLERANCE: f64 = 0.002;
 /// How long the microphone waits for its reference before it is cleaned against silence, so a
 /// stalled tap never holds the microphone back for long.
 const MAX_WAIT: f64 = 0.5;
+/// How much reference is kept: well past [`MAX_WAIT`], and a bound for when the microphone
+/// stops delivering while the tap goes on.
+const KEPT: f64 = 2.0;
 
 /// The echo canceller and the samples of each track still waiting to be paired.
 pub(super) struct Echo {
     processing: AudioProcessing,
     mic: Stream,
     reference: Stream,
-    /// 10 ms of each track, at its own rate.
-    mic_frame: usize,
-    reference_frame: usize,
-    /// Scratch frames, allocated once.
+    /// Scratch frames of 10 ms, at each track's rate, allocated once.
     mic_in: Vec<f32>,
     mic_out: Vec<f32>,
     reference_in: Vec<f32>,
@@ -38,6 +38,9 @@ pub(super) struct Echo {
     /// Set after the first processing error, which is logged once; the microphone then passes
     /// through as it was recorded.
     failed: bool,
+    /// Set once a block came without a host time, which is logged once: such blocks are paired
+    /// by count.
+    untimed: bool,
 }
 
 impl Echo {
@@ -66,27 +69,37 @@ impl Echo {
                 .build(),
             mic: Stream::new(mic_rate),
             reference: Stream::new(reference_rate),
-            mic_frame,
-            reference_frame,
             mic_in: vec![0.0; mic_frame],
             mic_out: vec![0.0; mic_frame],
             reference_in: vec![0.0; reference_frame],
             reference_out: vec![0.0; reference_frame],
             failed: false,
+            untimed: false,
         })
     }
 
-    /// Adds what the Mac played, starting at host time `at` in seconds when known.
+    /// Adds what the Mac played, starting at host time `at` in seconds when known. Only the
+    /// last [`KEPT`] seconds are kept.
     pub(super) fn reference(&mut self, at: Option<f64>, samples: &[f32]) {
+        self.note_untimed(at);
         self.reference.push(at, samples);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a few seconds of samples"
+        )]
+        let kept = (KEPT * self.reference.rate) as usize;
+        let excess = self.reference.samples.len().saturating_sub(kept);
+        self.reference.drop_front(excess);
     }
 
     /// Adds microphone samples starting at host time `at` in seconds when known, and appends to
     /// `out` the cleaned samples that are ready. Some wait for their reference, at most
     /// [`MAX_WAIT`].
     pub(super) fn mic(&mut self, at: Option<f64>, samples: &[f32], out: &mut Vec<f32>) {
+        self.note_untimed(at);
         self.mic.push(at, samples);
-        while self.mic.samples.len() >= self.mic_frame {
+        while self.mic.samples.len() >= self.mic_in.len() {
             let waited = self.mic.samples.len() as f64 / self.mic.rate;
             if !self.take_reference(waited >= MAX_WAIT) {
                 break;
@@ -98,17 +111,26 @@ impl Echo {
     /// Appends to `out` everything still waiting, as the microphone stopped: whole frames
     /// cleaned against whatever reference there is, and the last partial frame as it was.
     pub(super) fn finish(&mut self, out: &mut Vec<f32>) {
-        while self.mic.samples.len() >= self.mic_frame {
+        while self.mic.samples.len() >= self.mic_in.len() {
             self.take_reference(true);
             self.clean_frame(out);
         }
         out.extend(self.mic.samples.drain(..));
     }
 
+    fn note_untimed(&mut self, at: Option<f64>) {
+        if at.is_none() && !self.untimed {
+            eprintln!(
+                "Recording: a block came without a host time; the tracks are paired by count"
+            );
+            self.untimed = true;
+        }
+    }
+
     /// Fills `reference_in` with the reference for the microphone's next frame. Returns false
     /// to wait for more, unless `now`, which pads what is missing with silence.
     fn take_reference(&mut self, now: bool) -> bool {
-        let rate = self.reference.rate;
+        let (rate, frame) = (self.reference.rate, self.reference_in.len());
         let ahead = match (self.reference.front_time(), self.mic.front_time()) {
             (Some(reference), Some(mic)) => reference - mic,
             _ => 0.0,
@@ -117,18 +139,18 @@ impl Echo {
             // The reference starts before this frame: what came earlier has no echo left in it.
             let late = (-ahead * rate).round() as usize;
             self.reference.drop_front(late);
-            if self.reference.samples.len() < self.reference_frame && !now {
+            if self.reference.samples.len() < frame && !now {
                 return false;
             }
         }
         // The reference starts after this frame, as when the tap started later or had a gap:
         // nothing played then, so the frame begins with silence.
         let silence = if ahead > TOLERANCE {
-            ((ahead * rate).round() as usize).min(self.reference_frame)
+            ((ahead * rate).round() as usize).min(frame)
         } else {
             0
         };
-        let wanted = self.reference_frame - silence;
+        let wanted = frame - silence;
         if self.reference.samples.len() < wanted && !now {
             return false;
         }
@@ -142,7 +164,7 @@ impl Echo {
 
     /// Feeds `reference_in`, then cleans the microphone's next frame and appends it to `out`.
     fn clean_frame(&mut self, out: &mut Vec<f32>) {
-        self.mic.take(self.mic_frame, &mut self.mic_in);
+        self.mic.take(self.mic_in.len(), &mut self.mic_in);
         if !self.failed {
             let processed = self
                 .processing
@@ -221,9 +243,10 @@ impl Stream {
     }
 }
 
-/// A device's nominal rate as the whole hertz the canceller takes.
+/// A device's nominal rate as the whole hertz the canceller takes: a multiple of 100, so its
+/// 10 ms frames hold whole samples and keep time with the other track's.
 fn hertz(rate: f64) -> anyhow::Result<u32> {
-    if rate.fract() != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
+    if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
     }
     #[allow(
@@ -236,7 +259,7 @@ fn hertz(rate: f64) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Echo, MAX_WAIT};
+    use super::{Echo, KEPT, MAX_WAIT};
 
     const RATE: f64 = 48_000.0;
     /// Samples per block, as an IO proc delivers them.
@@ -269,42 +292,62 @@ mod tests {
         Echo::new(RATE, RATE).unwrap_or_else(|error| panic!("{error:#}"))
     }
 
-    /// Feeds both tracks block by block in the order their host times put them, the reference
-    /// starting `reference_start` seconds after the microphone, and returns the cleaned mic.
-    fn run(echo: &mut Echo, mic: &[f32], reference: &[f32], reference_start: f64) -> Vec<f32> {
-        let mut blocks: Vec<(f64, bool, &[f32])> = reference
+    /// How a test hands blocks over: when the reference starts, which blocks get lost, and
+    /// whether they carry host times.
+    #[derive(Clone, Copy)]
+    struct Delivery {
+        /// The reference starts this many seconds after the microphone.
+        reference_start: f64,
+        /// Whether block `index` of the microphone (`true`) or of the reference arrives.
+        arrives: fn(bool, usize) -> bool,
+        timed: bool,
+    }
+
+    const ALL: Delivery = Delivery {
+        reference_start: 0.0,
+        arrives: |_, _| true,
+        timed: true,
+    };
+
+    /// The blocks of `samples` that arrive, with their host times.
+    fn blocks(
+        samples: &[f32],
+        is_mic: bool,
+        start: f64,
+        delivery: Delivery,
+    ) -> Vec<(f64, bool, &[f32])> {
+        samples
             .chunks(BLOCK)
             .enumerate()
-            .map(|(index, block)| {
-                (
-                    reference_start + (index * BLOCK) as f64 / RATE,
-                    false,
-                    block,
-                )
-            })
-            .chain(
-                mic.chunks(BLOCK)
-                    .enumerate()
-                    .map(|(index, block)| ((index * BLOCK) as f64 / RATE, true, block)),
-            )
-            .collect();
-        blocks.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let mut out = Vec::new();
-        for (at, is_mic, block) in blocks {
+            .filter(|(index, _)| (delivery.arrives)(is_mic, *index))
+            .map(|(index, block)| (start + (index * BLOCK) as f64 / RATE, is_mic, block))
+            .collect()
+    }
+
+    /// Feeds both tracks block by block in the order their host times put them, and returns the
+    /// cleaned microphone and the microphone as it arrived.
+    fn run(echo: &mut Echo, mic: &[f32], reference: &[f32], delivery: Delivery) -> [Vec<f32>; 2] {
+        let mut all = blocks(reference, false, delivery.reference_start, delivery);
+        all.extend(blocks(mic, true, 0.0, delivery));
+        all.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let (mut out, mut arrived) = (Vec::new(), Vec::new());
+        for (at, is_mic, block) in all {
+            let at = delivery.timed.then_some(at);
             if is_mic {
-                echo.mic(Some(at), block, &mut out);
+                arrived.extend_from_slice(block);
+                echo.mic(at, block, &mut out);
             } else {
-                echo.reference(Some(at), block);
+                echo.reference(at, block);
             }
         }
         echo.finish(&mut out);
-        out
+        [out, arrived]
     }
 
     /// The microphone hears the far end [`DELAY`] after the Mac plays it, at half the level.
     /// The tap's first block comes `offset` samples after the microphone's, or before it when
-    /// negative. Returns the cleaned microphone's reduction in dB.
-    fn cancelled_with_tap_offset(offset: isize) -> f32 {
+    /// negative. Returns the cleaned microphone's reduction in dB over the last 5 s.
+    fn cancelled(offset: isize, delivery: Delivery) -> f32 {
         // One second of the call before the microphone starts.
         let lead = 48_000;
         let far = noise(lead + 48_000 * 10, 3);
@@ -312,35 +355,70 @@ mod tests {
             .map(|index| far[index - DELAY] * 0.5)
             .collect();
         let first = lead.checked_add_signed(offset).unwrap_or(0);
-        let out = run(&mut echo(), &mic, &far[first..], offset as f64 / RATE);
-        assert_eq!(out.len(), mic.len());
-        reduction(&mic, &out)
+        let delivery = Delivery {
+            reference_start: offset as f64 / RATE,
+            ..delivery
+        };
+        let [out, arrived] = run(&mut echo(), &mic, &far[first..], delivery);
+        // Every microphone sample comes out, one for one.
+        assert_eq!(out.len(), arrived.len());
+        reduction(&arrived, &out)
+    }
+
+    fn assert_cancelled(reduction: f32) {
+        assert!(reduction > 20.0, "only {reduction:.1} dB quieter");
     }
 
     #[test]
     fn the_macs_sound_is_removed_from_the_microphone() {
-        let reduction = cancelled_with_tap_offset(0);
-        assert!(reduction > 20.0, "only {reduction:.1} dB quieter");
+        assert_cancelled(cancelled(0, ALL));
     }
 
     #[test]
     fn a_tap_that_started_first_is_lined_up() {
         // Paired by count instead of by time, this reference would trail the echo by 260 ms.
-        let reduction = cancelled_with_tap_offset(-14_400);
-        assert!(reduction > 20.0, "only {reduction:.1} dB quieter");
+        assert_cancelled(cancelled(-14_400, ALL));
     }
 
     #[test]
     fn a_tap_that_started_later_is_lined_up() {
-        let reduction = cancelled_with_tap_offset(14_400);
-        assert!(reduction > 20.0, "only {reduction:.1} dB quieter");
+        assert_cancelled(cancelled(14_400, ALL));
+    }
+
+    #[test]
+    fn a_gap_in_the_tap_keeps_the_rest_lined_up() {
+        // About 200 ms of the tap never arrive, 2 s in.
+        let gap = Delivery {
+            arrives: |is_mic, index| is_mic || !(190..210).contains(&index),
+            ..ALL
+        };
+        assert_cancelled(cancelled(0, gap));
+    }
+
+    #[test]
+    fn a_gap_in_the_microphone_keeps_the_rest_lined_up() {
+        // About 200 ms of the microphone are lost, as when its queue was full.
+        let gap = Delivery {
+            arrives: |is_mic, index| !is_mic || !(190..210).contains(&index),
+            ..ALL
+        };
+        assert_cancelled(cancelled(0, gap));
+    }
+
+    #[test]
+    fn blocks_without_host_times_are_paired_by_count() {
+        let untimed = Delivery {
+            timed: false,
+            ..ALL
+        };
+        assert_cancelled(cancelled(0, untimed));
     }
 
     #[test]
     fn a_voice_with_no_echo_stays() {
         let near = noise(48_000 * 6, 11);
         let silence = vec![0.0; near.len()];
-        let out = run(&mut echo(), &near, &silence, 0.0);
+        let [out, _] = run(&mut echo(), &near, &silence, ALL);
         let change = reduction(&near, &out);
         assert!(change.abs() < 1.0, "{change:.1} dB");
     }
@@ -364,8 +442,20 @@ mod tests {
     }
 
     #[test]
+    fn the_reference_is_bounded_when_the_microphone_stops() {
+        let mut echo = echo();
+        for (index, block) in noise(48_000 * 10, 9).chunks(BLOCK).enumerate() {
+            echo.reference(Some((index * BLOCK) as f64 / RATE), block);
+        }
+        assert!(echo.reference.samples.len() as f64 <= KEPT * RATE);
+    }
+
+    #[test]
     fn unsupported_rates_are_refused() {
         assert!(Echo::new(44_100.5, RATE).is_err());
         assert!(Echo::new(RATE, 1_000.0).is_err());
+        // 10 ms of 22 050 Hz is not a whole number of samples.
+        assert!(Echo::new(22_050.0, RATE).is_err());
+        assert!(Echo::new(44_100.0, RATE).is_ok());
     }
 }

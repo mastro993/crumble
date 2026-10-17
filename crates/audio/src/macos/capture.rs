@@ -242,7 +242,7 @@ impl Written {
         }
     }
 
-    /// Finalizes the file; a failure to is kept like a failed write.
+    /// Finalizes the file; a failure to close is kept like a failed write.
     fn close(&mut self) {
         if let Some(Err(error)) = self.file.take().map(AacFile::close) {
             eprintln!("Recording: {:?}: {error:#}", self.track);
@@ -261,7 +261,8 @@ impl Written {
 
 /// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
 /// until each closes, or is empty once `done` is set, then returns. With both tracks, the
-/// system track goes first and is the reference the microphone is cleaned against.
+/// system track is the reference the microphone is cleaned against: it goes first and is
+/// drained in full, so the microphone never gives up on a reference still in its queue.
 fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     written.sort_by_key(|track| track.track == Track::Mic);
     let mut echo = echo(&written);
@@ -272,7 +273,11 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
             if track.file.is_none() {
                 continue;
             }
-            for _ in 0..BATCH {
+            let batch = match (track.track, &echo) {
+                (Track::System, Some(_)) => QUEUE,
+                _ => BATCH,
+            };
+            for _ in 0..batch {
                 match track.blocks.try_recv() {
                     Ok(block) => {
                         idle = false;
@@ -283,7 +288,8 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
                         let at = block.time(track.sample_rate);
                         match (track.track, &mut echo) {
                             (Track::System, Some(echo)) => echo.reference(at, samples),
-                            (Track::Mic, Some(echo)) => {
+                            // A file that failed takes nothing more, so nothing is cleaned for it.
+                            (Track::Mic, Some(echo)) if track.failed.is_none() => {
                                 cleaned.clear();
                                 echo.mic(at, samples, &mut cleaned);
                                 track.write(&cleaned);
