@@ -1,7 +1,9 @@
 //! Application appearance and typography.
 
-use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Window};
+use std::rc::Rc;
+
+use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
+use gpui_kit::{App, SharedString, Window};
 
 /// Height of the window header row.
 pub const HEADER_HEIGHT: f32 = 50.0;
@@ -107,9 +109,14 @@ pub mod menu {
     }
 }
 
-/// Applies the system font.
+/// Applies the system font and installs the light and dark palettes, which
+/// [`follow_window`] loads.
 pub fn init(cx: &mut App) {
-    Theme::update(cx, |theme| theme.font_family = system_font().into());
+    Theme::update(cx, |theme| {
+        theme.font_family = system_font().into();
+        theme.light_theme = Rc::new(palette(ThemeMode::Light));
+        theme.dark_theme = Rc::new(palette(ThemeMode::Dark));
+    });
 }
 
 /// Native system font.
@@ -119,30 +126,58 @@ pub fn system_font() -> &'static str {
 
 /// Tracks the native window appearance.
 pub fn follow_window(window: &mut Window, cx: &mut App) {
-    apply_mode(ThemeMode::from(window.appearance()), cx);
+    Theme::change(window.appearance(), None, cx);
     window
-        .observe_window_appearance(|window, cx| {
-            apply_mode(ThemeMode::from(window.appearance()), cx)
-        })
+        .observe_window_appearance(|window, cx| Theme::change(window.appearance(), None, cx))
         .detach();
 }
 
-/// Loads the mode's colors, then applies the sidebar surfaces.
-///
-/// The light sidebar stays slightly darker than the main surface.
-fn apply_mode(mode: ThemeMode, cx: &mut App) {
-    Theme::change(mode, None, cx);
-    Theme::update(cx, |theme| {
-        if mode.is_dark() {
-            theme.sidebar = gpui_kit::rgb(0x1b1b1b).into();
-            theme.sidebar_accent = gpui_kit::rgb(0x2f2f2f).into();
-            theme.sidebar_accent_foreground = gpui_kit::rgb(0xebebeb).into();
-        } else {
-            let background = theme.background;
-            theme.sidebar = gpui_kit::Hsla {
-                l: (background.l - 0.03).max(0.0),
-                ..background
-            };
-        }
-    });
+/// The warm palette: cream surfaces and brown ink. Light mode reads it as given; dark mode
+/// puts cream ink on browns a step darker, so the page sits below the palette's darkest
+/// brown and the sidebar on it. Colors left out are derived by gpui-kit from these.
+fn palette(mode: ThemeMode) -> ThemeConfig {
+    const CREAM: &str = "#faf5ef";
+    const SAND: &str = "#f5ece0";
+    const WHEAT: &str = "#f0e2d0";
+    const ESPRESSO: &str = "#1f150a";
+    const BROWN: &str = "#3e2b13";
+    const DARK_PAGE: &str = "#0f0a05";
+    const DARK_FILL: &str = "#2e200e";
+
+    // Focus rings and text selection are the ink at half and a fifth strength.
+    let (background, foreground, sidebar, fill, primary, ring, selection) = if mode.is_dark() {
+        let ring = "#f0e2d080";
+        (
+            DARK_PAGE,
+            CREAM,
+            ESPRESSO,
+            DARK_FILL,
+            WHEAT,
+            ring,
+            "#faf5ef33",
+        )
+    } else {
+        let ring = "#3e2b1380";
+        (CREAM, ESPRESSO, SAND, WHEAT, BROWN, ring, "#3e2b1333")
+    };
+    let color = |value: &str| Some(SharedString::new(value));
+    // Built field by field: the struct has private fields, so `..Default::default()` is out.
+    let mut colors = ThemeConfigColors::default();
+    colors.background = color(background);
+    colors.foreground = color(foreground);
+    colors.sidebar = color(sidebar);
+    colors.sidebar_accent = color(fill);
+    colors.primary = color(primary);
+    colors.primary_foreground = color(background);
+    colors.secondary = color(fill);
+    colors.muted = color(fill);
+    colors.border = color(fill);
+    colors.ring = color(ring);
+    colors.selection = color(selection);
+    ThemeConfig {
+        name: "Crumble".into(),
+        mode,
+        colors,
+        ..Default::default()
+    }
 }
