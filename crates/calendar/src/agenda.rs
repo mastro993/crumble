@@ -1,5 +1,6 @@
-//! What the Agenda list shows and in what order: every Event that has started, newest first,
-//! under the day it started, with Today's In progress Events pinned above the Now line. Also
+//! What the Agenda list shows and in what order: every Event that has started and every Quick
+//! note, newest first, under the day they started or were made, with Today's In progress Events
+//! pinned above the Now line. Also
 //! which days the Agenda reads next and how a read is split for EventKit.
 
 use crate::events::when_text;
@@ -132,8 +133,21 @@ pub enum Row {
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
+    /// A Quick note, under the day it was made.
+    QuickNote(Rc<QuickNote>),
     /// The footer once nothing older is left to read.
     End,
+}
+
+/// A Quick note as the Agenda lists it; the caller keeps the Note itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuickNote {
+    /// The Note's id, as text.
+    pub id: String,
+    /// When the Note was made.
+    pub at: DateTime<Local>,
+    /// The Note's title, or `Quick note` when it has none.
+    pub label: String,
 }
 
 /// The day an Event is listed under: the day it starts.
@@ -155,39 +169,52 @@ fn in_progress(event: &Event, now: DateTime<Local>) -> bool {
     matches!(event.when, When::Timed { start, end } if start <= now && now < end)
 }
 
-/// The rows for `events` at `now`. In progress Events sit under Today whatever day they
-/// started, then the Now line, then all-day Events, then the ended ones; other days list their
-/// all-day Events first, then the rest newest first. Only days from `from` on are listed, but
-/// an In progress Event shows however long ago it started. `end` adds the footer.
-pub fn rows(events: &[Rc<Event>], now: DateTime<Local>, from: NaiveDate, end: bool) -> Vec<Row> {
+/// The rows for `events` and `quick_notes` at `now`. In progress Events sit under Today
+/// whatever day they started, then the Now line, then all-day Events, then the ended Events and
+/// the Quick notes; other days list their all-day Events first, then the rest newest first. Only
+/// days from `from` on are listed, but an In progress Event shows however long ago it started.
+/// `end` adds the footer.
+pub fn rows(
+    events: &[Rc<Event>],
+    quick_notes: &[Rc<QuickNote>],
+    now: DateTime<Local>,
+    from: NaiveDate,
+    end: bool,
+) -> Vec<Row> {
     let today = now.date_naive();
-    let mut listed: Vec<(NaiveDate, u8, &Rc<Event>)> = events
+    // Each row with its day, its rank in the day, its start, and its title.
+    let events = events
         .iter()
         .filter(|event| {
             started(event, now) && (start_day(event) >= from || in_progress(event, now))
         })
-        .map(|event| match event.when {
-            _ if in_progress(event, now) => (today, 0, event),
-            When::AllDay { first, .. } => (first, 1, event),
-            When::Timed { start, .. } => (start.date_naive(), 2, event),
-        })
-        .collect();
-    listed.sort_by_cached_key(|&(day, rank, event)| {
-        let start = match event.when {
-            When::AllDay { .. } => None,
-            When::Timed { start, .. } => Some(start),
-        };
-        (
-            Reverse(day),
-            rank,
-            Reverse(start),
-            event.title.to_lowercase(),
-        )
+        .map(|event| {
+            let (day, rank) = match event.when {
+                _ if in_progress(event, now) => (today, 0),
+                When::AllDay { first, .. } => (first, 1),
+                When::Timed { start, .. } => (start.date_naive(), 2),
+            };
+            let start = match event.when {
+                When::AllDay { .. } => None,
+                When::Timed { start, .. } => Some(start),
+            };
+            (day, rank, start, &event.title, Row::Event(event.clone()))
+        });
+    let notes = quick_notes
+        .iter()
+        .filter(|note| note.at.date_naive() >= from)
+        .map(|note| {
+            let row = Row::QuickNote(note.clone());
+            (note.at.date_naive(), 2, Some(note.at), &note.label, row)
+        });
+    let mut listed: Vec<_> = events.chain(notes).collect();
+    listed.sort_by_cached_key(|(day, rank, start, title, _)| {
+        (Reverse(*day), *rank, Reverse(*start), title.to_lowercase())
     });
     let mut rows = Vec::with_capacity(listed.len() + 8);
     let mut current = None;
     let mut now_shown = false;
-    for (day, rank, event) in listed {
+    for (day, rank, _, _, row) in listed {
         if current != Some(day) {
             // Today is the newest day, so leaving it means only In progress Events were in it.
             if current == Some(today) && !now_shown {
@@ -201,7 +228,7 @@ pub fn rows(events: &[Rc<Event>], now: DateTime<Local>, from: NaiveDate, end: bo
             rows.push(Row::Now);
             now_shown = true;
         }
-        rows.push(Row::Event(event.clone()));
+        rows.push(row);
     }
     if current == Some(today) && !now_shown {
         rows.push(Row::Now);
@@ -240,7 +267,8 @@ pub fn time_label(when: &When) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events, time_label,
+        QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events,
+        time_label,
     };
     use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
     use crumble_eventkit::{Event, When};
@@ -290,6 +318,7 @@ mod tests {
                 Row::Day(day) => day.format("%d").to_string(),
                 Row::Now => "--".into(),
                 Row::Event(event) => event.title.clone(),
+                Row::QuickNote(note) => note.label.clone(),
                 Row::End => "end".into(),
             })
             .collect()
@@ -308,7 +337,7 @@ mod tests {
             all_day("Trip", 13, 14),
         ];
         assert_eq!(
-            labels(&rows(&events, now, date(1), true)),
+            labels(&rows(&events, &[], now, date(1), true)),
             [
                 "15",
                 "--",
@@ -335,21 +364,21 @@ mod tests {
             timed("Dinner", at(14, 19, 0), at(14, 20, 0)),
         ];
         assert_eq!(
-            labels(&rows(&events, now, date(1), false)),
+            labels(&rows(&events, &[], now, date(1), false)),
             ["15", "Workshop", "Flight", "--", "Call", "14", "Dinner"]
         );
 
         // Only In progress Events today: the line closes Today's group.
         let only = [timed("Workshop", at(15, 9, 0), at(15, 12, 0))];
         assert_eq!(
-            labels(&rows(&only, now, date(1), false)),
+            labels(&rows(&only, &[], now, date(1), false)),
             ["15", "Workshop", "--"]
         );
 
         // An Event ends at its end time: it is no longer In progress then.
         let ended = [timed("Workshop", at(15, 9, 0), at(15, 10, 0))];
         assert_eq!(
-            labels(&rows(&ended, now, date(1), false)),
+            labels(&rows(&ended, &[], now, date(1), false)),
             ["15", "--", "Workshop"]
         );
     }
@@ -358,13 +387,13 @@ mod tests {
     fn days_before_the_read_ones_show_only_while_in_progress() {
         let flight = [timed("Flight", at(9, 22, 0), at(15, 11, 0))];
         assert_eq!(
-            labels(&rows(&flight, at(15, 10, 0), date(10), false)),
+            labels(&rows(&flight, &[], at(15, 10, 0), date(10), false)),
             ["15", "Flight", "--"]
         );
         // Once it ends, its start day is not among those read, so it leaves the list.
-        assert!(rows(&flight, at(15, 12, 0), date(10), false).is_empty());
+        assert!(rows(&flight, &[], at(15, 12, 0), date(10), false).is_empty());
         assert_eq!(
-            labels(&rows(&flight, at(15, 12, 0), date(9), false)),
+            labels(&rows(&flight, &[], at(15, 12, 0), date(9), false)),
             ["09", "Flight"]
         );
     }
@@ -373,10 +402,59 @@ mod tests {
     fn days_without_today_have_no_now_line() {
         let events = [timed("Dinner", at(14, 19, 0), at(14, 20, 0))];
         assert_eq!(
-            labels(&rows(&events, at(15, 10, 0), date(1), false)),
+            labels(&rows(&events, &[], at(15, 10, 0), date(1), false)),
             ["14", "Dinner"]
         );
-        assert_eq!(labels(&rows(&[], at(15, 10, 0), date(1), true)), ["end"]);
+        assert_eq!(
+            labels(&rows(&[], &[], at(15, 10, 0), date(1), true)),
+            ["end"]
+        );
+    }
+
+    fn quick_note(label: &str, at: DateTime<Local>) -> Rc<QuickNote> {
+        Rc::new(QuickNote {
+            id: label.into(),
+            at,
+            label: label.into(),
+        })
+    }
+
+    #[test]
+    fn quick_notes_join_the_events_at_the_time_they_were_made() {
+        let now = at(15, 12, 0);
+        let events = [
+            timed("Workshop", at(15, 11, 0), at(15, 13, 0)),
+            timed("Review", at(15, 11, 0), at(15, 11, 30)),
+            timed("Standup", at(15, 9, 0), at(15, 9, 15)),
+            all_day("Holiday", 15, 15),
+            timed("Dinner", at(13, 19, 0), at(13, 20, 0)),
+        ];
+        let notes = [
+            quick_note("Ideas", at(15, 10, 0)),
+            quick_note("Groceries", at(14, 8, 0)),
+            quick_note("Too old", at(9, 8, 0)),
+        ];
+        assert_eq!(
+            labels(&rows(&events, &notes, now, date(10), false)),
+            [
+                "15",
+                "Workshop",
+                "--",
+                "Holiday",
+                "Review",
+                "Ideas",
+                "Standup",
+                "14",
+                "Groceries",
+                "13",
+                "Dinner"
+            ]
+        );
+        // Quick notes alone still get their day header and the Now line.
+        assert_eq!(
+            labels(&rows(&[], &notes[..1], now, date(10), false)),
+            ["15", "--", "Ideas"]
+        );
     }
 
     #[test]

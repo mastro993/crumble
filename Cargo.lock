@@ -1406,6 +1406,7 @@ dependencies = [
  "chrono",
  "crumble-calendar",
  "crumble-eventkit",
+ "crumble-notes",
  "crumble-store",
  "crumble-sync",
  "crumble-theme",
