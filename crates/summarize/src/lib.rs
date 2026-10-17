@@ -84,9 +84,13 @@ pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
     }
 }
 
-/// Whether `url`'s host is `localhost`, `127.0.0.1` or `::1`.
+/// Whether `url`'s host is `localhost`, `127.0.0.1` or `::1`. An address with no scheme is
+/// never sent, so it is not local either.
 fn is_loopback(url: &str) -> bool {
-    let [_, _, authority, _] = url_parts(url.trim());
+    let [scheme, _, authority, _] = url_parts(url.trim());
+    if scheme.is_empty() {
+        return false;
+    }
     let host = match authority.strip_prefix('[') {
         Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
         None => authority.split(':').next().unwrap_or_default(),
@@ -205,13 +209,13 @@ mod tests {
             "http://LOCALHOST:1234/v1/",
             "http://127.0.0.1:8765/v1",
             "https://[::1]:8080/v1",
-            "localhost:11434/v1",
             " http://user:pw@127.0.0.1/v1 ",
         ] {
             assert!(runs_locally(OpenAiCompatible, local), "{local}");
         }
         for remote in [
             "",
+            "localhost:11434/v1",
             "http://192.168.1.20:8765/v1",
             "https://api.openai.com/v1",
             "http://localhost.example.com/v1",

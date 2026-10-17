@@ -202,8 +202,8 @@ pub(super) fn model_settings(
     }
 }
 
-/// Keeps `input`'s text through `save` as it is typed, and forgets `provider`'s Test result,
-/// which no longer says anything about it. Enter or leaving the field backfills Summaries when
+/// Keeps `input`'s text through `save` as it is typed, and forgets `provider`'s Test result and
+/// the Summary failures it caused, which no longer say anything about it. Enter or leaving the field backfills Summaries when
 /// the Summary Model is now ready to.
 fn saved_on_change(
     input: &Entity<InputState>,
@@ -220,6 +220,7 @@ fn saved_on_change(
                 let value = input.read(cx).value();
                 save(&mut view.store, &value);
                 view.models.checks.remove(&provider);
+                view.forget_summary_failures(provider);
                 cx.notify();
             }
             // A finished address or Model may make the Summary Model ready to backfill.
@@ -249,7 +250,9 @@ impl NativeView {
             Ok(()) => {
                 self.models.saved_keys.insert(provider);
                 self.models.checks.remove(&provider);
+                self.forget_summary_failures(provider);
                 field.update(cx, |input, cx| input.set_value("", window, cx));
+                self.summarize_unsummarized(cx);
             }
             Err(error) => {
                 eprintln!("Could not save the key: {error:#}");
@@ -266,6 +269,7 @@ impl NativeView {
             Ok(()) => {
                 self.models.saved_keys.remove(&provider);
                 self.models.checks.remove(&provider);
+                self.forget_summary_failures(provider);
             }
             Err(error) => {
                 eprintln!("Could not remove the key: {error:#}");
@@ -316,7 +320,12 @@ impl NativeView {
             let result = work.await;
             let _ = view.update(cx, |view, cx| {
                 let check = match result {
-                    Ok(()) => Check::Passed,
+                    Ok(()) => {
+                        // Settings may have been right all along, with the server not yet up.
+                        view.forget_summary_failures(provider);
+                        view.summarize_unsummarized(cx);
+                        Check::Passed
+                    }
                     Err(error) => Check::Failed(error.to_string()),
                 };
                 view.models.checks.insert(provider, check);

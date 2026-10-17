@@ -158,6 +158,15 @@ impl NativeView {
         cx.notify();
     }
 
+    /// Forgets the failures `provider` may have caused, as when its settings change, so the next
+    /// backfill tries those Notes again.
+    pub(in super::super) fn forget_summary_failures(&mut self, provider: Provider) {
+        self.note_detail
+            .summarization
+            .failed
+            .retain(|_, failure| failure.provider.is_some_and(|asked| asked != provider));
+    }
+
     /// Forgets the Note `id`'s Summary work, as when its Transcript changes or goes: a job
     /// running for it finishes unseen and its result is dropped.
     pub(super) fn cancel_summary(&mut self, id: &NoteId) {
