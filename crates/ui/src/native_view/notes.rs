@@ -488,14 +488,15 @@ impl NativeView {
         }
         self.note_detail.playback = None;
         self.cancel_transcription(id);
-        self.cancel_summary(id);
-        let detail = &mut self.note_detail;
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");
-            detail.save_failed = true;
+            self.note_detail.save_failed = true;
             cx.notify();
             return;
         }
+        // Only now: a Note that stays keeps its Summary work.
+        self.cancel_summary(id);
+        let detail = &mut self.note_detail;
         detail.unsaved_titles.remove(id);
         detail.unsaved_memos.remove(id);
         detail.unsaved_recordings.remove(id);

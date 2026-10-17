@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, bail};
+use anyhow::{Context as _, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::{Provider, Summarizer, prompt, url_parts};
@@ -210,7 +210,8 @@ fn openai_body(model: &str, instructions: &str, prompt: &str) -> Value {
 
 /// The text of a Messages API response.
 fn claude_text(response: &str) -> anyhow::Result<String> {
-    let response: Value = serde_json::from_str(response)?;
+    let response: Value =
+        serde_json::from_str(response).context("Claude's answer wasn't understood.")?;
     match response["stop_reason"].as_str() {
         Some("refusal") => bail!("Claude declined to summarize this Transcript."),
         Some("max_tokens") => bail!("Claude ran out of room before finishing the Summary."),
@@ -228,7 +229,8 @@ fn claude_text(response: &str) -> anyhow::Result<String> {
 
 /// The text of a chat completions response.
 fn openai_text(response: &str) -> anyhow::Result<String> {
-    let response: Value = serde_json::from_str(response)?;
+    let response: Value =
+        serde_json::from_str(response).context("The server's answer wasn't understood.")?;
     if response["choices"][0]["finish_reason"] == "length" {
         bail!("The Model ran out of room before finishing the Summary.");
     }
@@ -261,7 +263,11 @@ fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyhow::
     match status {
         401 => anyhow!("{who} didn't accept the API key. Check it in Settings."),
         403 => anyhow!("{who} didn't allow this API key to use {model}."),
-        404 => anyhow!("{who} has no Model named {model}. Check the Model in Settings."),
+        // A server says why; a bare 404 is an address with nothing behind it.
+        404 if !said.is_empty() => {
+            anyhow!("{who} has no Model named {model}. Check the Model in Settings.")
+        }
+        404 => anyhow!("{who} has nothing at that address. Check the address in Settings."),
         429 => anyhow!("{who} is getting too many requests. Try again in a minute."),
         500.. => anyhow!("{who} had a problem ({status}). Try again later."),
         _ if !said.is_empty() => anyhow!("{who} turned the request down: {said}"),
@@ -328,7 +334,13 @@ mod tests {
         assert!(openai_text(r#"{"choices":[]}"#).is_err());
         let cut = r#"{"choices":[{"message":{"content":"Planned"},"finish_reason":"length"}]}"#;
         assert!(openai_text(cut).is_err());
-        assert!(openai_text("<html>").is_err());
+        assert_eq!(
+            openai_text("<html>")
+                .map_err(|error| error.to_string())
+                .err()
+                .as_deref(),
+            Some("The server's answer wasn't understood.")
+        );
     }
 
     #[test]
@@ -347,6 +359,10 @@ mod tests {
                 r#"{"error":"model 'm1' not found"}"#
             ),
             "The server has no Model named m1. Check the Model in Settings."
+        );
+        assert_eq!(
+            message(Provider::OpenAiCompatible, 404, "404 page not found"),
+            "The server has nothing at that address. Check the address in Settings."
         );
         assert_eq!(
             message(Provider::Claude, 429, ""),

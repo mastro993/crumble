@@ -141,6 +141,10 @@ pub(super) fn model_settings(
                 let SelectEvent::Confirm(Some(provider)) = event else {
                     return;
                 };
+                // What the previous Summary Model failed at is the new one's to try.
+                if let Some(previous) = view.summary_provider() {
+                    view.forget_summary_failures(previous);
+                }
                 view.store.set_summary_provider(provider.id());
                 view.summarize_unsummarized(cx);
                 cx.notify();
