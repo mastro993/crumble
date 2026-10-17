@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -26,6 +26,7 @@ crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
 crumble-notes = { path = "crates/notes" }
+crumble-remote = { path = "crates/remote" }
 crumble-store = { path = "crates/store" }
 crumble-summarize = { path = "crates/summarize" }
 crumble-sync = { path = "crates/sync" }
@@ -47,8 +48,8 @@ objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 objc2-event-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false }
-# Summaries from remote Providers: a small blocking HTTP client, as jobs already run on a
-# background thread (ADR 0007).
+# Summaries and Transcripts from remote Providers: a small blocking HTTP client, as jobs already
+# run on a background thread (ADRs 0007 and 0008).
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
 serde_json = "1.0"
 # API keys in the macOS Keychain (ADR 0007).

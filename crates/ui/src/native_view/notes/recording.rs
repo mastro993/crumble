@@ -407,9 +407,9 @@ impl NativeView {
                             .small()
                             .icon(app_icon("stop").size_4())
                             .label("Stop")
-                            .on_click(cx.listener(|view, _, _, cx| {
+                            .on_click(cx.listener(|view, _, window, cx| {
                                 if let Some(id) = view.stop_recording(cx) {
-                                    view.transcribe(id, cx);
+                                    view.transcribe(id, None, Some(window), cx);
                                 }
                             })),
                     )

@@ -1,13 +1,14 @@
-//! Remote Providers over HTTP: the Claude API and OpenAI-compatible servers. Each gets the
-//! whole Transcript in one request. An API key goes only into its request's header: never into
-//! an error, a log, or anything else this module returns.
+//! Remote Providers over HTTP, through `crumble-remote`: the Claude API and OpenAI-compatible
+//! servers. Each gets the whole Transcript in one request. An API key goes only into its
+//! request's header: never into an error, a log, or anything else this module returns.
 
-use std::time::Duration;
-
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, bail};
+use crumble_remote::{
+    Provider, TIMEOUT, base_url, failure, no_response, post_json, without_userinfo,
+};
 use serde_json::{Value, json};
 
-use crate::{Provider, Summarizer, prompt, url_parts};
+use crate::{Summarizer, prompt};
 
 /// The Claude API's address.
 const CLAUDE_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -21,8 +22,6 @@ const CLAUDE_MAX_TOKENS: u32 = 16_000;
 /// Models and large local ones. ponytail: a fixed limit; ask each server for its context if a
 /// smaller one turns long Transcripts away.
 const MAX_CHARS: usize = 600_000;
-/// How long a request may take in all; a local Model can take minutes on an hour's speech.
-const TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The Claude API, with the user's API key.
 pub struct Claude {
@@ -83,9 +82,8 @@ impl Claude {
             ("x-api-key", self.api_key.as_str()),
             ("anthropic-version", CLAUDE_VERSION),
         ];
-        let (status, text) = post(CLAUDE_URL, &headers, &body).map_err(|error| {
-            eprintln!("Could not reach Claude: {error}");
-            anyhow!("Couldn't reach Claude. Check the internet connection.")
+        let (status, text) = post_json(CLAUDE_URL, &headers, &body).map_err(|error| {
+            no_response("Claude", "Check the internet connection.", TIMEOUT, &error)
         })?;
         if status != 200 {
             return Err(failure(Provider::Claude, &self.model, status, &text));
@@ -123,13 +121,7 @@ impl OpenAiCompatible {
 
     /// Sends the prompt and returns the response's body, or why it failed.
     fn ask(&self, instructions: &str, prompt: &str) -> anyhow::Result<String> {
-        let base = self.base_url.trim().trim_end_matches('/');
-        if base.is_empty() {
-            bail!("Enter the server's address in Settings.");
-        }
-        if !base.contains("://") {
-            bail!("Start the server's address with http:// or https://.");
-        }
+        let base = base_url(&self.base_url)?;
         if self.model.trim().is_empty() {
             bail!("Enter the server's Model in Settings.");
         }
@@ -140,11 +132,10 @@ impl OpenAiCompatible {
             .iter()
             .map(|value| ("authorization", value.as_str()))
             .collect();
-        let (status, text) = post(&url, &headers, &body).map_err(|error| {
+        let (status, text) = post_json(&url, &headers, &body).map_err(|error| {
             // The address may hold a user name and password.
             let base = without_userinfo(base);
-            eprintln!("Could not reach {base}: {error}");
-            anyhow!("Couldn't reach {base}. Check that the server is running.")
+            no_response(&base, "Check that the server is running.", TIMEOUT, &error)
         })?;
         if status != 200 {
             return Err(failure(
@@ -158,35 +149,12 @@ impl OpenAiCompatible {
     }
 }
 
-/// `url` without the `user:password@` before its host.
-fn without_userinfo(url: &str) -> String {
-    let [scheme, _, authority, rest] = url_parts(url);
-    format!("{scheme}{authority}{rest}")
-}
-
 /// Errors when `transcript` is longer than any remote Model reads.
 fn fits(transcript: &str) -> anyhow::Result<()> {
     if transcript.len() > MAX_CHARS {
         bail!("The Transcript is too long to summarize in one request.");
     }
     Ok(())
-}
-
-/// POSTs `body` as JSON and returns the status and the response's text, whatever the status.
-/// Only a request that got no response errors; its error holds no header.
-fn post(url: &str, headers: &[(&str, &str)], body: &Value) -> Result<(u16, String), ureq::Error> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
-        .http_status_as_error(false)
-        .build()
-        .into();
-    let mut request = agent.post(url);
-    for (name, value) in headers {
-        request = request.header(*name, *value);
-    }
-    let mut response = request.send_json(body)?;
-    let status = response.status().as_u16();
-    Ok((status, response.body_mut().read_to_string()?))
 }
 
 fn claude_body(model: &str, instructions: &str, prompt: &str, max_tokens: u32) -> Value {
@@ -248,42 +216,12 @@ fn answered(text: String) -> anyhow::Result<String> {
     Ok(text.to_owned())
 }
 
-/// What to tell the user when `provider` answered `status` with `body`.
-fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyhow::Error {
-    let who = match provider {
-        Provider::Claude => "Claude",
-        _ => "The server",
-    };
-    // Both APIs put a message under `error`; Ollama and others may put a bare string there.
-    let body: Value = serde_json::from_str(body).unwrap_or_default();
-    let said = body["error"]["message"]
-        .as_str()
-        .or_else(|| body["error"].as_str())
-        .unwrap_or_default();
-    match status {
-        401 => anyhow!("{who} didn't accept the API key. Check it in Settings."),
-        403 => anyhow!("{who} didn't allow this API key to use {model}."),
-        // Blame the Model only when the server names it; a bare 404 is an address with nothing
-        // behind it.
-        404 if said.contains(model) => {
-            anyhow!("{who} has no Model named {model}. Check the Model in Settings.")
-        }
-        404 if !said.is_empty() => anyhow!("{who} turned the request down: {said}"),
-        404 => anyhow!("{who} has nothing at that address. Check the address in Settings."),
-        429 => anyhow!("{who} is getting too many requests. Try again in a minute."),
-        500.. => anyhow!("{who} had a problem ({status}). Try again later."),
-        _ if !said.is_empty() => anyhow!("{who} turned the request down: {said}"),
-        _ => anyhow!("{who} turned the request down ({status})."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        Claude, OpenAiCompatible, claude_body, claude_text, failure, fits, openai_body,
-        openai_text, without_userinfo,
+        Claude, OpenAiCompatible, claude_body, claude_text, fits, openai_body, openai_text,
     };
-    use crate::{Provider, Summarizer};
+    use crate::Summarizer;
     use serde_json::json;
 
     #[test]
@@ -346,57 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn failures_say_what_to_do() {
-        let message = |provider, status, body| failure(provider, "m1", status, body).to_string();
-        let claude_error = r#"{"type":"error","error":{"type":"invalid_request_error",
-            "message":"max_tokens: too large"}}"#;
-        assert_eq!(
-            message(Provider::Claude, 401, claude_error),
-            "Claude didn't accept the API key. Check it in Settings."
-        );
-        assert_eq!(
-            message(
-                Provider::OpenAiCompatible,
-                404,
-                r#"{"error":"model 'm1' not found"}"#
-            ),
-            "The server has no Model named m1. Check the Model in Settings."
-        );
-        assert_eq!(
-            message(
-                Provider::OpenAiCompatible,
-                404,
-                r#"{"error":{"message":"Invalid URL (POST /chat/completions)"}}"#
-            ),
-            "The server turned the request down: Invalid URL (POST /chat/completions)"
-        );
-        assert_eq!(
-            message(Provider::OpenAiCompatible, 404, "404 page not found"),
-            "The server has nothing at that address. Check the address in Settings."
-        );
-        assert_eq!(
-            message(Provider::Claude, 429, ""),
-            "Claude is getting too many requests. Try again in a minute."
-        );
-        assert_eq!(
-            message(Provider::Claude, 529, ""),
-            "Claude had a problem (529). Try again later."
-        );
-        assert_eq!(
-            message(Provider::Claude, 400, claude_error),
-            "Claude turned the request down: max_tokens: too large"
-        );
-        assert_eq!(
-            message(Provider::OpenAiCompatible, 400, r#"{"error":"bad input"}"#),
-            "The server turned the request down: bad input"
-        );
-        assert_eq!(
-            message(Provider::OpenAiCompatible, 400, "nope"),
-            "The server turned the request down (400)."
-        );
-    }
-
-    #[test]
     fn a_transcript_must_fit_one_request() {
         assert!(fits("You: Hi.").is_ok());
         assert!(fits(&"a".repeat(super::MAX_CHARS + 1)).is_err());
@@ -444,19 +331,6 @@ mod tests {
                 .as_deref(),
             Some("Add a Claude API key in Settings.")
         );
-    }
-
-    #[test]
-    fn an_address_loses_its_user_name_and_password() {
-        assert_eq!(
-            without_userinfo("http://me:pw@127.0.0.1:11434/v1"),
-            "http://127.0.0.1:11434/v1"
-        );
-        assert_eq!(
-            without_userinfo("http://localhost:11434/v1/a@b"),
-            "http://localhost:11434/v1/a@b"
-        );
-        assert_eq!(without_userinfo("me@host/v1"), "host/v1");
     }
 
     #[test]

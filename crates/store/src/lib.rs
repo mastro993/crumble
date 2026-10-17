@@ -107,7 +107,7 @@ impl Store {
         }
     }
 
-    /// The id of the Summary Model's Provider, as `crumble_summarize::Provider::id` gives it:
+    /// The id of the Summary Model's Provider, as `crumble_remote::Provider::id` gives it:
     /// the one picked in Settings, else `apple` when `apple_available`, else none.
     pub fn summary_provider(&self, apple_available: bool) -> Option<&str> {
         self.state
@@ -153,6 +153,57 @@ impl Store {
     pub fn set_openai_model(&mut self, model: &str) {
         self.state.openai_model = model.trim().to_owned();
         self.write(db::write_app_state);
+    }
+
+    /// The id of the Transcription Model's Provider, as `crumble_remote::Provider::id` gives
+    /// it: `apple` until another is picked.
+    pub fn transcription_provider(&self) -> &str {
+        &self.state.transcription_provider
+    }
+
+    /// Makes the Provider with the id `provider` make Transcripts.
+    pub fn set_transcription_provider(&mut self, provider: &str) {
+        self.state.transcription_provider = provider.to_owned();
+        self.write(db::write_app_state);
+    }
+
+    /// The Model Transcripts use on the OpenAI-compatible server, `whisper-1` until changed.
+    pub fn transcription_model(&self) -> &str {
+        &self.state.transcription_model
+    }
+
+    /// Makes Transcripts use the Model `model` on the OpenAI-compatible server.
+    pub fn set_transcription_model(&mut self, model: &str) {
+        self.state.transcription_model = model.trim().to_owned();
+        self.write(db::write_app_state);
+    }
+
+    /// The locale picked for Transcripts, such as `it_IT`; `None` follows the Mac's.
+    pub fn transcription_locale(&self) -> Option<&str> {
+        self.state.transcription_locale.as_deref()
+    }
+
+    /// Makes Transcripts use `locale`, or the Mac's locale for `None`.
+    pub fn set_transcription_locale(&mut self, locale: Option<&str>) {
+        self.state.transcription_locale = locale.map(str::to_owned);
+        self.write(db::write_app_state);
+    }
+
+    /// Whether the user agreed to send Recordings' audio to `model` of the Provider with the id
+    /// `provider` at `host` (ADR 0008). The host is compared without case.
+    pub fn has_audio_consent(&self, provider: &str, model: &str, host: &str) -> bool {
+        self.state
+            .audio_consents
+            .contains(&consent(provider, model, host))
+    }
+
+    /// Records that the user agreed to send Recordings' audio to `model` of the Provider with
+    /// the id `provider` at `host`, and when.
+    pub fn add_audio_consent(&mut self, provider: &str, model: &str, host: &str) {
+        let consent = consent(provider, model, host);
+        if self.state.audio_consents.insert(consent.clone()) {
+            self.write(|connection, _| db::write_audio_consent(connection, &consent));
+        }
     }
 
     /// Whether the Account `id` is Disabled.
@@ -303,6 +354,15 @@ pub fn account_label(account: &Account) -> &str {
     account.email.as_deref().unwrap_or(&account.name)
 }
 
+/// The key of a consent to send audio, its host in lowercase.
+fn consent(provider: &str, model: &str, host: &str) -> db::AudioConsent {
+    (
+        provider.to_owned(),
+        model.to_owned(),
+        host.to_ascii_lowercase(),
+    )
+}
+
 /// Adds `id` to `set`, or removes it when it is already there.
 fn toggle(set: &mut BTreeSet<String>, id: &str) {
     if !set.remove(id) {
@@ -357,7 +417,12 @@ mod tests {
         store.set_claude_model(" claude-opus-5-5 ");
         store.set_openai_base_url("http://localhost:11434/v1");
         store.set_openai_model("llama3.2");
+        store.set_transcription_provider("openai");
+        store.set_transcription_model(" whisper-large-v3 ");
+        store.set_transcription_locale(Some("it_IT"));
+        store.add_audio_consent("openai", "whisper-1", "API.openai.com");
         assert_eq!(store.claude_model(), "claude-opus-5-5");
+        assert_eq!(store.transcription_model(), "whisper-large-v3");
         assert_eq!(
             store.state.account_order,
             ["source-1", "source-3", "source-2"]
@@ -411,6 +476,29 @@ mod tests {
         store.set_summary_provider("claude");
         assert_eq!(store.summary_provider(true), Some("claude"));
         assert_eq!(store.reloaded().summary_provider.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn transcripts_start_on_apple_in_the_mac_s_locale() {
+        let mut store = Store::in_memory();
+        assert_eq!(store.transcription_provider(), "apple");
+        assert_eq!(store.transcription_model(), "whisper-1");
+        assert_eq!(store.transcription_locale(), None);
+        store.set_transcription_locale(Some("it_IT"));
+        store.set_transcription_locale(None);
+        assert_eq!(store.reloaded().transcription_locale, None);
+    }
+
+    #[test]
+    fn audio_consent_is_per_provider_model_and_host() {
+        let mut store = Store::in_memory();
+        assert!(!store.has_audio_consent("openai", "whisper-1", "api.openai.com"));
+        store.add_audio_consent("openai", "whisper-1", "API.OpenAI.com");
+        store.add_audio_consent("openai", "whisper-1", "api.openai.com");
+        assert!(store.has_audio_consent("openai", "whisper-1", "api.openai.com"));
+        assert!(!store.has_audio_consent("openai", "gpt-4o-transcribe", "api.openai.com"));
+        assert!(!store.has_audio_consent("openai", "whisper-1", "whisper.example.com"));
+        assert_eq!(store.reloaded().audio_consents.len(), 1);
     }
 
     #[test]

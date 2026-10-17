@@ -8,8 +8,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+crumble-remote.workspace = true
 serde_json.workspace = true
-ureq.workspace = true
 
 # Calling the Swift bridge's C functions is `unsafe`, so this crate cannot take the workspace's
 # `forbid` (see docs/adr/0007-summaries-and-model-providers.md). The other lints match the
