@@ -45,6 +45,8 @@ objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 objc2-event-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false }
+# Pure-Rust WebRTC audio processing: crumble-audio uses its echo canceller (AEC3) only.
+sonora = "0.2.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
