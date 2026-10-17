@@ -68,10 +68,13 @@ struct Job {
     _updates: Task<()>,
 }
 
-/// Why the Model failed, for the user, and the Provider to try again with.
+/// Why the Model failed, for the user.
 struct Failure {
     message: String,
-    provider: Option<Provider>,
+    /// The Provider asked for, to try again with.
+    asked: Option<Provider>,
+    /// The Provider that failed.
+    ran: Provider,
 }
 
 /// What the job sends back to the main thread.
@@ -164,7 +167,7 @@ impl NativeView {
         self.note_detail
             .summarization
             .failed
-            .retain(|_, failure| failure.provider.is_some_and(|asked| asked != provider));
+            .retain(|_, failure| failure.ran != provider);
     }
 
     /// Forgets the Note `id`'s Summary work, as when its Transcript changes or goes: a job
@@ -213,7 +216,8 @@ impl NativeView {
                         id,
                         Failure {
                             message,
-                            provider: asked,
+                            asked,
+                            ran: provider,
                         },
                     );
                     continue;
@@ -319,7 +323,8 @@ impl NativeView {
                             id.clone(),
                             Failure {
                                 message: error.to_string(),
-                                provider: asked,
+                                asked,
+                                ran: job.provider,
                             },
                         );
                     }
@@ -390,8 +395,8 @@ impl NativeView {
         // A failed attempt shows above the Summary the Note still has, if any. A Transcript no
         // job took, as one older than a remote Summary Model, waits for the user to ask.
         let line = match summarization.failed.get(&note.id) {
-            Some(Failure { message, provider }) => {
-                let provider = *provider;
+            Some(Failure { message, asked, .. }) => {
+                let provider = *asked;
                 Some((
                     message.clone(),
                     button("summary-retry")

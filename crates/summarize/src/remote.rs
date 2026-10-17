@@ -263,10 +263,12 @@ fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyhow::
     match status {
         401 => anyhow!("{who} didn't accept the API key. Check it in Settings."),
         403 => anyhow!("{who} didn't allow this API key to use {model}."),
-        // A server says why; a bare 404 is an address with nothing behind it.
-        404 if !said.is_empty() => {
+        // Blame the Model only when the server names it; a bare 404 is an address with nothing
+        // behind it.
+        404 if said.contains(model) => {
             anyhow!("{who} has no Model named {model}. Check the Model in Settings.")
         }
+        404 if !said.is_empty() => anyhow!("{who} turned the request down: {said}"),
         404 => anyhow!("{who} has nothing at that address. Check the address in Settings."),
         429 => anyhow!("{who} is getting too many requests. Try again in a minute."),
         500.. => anyhow!("{who} had a problem ({status}). Try again later."),
@@ -359,6 +361,14 @@ mod tests {
                 r#"{"error":"model 'm1' not found"}"#
             ),
             "The server has no Model named m1. Check the Model in Settings."
+        );
+        assert_eq!(
+            message(
+                Provider::OpenAiCompatible,
+                404,
+                r#"{"error":{"message":"Invalid URL (POST /chat/completions)"}}"#
+            ),
+            "The server turned the request down: Invalid URL (POST /chat/completions)"
         );
         assert_eq!(
             message(Provider::OpenAiCompatible, 404, "404 page not found"),
