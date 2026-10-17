@@ -50,7 +50,7 @@ Said of an Account or a Calendar that Crumble leaves out entirely. It is chosen 
 _Avoid_: muted, removed, off
 
 **Event page**:
-The page that shows everything about one Event and its Notes. Clicking an Event in the Calendar page, or selecting it in the Agenda page, opens it.
+The page that shows everything about one Event and its Note. Clicking an Event in the Calendar page, or selecting it in the Agenda page, opens it.
 _Avoid_: event detail view, event screen
 
 **Details card**:
@@ -136,7 +136,7 @@ _Avoid_: vendor, service, backend
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
 - An **Event** is drawn in its **Account**'s color, whatever its **Calendar**'s color is in macOS
-- One occurrence of an **Event** can have many **Notes**; a **Note** belongs to at most one occurrence, never to a whole repeating series
+- One occurrence of an **Event** has at most one **Note**, which every **Calendar** showing that occurrence shares; a **Note** belongs to at most one occurrence, never to a whole repeating series
 - A **Note** has at most one **Recording**; its **Transcript** comes from that **Recording** and its **Summary** from that **Transcript** only, never from the **Memo**
 - A **Note** follows its **Event**'s **Disabled** and **Hidden** state; a **Quick note** is always shown
 
