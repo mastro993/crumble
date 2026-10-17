@@ -144,22 +144,16 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     const DARK_PAGE: &str = "#0f0a05";
     const DARK_FILL: &str = "#2e200e";
 
-    // Focus rings and text selection are the ink at half and a fifth strength.
-    let (background, foreground, sidebar, fill, primary, ring, selection) = if mode.is_dark() {
-        let ring = "#f0e2d080";
-        (
-            DARK_PAGE,
-            CREAM,
-            ESPRESSO,
-            DARK_FILL,
-            WHEAT,
-            ring,
-            "#faf5ef33",
-        )
-    } else {
-        let ring = "#3e2b1380";
-        (CREAM, ESPRESSO, SAND, WHEAT, BROWN, ring, "#3e2b1333")
-    };
+    // Secondary text and icons, focus rings, and text selection are the second ink at
+    // three quarters, half, and a fifth strength, so they stay tints of the palette.
+    let (background, foreground, sidebar, fill, primary, [muted_text, ring, selection]) =
+        if mode.is_dark() {
+            let inks = ["#f0e2d0bf", "#f0e2d080", "#f0e2d033"];
+            (DARK_PAGE, CREAM, ESPRESSO, DARK_FILL, WHEAT, inks)
+        } else {
+            let inks = ["#3e2b13bf", "#3e2b1380", "#3e2b1333"];
+            (CREAM, ESPRESSO, SAND, WHEAT, BROWN, inks)
+        };
     let color = |value: &str| Some(SharedString::new(value));
     // Built field by field: the struct has private fields, so `..Default::default()` is out.
     let mut colors = ThemeConfigColors::default();
@@ -171,6 +165,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     colors.primary_foreground = color(background);
     colors.secondary = color(fill);
     colors.muted = color(fill);
+    colors.muted_foreground = color(muted_text);
     colors.border = color(fill);
     colors.ring = color(ring);
     colors.selection = color(selection);
