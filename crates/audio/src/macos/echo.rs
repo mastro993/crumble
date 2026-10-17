@@ -21,10 +21,6 @@ const TOLERANCE: f64 = 0.002;
 /// How long the microphone waits for its reference before it is cleaned against silence, so a
 /// stalled tap never holds the microphone back for long.
 const MAX_WAIT: f64 = 0.5;
-/// How much reference is kept: more than a full system queue holds (about 11 s at 48 kHz), so
-/// a stalled writer drains it all before the microphone still needing it, and a bound for when
-/// the microphone stops delivering while the tap goes on.
-const KEPT: f64 = 15.0;
 
 /// The echo canceller and the samples of each track still waiting to be paired.
 pub(super) struct Echo {
@@ -39,16 +35,19 @@ pub(super) struct Echo {
     /// Set after the first processing error, which is logged once; the microphone then passes
     /// through as it was recorded.
     failed: bool,
+    /// The most reference samples kept: what the writer may drain at once, plus [`MAX_WAIT`].
+    kept: usize,
     /// Set once a block came without a host time, which is logged once: such blocks are paired
     /// by count.
     untimed: bool,
 }
 
 impl Echo {
-    /// An echo canceller for a microphone at `mic_rate` and a reference at `reference_rate`.
-    /// Only echo cancellation runs: no noise suppression and no gain control, so the voice
-    /// stays as recorded.
-    pub(super) fn new(mic_rate: f64, reference_rate: f64) -> anyhow::Result<Self> {
+    /// An echo canceller for a microphone at `mic_rate` and a reference at `reference_rate`,
+    /// of which the writer may hand over up to `queued` samples at once, as after a stall. Only
+    /// echo cancellation runs: no noise suppression and no gain control, so the voice stays as
+    /// recorded.
+    pub(super) fn new(mic_rate: f64, reference_rate: f64, queued: usize) -> anyhow::Result<Self> {
         let (mic, reference) = (hertz(mic_rate)?, hertz(reference_rate)?);
         let config = Config {
             pipeline: Pipeline {
@@ -76,24 +75,21 @@ impl Echo {
             reference_out: vec![0.0; reference_frame],
             failed: false,
             untimed: false,
+            // Enough that a full queue, drained before the microphone, loses none the microphone
+            // still needs; and a bound for when the microphone stops while the tap goes on.
+            kept: queued + (MAX_WAIT * reference_rate) as usize,
         })
     }
 
     /// Adds what the Mac played, starting at host time `at` in seconds when known. Only the
-    /// last [`KEPT`] seconds are kept.
+    /// newest `kept` samples stay.
     pub(super) fn reference(&mut self, at: Option<f64>, samples: &[f32]) {
         if self.failed {
             return;
         }
         self.note_untimed(at);
         self.reference.push(at, samples);
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "seconds of samples"
-        )]
-        let kept = (KEPT * self.reference.rate) as usize;
-        let excess = self.reference.samples.len().saturating_sub(kept);
+        let excess = self.reference.samples.len().saturating_sub(self.kept);
         self.reference.drop_front(excess);
     }
 
@@ -279,23 +275,29 @@ fn hertz(rate: f64) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Echo, KEPT, MAX_WAIT};
+    use super::{Echo, MAX_WAIT};
 
     const RATE: f64 = 48_000.0;
     /// Samples per block, as an IO proc delivers them.
     const BLOCK: usize = 512;
+    /// Reference samples the writer may hand over at once: 5 s at 48 kHz.
+    const QUEUED: usize = 240_000;
     /// 40 ms from the speakers to the microphone.
     const DELAY: usize = 1_920;
 
     /// Noise in [-0.5, 0.5) from a fixed seed, standing in for a voice.
     fn noise(len: usize, seed: u32) -> Vec<f32> {
+        let mut next = random(seed);
+        (0..len).map(|_| (next() - 0.5) as f32).collect()
+    }
+
+    /// Numbers in [0, 1) from a fixed seed.
+    fn random(seed: u32) -> impl FnMut() -> f64 {
         let mut state = seed;
-        (0..len)
-            .map(|_| {
-                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                (state >> 8) as f32 / (1 << 24) as f32 - 0.5
-            })
-            .collect()
+        move || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f64::from(state >> 8) / f64::from(1 << 24)
+        }
     }
 
     fn energy(samples: &[f32]) -> f32 {
@@ -309,7 +311,7 @@ mod tests {
     }
 
     fn echo() -> Echo {
-        Echo::new(RATE, RATE).unwrap_or_else(|error| panic!("{error:#}"))
+        Echo::new(RATE, RATE, QUEUED).unwrap_or_else(|error| panic!("{error:#}"))
     }
 
     /// How a test hands blocks over: when the reference starts, which blocks get lost, and
@@ -446,11 +448,7 @@ mod tests {
     /// Forty tones from a fixed seed, sampled at `rate` from `start` seconds for `seconds`,
     /// standing in for a call at any rate.
     fn tones(rate: f64, start: f64, seconds: f64) -> Vec<f32> {
-        let mut state = 17_u32;
-        let mut next = || {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            f64::from(state >> 8) / f64::from(1 << 24)
-        };
+        let mut next = random(17);
         let parts: Vec<(f64, f64)> = (0..40)
             .map(|_| (100.0 + next() * 7_000.0, next() * std::f64::consts::TAU))
             .collect();
@@ -481,7 +479,7 @@ mod tests {
             ..ALL
         };
         let mut echo =
-            Echo::new(mic_rate, reference_rate).unwrap_or_else(|error| panic!("{error:#}"));
+            Echo::new(mic_rate, reference_rate, QUEUED).unwrap_or_else(|error| panic!("{error:#}"));
         let [out, arrived] = run(&mut echo, &mic, &reference, delivery);
         assert_eq!(out.len(), arrived.len());
         let tail = arrived.len() - 44_100 * 5..;
@@ -522,16 +520,16 @@ mod tests {
         for (index, block) in noise(48_000 * 20, 9).chunks(BLOCK).enumerate() {
             echo.reference(Some((index * BLOCK) as f64 / RATE), block);
         }
-        assert!(echo.reference.samples.len() as f64 <= KEPT * RATE);
-        assert!(echo.reference.anchors.len() as f64 <= KEPT * RATE / BLOCK as f64 + 1.0);
+        assert!(echo.reference.samples.len() <= echo.kept);
+        assert!(echo.reference.anchors.len() <= echo.kept / BLOCK + 2);
     }
 
     #[test]
     fn unsupported_rates_are_refused() {
-        assert!(Echo::new(44_100.5, RATE).is_err());
-        assert!(Echo::new(RATE, 1_000.0).is_err());
+        assert!(Echo::new(44_100.5, RATE, QUEUED).is_err());
+        assert!(Echo::new(RATE, 1_000.0, QUEUED).is_err());
         // 10 ms of 22 050 Hz is not a whole number of samples.
-        assert!(Echo::new(22_050.0, RATE).is_err());
-        assert!(Echo::new(44_100.0, RATE).is_ok());
+        assert!(Echo::new(22_050.0, RATE, QUEUED).is_err());
+        assert!(Echo::new(44_100.0, RATE, QUEUED).is_ok());
     }
 }

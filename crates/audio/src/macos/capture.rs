@@ -260,8 +260,8 @@ impl Written {
 }
 
 /// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
-/// until each closes, or is empty once `done` is set, then returns. With both tracks, the
-/// system track is the reference the microphone is cleaned against: it goes first and is
+/// until each is empty or closed once `done` is set, then returns. While the canceller runs,
+/// the system track is the reference the microphone is cleaned against: it goes first and is
 /// drained in full, so the microphone never gives up on a reference still in its queue.
 fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     written.sort_by_key(|track| track.track == Track::Mic);
@@ -289,20 +289,24 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
                             track.heard.store(true, Ordering::Relaxed);
                         }
                         let at = block.time(track.sample_rate);
-                        match (track.track, &mut echo) {
-                            (Track::System, Some(echo)) => echo.reference(at, samples),
+                        let samples = match (track.track, &mut echo) {
+                            (Track::System, Some(echo)) => {
+                                echo.reference(at, samples);
+                                samples
+                            }
                             // A file that failed takes nothing more, so nothing is cleaned for it.
                             (Track::Mic, Some(echo)) if track.failed.is_none() => {
                                 cleaned.clear();
                                 echo.mic(at, samples, &mut cleaned);
-                                track.write(&cleaned);
-                                continue;
+                                &cleaned
                             }
-                            _ => {}
-                        }
+                            _ => samples,
+                        };
                         track.write(samples);
                     }
-                    Err(TryRecvError::Empty) if !stopping => break,
+                    // A queue is closed only once stop is signalled, so the system track has
+                    // been drained in full before the microphone finishes against it.
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) if !stopping => break,
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                         if let (Track::Mic, Some(echo)) = (track.track, &mut echo) {
                             cleaned.clear();
@@ -330,7 +334,7 @@ fn echo(written: &[Written]) -> Option<Echo> {
             .find(|track| track.track == of)
             .map(|track| track.sample_rate)
     };
-    Echo::new(rate(Track::Mic)?, rate(Track::System)?)
+    Echo::new(rate(Track::Mic)?, rate(Track::System)?, QUEUE * BLOCK)
         .inspect_err(|error| {
             eprintln!("Recording: the microphone keeps the Mac's sound: {error:#}")
         })
