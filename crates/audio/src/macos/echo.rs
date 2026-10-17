@@ -14,6 +14,7 @@ mod linear;
 use std::collections::VecDeque;
 
 use anyhow::anyhow;
+use sonora_common_audio::audio_util::MAX_SAMPLE_RATE_HZ;
 
 use linear::Linear;
 
@@ -225,9 +226,10 @@ impl Stream {
 
 /// A device's nominal rate as the whole hertz the canceller takes: a multiple of 100, so its
 /// 10 ms frames hold whole samples and keep time with the other track's, and from 8 kHz, the
-/// lowest rate a microphone uses, to 384 kHz. `sonora`'s resampler panics below about 4.9 kHz.
+/// lowest rate a microphone uses, to [`MAX_SAMPLE_RATE_HZ`], the highest `sonora`'s resampler
+/// takes; it panics above that and below about 4.9 kHz.
 fn hertz(rate: f64) -> anyhow::Result<usize> {
-    if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
+    if rate % 100.0 != 0.0 || !(8_000.0..=f64::from(MAX_SAMPLE_RATE_HZ)).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
     }
     Ok(rate as usize)

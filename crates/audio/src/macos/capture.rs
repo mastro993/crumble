@@ -296,8 +296,10 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
                         };
                         track.write(samples);
                     }
-                    // A queue is closed only once stop is signalled, so the system track has
-                    // been drained in full before the microphone finishes against it.
+                    // The captures close their queues before stop is signalled, so until it
+                    // shows, a closed queue only ends this pass like an empty one. Once it does,
+                    // the system queue, first and taken whole, is drained before the microphone
+                    // finishes against it.
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) if !stopping => break,
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                         if let (Track::Mic, Some(echo)) = (track.track, &mut echo) {
