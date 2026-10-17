@@ -147,9 +147,6 @@ impl Echo {
             // The reference starts before this frame: what came earlier has no echo left in it.
             let late = (-ahead * rate).round() as usize;
             self.reference.drop_front(late);
-            if self.reference.samples.len() < frame && !now {
-                return false;
-            }
         }
         // The reference starts after this frame, as when the tap started later or had a gap:
         // nothing played then, so the frame begins with silence.

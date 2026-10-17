@@ -265,7 +265,7 @@ impl Written {
 /// reference still queued; then up to [`BATCH`] microphone blocks.
 fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     written.sort_by_key(|track| track.track == Track::Mic);
-    let mut echo = echo(&written);
+    let mut echo = canceller(&written);
     let mut cleaned = Vec::new();
     while written.iter().any(|track| track.file.is_some()) {
         // Read once per pass, so the system track is drained in full before the microphone
@@ -327,7 +327,7 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
 }
 
 /// The echo canceller for the microphone, when both tracks record.
-fn echo(written: &[Written]) -> Option<Echo> {
+fn canceller(written: &[Written]) -> Option<Echo> {
     let rate = |of: Track| {
         written
             .iter()
