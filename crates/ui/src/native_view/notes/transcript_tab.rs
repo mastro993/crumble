@@ -85,12 +85,17 @@ impl NativeView {
                         })),
                     muted,
                 ),
-                Failure::Transcribe { message, provider } => {
+                Failure::Transcribe { provider, .. } | Failure::Save { provider } => {
                     let provider = *provider;
                     line(
-                        message
-                            .clone()
-                            .unwrap_or_else(|| "Couldn't transcribe this recording.".to_owned()),
+                        match failure {
+                            Failure::Transcribe {
+                                message: Some(message),
+                                ..
+                            } => message.clone(),
+                            Failure::Save { .. } => "Couldn't save the Transcript.".to_owned(),
+                            _ => "Couldn't transcribe this recording.".to_owned(),
+                        },
                         button("transcript-retry")
                             .outline()
                             .small()

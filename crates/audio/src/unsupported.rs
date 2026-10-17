@@ -20,8 +20,8 @@ impl Recorder {
     pub fn status(&self) -> RecorderStatus {
         RecorderStatus {
             elapsed: Duration::ZERO,
-            mic_heard: false,
-            system_heard: false,
+            mic_silent: false,
+            system_silent: false,
         }
     }
 

@@ -75,6 +75,8 @@ pub(super) enum Failure {
         message: Option<String>,
         provider: Provider,
     },
+    /// The Transcript `provider` made could not be stored.
+    Save { provider: Provider },
 }
 
 /// What the job sends back to the main thread.
@@ -308,8 +310,11 @@ impl NativeView {
                 self.cancel_summary(id);
                 self.summarize(id.clone(), None, cx);
             }
-            // As when the Recording or its Note went while the job ran.
-            Err(error) => eprintln!("Could not keep the Transcript: {error:#}"),
+            Err(error) => {
+                eprintln!("Could not keep the Transcript: {error:#}");
+                let failure = Failure::Save { provider };
+                (self.note_detail.transcription.failed).insert(id.clone(), failure);
+            }
         }
     }
 

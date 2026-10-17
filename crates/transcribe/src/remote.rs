@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
-use crumble_remote::{Provider, failure, post};
+use crumble_remote::{Provider, failure, post, without_userinfo};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -47,6 +47,9 @@ impl Transcriber for OpenAiCompatible {
         let base = self.base_url.trim().trim_end_matches('/');
         if base.is_empty() {
             bail!("Enter the server's address in Settings.");
+        }
+        if !base.contains("://") {
+            bail!("Start the server's address with http:// or https://.");
         }
         if self.model.trim().is_empty() {
             bail!("Enter the server's Transcription Model in Settings.");
@@ -102,6 +105,8 @@ impl OpenAiCompatible {
             .collect();
         let content_type = format!("multipart/form-data; boundary={boundary}");
         let (status, text) = post(url, &headers, &content_type, &body).map_err(|error| {
+            // The address may hold a user name and password.
+            let base = without_userinfo(base);
             eprintln!("Could not reach {base}: {error}");
             anyhow!("Couldn't reach {base}. Check that the server is running.")
         })?;
@@ -322,18 +327,24 @@ Content-Type: audio/mp4\r\n\r\n"
 
     #[test]
     fn missing_settings_fail_before_any_upload() {
-        let server = OpenAiCompatible {
-            base_url: " ".into(),
-            api_key: Some("sk-test-secret".into()),
-            model: "whisper-1".into(),
+        let error = |base_url: &str| {
+            let server = OpenAiCompatible {
+                base_url: base_url.into(),
+                api_key: Some("sk-test-secret".into()),
+                model: "whisper-1".into(),
+            };
+            server
+                .transcribe(Path::new("/nonexistent"), "en_US", &mut |_| {})
+                .map_err(|error| error.to_string())
+                .err()
         };
-        let error = server
-            .transcribe(Path::new("/nonexistent"), "en_US", &mut |_| {})
-            .map_err(|error| error.to_string())
-            .err();
         assert_eq!(
-            error.as_deref(),
+            error(" ").as_deref(),
             Some("Enter the server's address in Settings.")
+        );
+        assert_eq!(
+            error("whisper.lan:8000/v1").as_deref(),
+            Some("Start the server's address with http:// or https://.")
         );
     }
 }

@@ -197,6 +197,17 @@ fn the_key_wins_over_an_older_snapshot() {
     assert_eq!(ok(notes.for_event(&back)), Some(keyed));
 }
 
+#[test]
+fn events_of_other_series_with_the_same_title_and_start_keep_their_own_notes() {
+    let mut notes = Notes::in_memory();
+    let mine = ok(notes.create(Some(&event(Some("a"), None, "Lunch", timed(at(12)))), at(6)));
+    let other = event(Some("b"), None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.for_event(&other)), None);
+    assert_ne!(ok(notes.create(Some(&other), at(7))).id, mine.id);
+    let unsynced = event(None, None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.for_event(&unsynced)), None);
+}
+
 /// Inserts an attached Note straight into the table, past `create`'s lookup.
 fn insert(
     notes: &mut Notes,
@@ -295,11 +306,6 @@ fn writing_an_unknown_note_errors() {
     assert!(notes.set_memo(&unknown, "memo", at(8)).is_err());
 }
 
-/// Deletes the temporary folder an in-memory `Notes` keeps its Recordings in.
-fn remove_recordings(notes: Notes) {
-    let _ = std::fs::remove_dir_all(&notes.recordings);
-}
-
 /// Puts a stand-in audio file in the Note's Recording folder.
 fn record_audio(notes: &Notes, note: &Note) -> std::path::PathBuf {
     let dir = notes.recording_dir(&note.id);
@@ -323,7 +329,8 @@ fn a_recording_starts_once_then_finishes() {
         std::slice::from_ref(&note.id)
     );
 
-    ok(notes.set_recording_finished(&note.id, std::time::Duration::from_millis(90_500), at(8)));
+    let finished =
+        ok(notes.finish_recording(&note.id, std::time::Duration::from_millis(90_500), at(8)));
     let [found] = <[Note; 1]>::try_from(ok(notes.quick_notes(at(0)..at(23))))
         .unwrap_or_else(|found| panic!("{found:?}"));
     assert_eq!(
@@ -333,6 +340,7 @@ fn a_recording_starts_once_then_finishes() {
             duration: Some(std::time::Duration::from_millis(90_500)),
         })
     );
+    assert_eq!(finished, found.recording);
     assert_eq!(found.updated_at, at(8));
     assert_eq!(ok(notes.unfinished_recordings()), []);
 }
@@ -343,9 +351,23 @@ fn finishing_needs_a_started_recording() {
     let note = ok(notes.create(None, at(6)));
     assert!(
         notes
-            .set_recording_finished(&note.id, std::time::Duration::from_secs(1), at(7))
+            .finish_recording(&note.id, std::time::Duration::from_secs(1), at(7))
             .is_err()
     );
+}
+
+#[test]
+fn a_recording_finished_with_no_audio_is_deleted() {
+    let mut notes = Notes::in_memory();
+    let note = ok(notes.create(None, at(6)));
+    ok(notes.set_recording_started(&note.id, at(7)));
+    let dir = record_audio(&notes, &note);
+    assert_eq!(
+        ok(notes.finish_recording(&note.id, std::time::Duration::ZERO, at(8))),
+        None
+    );
+    assert!(!dir.exists());
+    assert_eq!(ok(notes.quick_notes(at(0)..at(23)))[0].recording, None);
 }
 
 #[test]
@@ -369,7 +391,6 @@ fn deleting_the_recording_forgets_it_and_its_audio() {
     // The Note may record again, and deleting with no audio left is fine.
     ok(notes.set_recording_started(&note.id, at(9)));
     ok(notes.delete_recording(&note.id, at(10)));
-    remove_recordings(notes);
 }
 
 #[test]
@@ -380,7 +401,33 @@ fn deleting_a_note_deletes_its_audio() {
     let dir = record_audio(&notes, &note);
     ok(notes.delete(&note.id, at(8)));
     assert!(!dir.exists());
-    remove_recordings(notes);
+}
+
+#[test]
+fn audio_that_cannot_be_deleted_keeps_the_note_for_another_try() {
+    let mut notes = Notes::in_memory();
+    let note = ok(notes.create(None, at(6)));
+    ok(notes.set_recording_started(&note.id, at(7)));
+    // A file where the folder should be, so deleting the folder fails.
+    let dir = notes.recording_dir(&note.id);
+    ok(std::fs::create_dir_all(&notes.recordings).map_err(anyhow::Error::from));
+    ok(std::fs::write(&dir, b"audio").map_err(anyhow::Error::from));
+    assert!(notes.delete_recording(&note.id, at(8)).is_err());
+    assert!(notes.delete(&note.id, at(8)).is_err());
+    let listed = ok(notes.quick_notes(at(0)..at(23)));
+    assert!(listed[0].recording.is_some());
+    ok(std::fs::remove_file(&dir).map_err(anyhow::Error::from));
+    ok(notes.delete(&note.id, at(9)));
+}
+
+#[test]
+fn an_in_memory_notes_deletes_its_recordings_when_dropped() {
+    let notes = Notes::in_memory();
+    let note_dir = notes.recordings.join("note");
+    ok(std::fs::create_dir_all(&note_dir).map_err(anyhow::Error::from));
+    let recordings = notes.recordings.clone();
+    drop(notes);
+    assert!(!recordings.exists());
 }
 
 #[test]
@@ -400,41 +447,69 @@ fn a_quick_note_is_listed_at_its_recordings_start() {
 }
 
 #[test]
+fn recovery_goes_on_past_a_recording_it_cannot_finish() {
+    let mut notes = Notes::in_memory();
+    let stuck = ok(notes.create(None, at(5)));
+    let kept = ok(notes.create(None, at(5)));
+    for note in [&stuck, &kept] {
+        ok(notes.set_recording_started(&note.id, at(6)));
+    }
+    // A file where the folder should be, so deleting the empty Recording fails.
+    let stuck_dir = notes.recording_dir(&stuck.id);
+    ok(std::fs::create_dir_all(&notes.recordings).map_err(anyhow::Error::from));
+    ok(std::fs::write(&stuck_dir, b"").map_err(anyhow::Error::from));
+    let recovered = notes.recover_recordings(
+        |dir| {
+            Ok(if dir == stuck_dir {
+                std::time::Duration::ZERO
+            } else {
+                std::time::Duration::from_secs(42)
+            })
+        },
+        at(8),
+    );
+    assert!(recovered.is_err());
+    assert_eq!(ok(notes.unfinished_recordings()), [stuck.id]);
+}
+
+#[test]
 fn a_crash_left_recording_keeps_what_its_files_hold() {
     let mut notes = Notes::in_memory();
     let kept = ok(notes.create(None, at(5)));
+    let empty = ok(notes.create(None, at(5)));
     let unreadable = ok(notes.create(None, at(5)));
     let finished = ok(notes.create(None, at(5)));
-    for note in [&kept, &unreadable, &finished] {
+    for note in [&kept, &empty, &unreadable, &finished] {
         ok(notes.set_recording_started(&note.id, at(6)));
     }
     ok(notes.set_recording_finished(&finished.id, std::time::Duration::from_secs(9), at(7)));
-    let unreadable_dir = notes.recording_dir(&unreadable.id);
     let kept_dir = notes.recording_dir(&kept.id);
+    let empty_dir = notes.recording_dir(&empty.id);
+    let unreadable_dir = notes.recording_dir(&unreadable.id);
     ok(notes.recover_recordings(
         |dir| {
-            assert!(dir == kept_dir || dir == unreadable_dir, "{dir:?}");
             if dir == kept_dir {
                 Ok(std::time::Duration::from_secs(42))
+            } else if dir == empty_dir {
+                Ok(std::time::Duration::ZERO)
             } else {
-                Err(anyhow::anyhow!("no audio"))
+                assert_eq!(dir, unreadable_dir);
+                Err(anyhow::anyhow!("cannot read"))
             }
         },
         at(8),
     ));
     let recordings: Vec<_> = ok(notes.quick_notes(at(0)..at(23)))
         .into_iter()
-        .map(|note| {
-            (
-                note.id,
-                note.recording.and_then(|recording| recording.duration),
-            )
-        })
+        .map(|note| (note.id, note.recording.map(|recording| recording.duration)))
         .collect();
-    assert!(recordings.contains(&(kept.id, Some(std::time::Duration::from_secs(42)))));
-    assert!(recordings.contains(&(unreadable.id, None)));
-    assert!(recordings.contains(&(finished.id, Some(std::time::Duration::from_secs(9)))));
-    assert_eq!(ok(notes.unfinished_recordings()), []);
+    assert!(recordings.contains(&(kept.id, Some(Some(std::time::Duration::from_secs(42))))));
+    // Nothing in it: deleted.
+    assert!(recordings.contains(&(empty.id, None)));
+    // Its files may still hold audio: left unfinished for the next launch.
+    assert!(recordings.contains(&(unreadable.id.clone(), Some(None))));
+    assert!(recordings.contains(&(finished.id, Some(Some(std::time::Duration::from_secs(9))))));
+    assert_eq!(ok(notes.unfinished_recordings()), [unreadable.id]);
 }
 
 fn line(track: super::Track, start_s: u64, text: &str) -> super::TranscriptSegment {
@@ -511,7 +586,6 @@ fn only_a_finished_recording_without_a_transcript_needs_one() {
     let deleted = recorded(&mut notes);
     ok(notes.delete(&deleted.id, at(8)));
     assert_eq!(ok(notes.untranscribed()), [waiting.id]);
-    remove_recordings(notes);
 }
 
 #[test]
@@ -529,7 +603,6 @@ fn deleting_the_recording_deletes_its_transcript() {
     ok(notes.delete_recording(&note.id, at(9)));
     assert_eq!(ok(notes.transcript(&note.id)), []);
     assert_eq!(ok(notes.quick_notes(at(0)..at(23)))[0].transcript, None);
-    remove_recordings(notes);
 }
 
 #[test]
@@ -617,7 +690,6 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
     assert_eq!(ok(notes.transcript(&note.id)), []);
     assert_eq!(ok(notes.untranscribed()), []);
     assert_eq!(ok(notes.unsummarized()), []);
-    remove_recordings(notes);
 }
 
 /// A Quick note with a finished Recording and a one-line Transcript.
@@ -687,7 +759,6 @@ fn a_new_transcript_or_none_clears_the_summary() {
     ok(notes.set_summary(&note.id, "apple", "m", "# Hi", at(11)));
     ok(notes.delete_recording(&note.id, at(12)));
     assert_eq!(summary(&mut notes), None);
-    remove_recordings(notes);
 }
 
 #[test]
@@ -696,11 +767,13 @@ fn only_a_spoken_transcript_without_a_summary_needs_one() {
     recorded(&mut notes);
     let silent = recorded(&mut notes);
     ok(notes.set_transcript(&silent.id, "apple", "Model", "en_US", &[], at(8)));
+    let empty = recorded(&mut notes);
+    let nothing = [line(super::Track::Mic, 0, "")];
+    ok(notes.set_transcript(&empty.id, "apple", "Model", "en_US", &nothing, at(8)));
     let waiting = transcribed(&mut notes);
     let done = transcribed(&mut notes);
     ok(notes.set_summary(&done.id, "apple", "m", "# Hi", at(9)));
     let deleted = transcribed(&mut notes);
     ok(notes.delete(&deleted.id, at(9)));
     assert_eq!(ok(notes.unsummarized()), [waiting.id]);
-    remove_recordings(notes);
 }

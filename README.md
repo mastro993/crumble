@@ -29,6 +29,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+CI (`.github/workflows/ci.yml`) runs these three on macOS 26 for every pull request and every push to `main`.
+
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
 
 `cargo test -p crumble-summarize --locked -- --ignored --nocapture` summarizes an invented Transcript with Apple's on-device model (Apple Intelligence must be on) and with a local Ollama if one is running. `cargo test -p crumble-store --locked -- --ignored` saves, reads and removes a made-up key in the login Keychain.

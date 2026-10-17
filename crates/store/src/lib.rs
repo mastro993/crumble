@@ -107,7 +107,7 @@ impl Store {
         }
     }
 
-    /// The id of the Summary Model's Provider, as `crumble_summarize::Provider::id` gives it:
+    /// The id of the Summary Model's Provider, as `crumble_remote::Provider::id` gives it:
     /// the one picked in Settings, else `apple` when `apple_available`, else none.
     pub fn summary_provider(&self, apple_available: bool) -> Option<&str> {
         self.state
