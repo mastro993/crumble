@@ -3,9 +3,12 @@
 
 use super::NativeView;
 use super::account_dot::dot;
+use super::controls::button;
 use chrono::Weekday;
 use crumble_eventkit::{Access, Account};
+use crumble_notify::Status;
 use crumble_store::{Store, account_label};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -27,6 +30,9 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
     "Sunday",
 ];
+
+/// System Settings › Notifications, open on Crumble.
+const NOTIFICATION_SETTINGS: &str = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.mastro993.crumble";
 
 const SELECT_WIDTH: f32 = 160.0;
 const ALIAS_WIDTH: f32 = 160.0;
@@ -95,6 +101,57 @@ impl NativeView {
             )
             .children(self.render_calendar_settings(cx))
             .child(models)
+            .child(self.render_suggestion_settings(cx))
+    }
+
+    /// The switch for Suggestions, and a line under it while macOS keeps them from showing.
+    fn render_suggestion_settings(&self, cx: &Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        v_flex()
+            .gap_2()
+            .child(group_title("Notes", cx))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .gap_4()
+                    .text_sm()
+                    .child("Suggest recording when a meeting starts")
+                    .child(
+                        Switch::new("suggest-recording")
+                            .checked(self.store.suggests_recording())
+                            .small()
+                            .accessibility_label("Suggest recording when a meeting starts")
+                            .on_click(cx.listener(|view, on: &bool, _, cx| {
+                                view.store.set_suggests_recording(*on);
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .when(
+                self.store.suggests_recording() && self.suggestions.status == Status::Denied,
+                |group| {
+                    group.child(
+                        h_flex()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child("Notifications are off for Crumble in System Settings."),
+                            )
+                            .child(
+                                button("suggest-recording-settings")
+                                    .flex_shrink_0()
+                                    .link()
+                                    .small()
+                                    .label("Open System Settings")
+                                    .on_click(|_, _, cx| cx.open_url(NOTIFICATION_SETTINGS)),
+                            ),
+                    )
+                },
+            )
     }
 
     /// Each Account with a switch, and its Calendars with a checkbox each. A Disabled Account

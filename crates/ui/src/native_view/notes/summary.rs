@@ -7,10 +7,11 @@ use super::super::controls::button;
 use super::super::route::Route;
 use chrono::Utc;
 use crumble_notes::{NoteId, Track};
+use crumble_remote::{Provider, base_url, runs_locally};
 use crumble_store::secrets;
 use crumble_summarize::{
-    Apple, Availability, Claude, OpenAiCompatible, Provider, Speaker, Summarizer,
-    apple_availability, runs_locally, transcript_text,
+    Apple, Availability, Claude, OpenAiCompatible, Speaker, Summarizer, apple_availability,
+    transcript_text,
 };
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::text::TextView;
@@ -124,7 +125,8 @@ impl NativeView {
                 self.models.has_key(provider) && !self.store.claude_model().is_empty()
             }
             Provider::OpenAiCompatible => {
-                !self.store.openai_base_url().is_empty() && !self.store.openai_model().is_empty()
+                base_url(self.store.openai_base_url()).is_ok()
+                    && !self.store.openai_model().is_empty()
             }
         }
     }
@@ -358,7 +360,9 @@ impl NativeView {
         let summarization = &detail.summarization;
         if let Some(job) = summarization.job(&note.id) {
             let text = match job.fraction {
-                Some(fraction) => format!("Summarizing… {}", super::transcript::percent(fraction)),
+                Some(fraction) => {
+                    format!("Summarizing… {}", super::transcript_tab::percent(fraction))
+                }
                 None => "Summarizing…".to_owned(),
             };
             return v_flex()

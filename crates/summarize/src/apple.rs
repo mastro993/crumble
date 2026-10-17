@@ -4,7 +4,8 @@
 use anyhow::bail;
 
 use crate::chunk::chunks;
-use crate::{Provider, Summarizer, ffi, prompt};
+use crate::{Summarizer, ffi, prompt};
+use crumble_remote::Provider;
 
 /// The tokens left for each answer: notes on a part, or the Summary.
 const RESPONSE_TOKENS: usize = 1000;

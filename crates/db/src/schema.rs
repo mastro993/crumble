@@ -20,6 +20,10 @@ diesel::table! {
         claude_model -> Text,
         openai_base_url -> Text,
         openai_model -> Text,
+        transcription_provider -> Text,
+        transcription_model -> Text,
+        transcription_locale -> Nullable<Text>,
+        suggest_recording -> Bool,
     }
 }
 
@@ -57,6 +61,16 @@ diesel::table! {
         summary_provider -> Nullable<Text>,
         summary_model -> Nullable<Text>,
         summarized_at -> Nullable<Text>,
+        transcript_provider -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    remote_audio_consents (provider, model, host) {
+        provider -> Text,
+        model -> Text,
+        host -> Text,
+        acknowledged_at -> Text,
     }
 }
 
@@ -79,5 +93,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     calendars,
     folded_sections,
     notes,
+    remote_audio_consents,
     transcript_segments,
 );

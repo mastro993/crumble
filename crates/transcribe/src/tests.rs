@@ -1,4 +1,5 @@
-use super::{Segment, Track, merge, parse};
+use super::apple::parse;
+use super::{Segment, Track, merge};
 use std::time::Duration;
 
 fn segment(track: Track, start_ms: u64, end_ms: u64, text: &str) -> Segment {

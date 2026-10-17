@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/notify", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -26,6 +26,8 @@ crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
 crumble-notes = { path = "crates/notes" }
+crumble-notify = { path = "crates/notify" }
+crumble-remote = { path = "crates/remote" }
 crumble-store = { path = "crates/store" }
 crumble-summarize = { path = "crates/summarize" }
 crumble-sync = { path = "crates/sync" }
@@ -35,8 +37,8 @@ gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb4
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
 uuid = { version = "1.28", features = ["v7"] }
-# The objc2 family behind crumble-eventkit and crumble-audio, kept on one version. Each crate
-# turns on the features it calls.
+# The objc2 family behind crumble-eventkit, crumble-audio and crumble-notify, kept on one
+# version. Each crate turns on the features it calls.
 block2 = "0.6.2"
 objc2 = "0.6.5"
 objc2-audio-toolbox = { version = "0.3.2", default-features = false }
@@ -47,14 +49,15 @@ objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 objc2-event-kit = { version = "0.3.2", default-features = false }
 objc2-foundation = { version = "0.3.2", default-features = false }
+objc2-user-notifications = { version = "0.3.2", default-features = false }
 # Pure-Rust WebRTC audio processing. crumble-audio runs AEC3's linear echo filter from
 # sonora-aec3, with sonora's band split and high-pass filter and sonora-common-audio's resampler.
 # Pinned exactly: echo/linear.rs relies on how their internals line up.
 sonora = "=0.2.0"
 sonora-aec3 = "=0.2.0"
 sonora-common-audio = "=0.2.0"
-# Summaries from remote Providers: a small blocking HTTP client, as jobs already run on a
-# background thread (ADR 0007).
+# Summaries and Transcripts from remote Providers: a small blocking HTTP client, as jobs already
+# run on a background thread (ADRs 0007 and 0008).
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
 serde_json = "1.0"
 # API keys in the macOS Keychain (ADR 0007).

@@ -1,0 +1,46 @@
+[package]
+name = "crumble-notify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = [
+    "std",
+    "NSArray",
+    "NSBundle",
+    "NSError",
+    "NSObject",
+    "NSSet",
+    "NSString",
+] }
+objc2-user-notifications = { workspace = true, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "UNNotification",
+    "UNNotificationAction",
+    "UNNotificationCategory",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSettings",
+    "UNNotificationTrigger",
+    "UNUserNotificationCenter",
+] }
+
+# Defining the notification center's delegate class is `unsafe`, so this crate cannot take the
+# workspace's `forbid` (see docs/adr/0009-suggestions-through-user-notifications.md). The other
+# lints match the workspace.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
