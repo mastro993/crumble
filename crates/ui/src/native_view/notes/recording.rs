@@ -129,7 +129,9 @@ impl NativeView {
             recorder,
             _tick: tick,
         });
-        self.note_detail.recording_failed = None;
+        self.note_detail
+            .recording_failed
+            .take_if(|failed| *failed == id);
         self.recording_changed(&id, Some(info));
         cx.notify();
     }
@@ -149,9 +151,11 @@ impl NativeView {
             .is_some_and(|note| detail.recording_failed.as_ref() == Some(&note.id))
     }
 
-    /// Stops the Recording and keeps its length; on quit and window close too. A stop that
-    /// fails keeps what the files hold, and a Recording with no audio is deleted. One whose
+    /// Stops the Recording and keeps it as [`Notes::finish_recording`] does; on quit, window
+    /// close and Note deletion too. A stop that fails keeps what the files hold. One whose
     /// files cannot be read stays unfinished, for the next launch to read again.
+    ///
+    /// [`Notes::finish_recording`]: crumble_notes::Notes::finish_recording
     pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
         let Some(active) = self.note_detail.recording.take() else {
             return;
@@ -164,41 +168,42 @@ impl NativeView {
             eprintln!("The Recording did not stop cleanly: {error:#}");
             crumble_audio::recorded_length(&dir)
         });
-        let now = Utc::now();
-        let info = match length {
-            Ok(duration) if duration.is_zero() => {
-                eprintln!("Deleting the Recording, as it holds no audio");
-                self.notes.delete_recording(&id, now).map(|()| None)
-            }
-            Ok(duration) => {
-                let info = RecordingInfo {
-                    started_at: active.started_at,
-                    duration: Some(duration),
-                };
+        let finished = length.and_then(|duration| {
+            let finished = self.notes.finish_recording(&id, duration, Utc::now());
+            match finished {
                 // The files are complete, so the Recording shows as finished; its length is
                 // kept in memory and written again with every later save, as a failed Memo is.
-                if let Err(error) = self.notes.set_recording_finished(&id, duration, now) {
+                Err(error) if !duration.is_zero() => {
                     eprintln!("Could not save the Recording's length: {error:#}");
+                    let info = RecordingInfo {
+                        started_at: active.started_at,
+                        duration: Some(duration),
+                    };
                     self.note_detail.unsaved_recordings.insert(id.clone(), info);
                     self.note_detail.save_failed = true;
+                    Ok(Some(info))
                 }
-                Ok(Some(info))
+                finished => finished,
             }
-            Err(error) => Err(error),
-        };
-        match info {
-            // What was kept stays, but part of it may be missing.
-            Ok(info) if !clean => {
-                self.recording_changed(&id, info);
-                self.recording_failed(&id, "it did not stop cleanly", cx);
-            }
+        });
+        match finished {
             Ok(info) => {
                 self.recording_changed(&id, info);
-                self.note_detail.recording_failed = None;
+                if clean {
+                    self.note_detail
+                        .recording_failed
+                        .take_if(|failed| *failed == id);
+                } else {
+                    // What was kept stays, but part of it may be missing.
+                    self.recording_failed(&id, "it did not stop cleanly", cx);
+                }
             }
             Err(error) => self.recording_failed(&id, &format!("{error:#}"), cx),
         }
-        self.show_player(cx);
+        // Another Note's player stays as it is.
+        if (self.note_detail.note.as_ref()).is_some_and(|note| note.id == id) {
+            self.show_player(cx);
+        }
         cx.notify();
     }
 
@@ -278,7 +283,7 @@ impl NativeView {
             loop {
                 cx.background_executor().timer(PLAYBACK_TICK).await;
                 let playing = view.update_in(cx, |view, window, cx| {
-                    let Some(playback) = &view.note_detail.playback else {
+                    let Some(playback) = &mut view.note_detail.playback else {
                         return false;
                     };
                     let at = playback.player.position().as_secs_f32();
@@ -286,7 +291,12 @@ impl NativeView {
                         .scrubber
                         .update(cx, |scrubber, cx| scrubber.set_value(at, window, cx));
                     cx.notify();
-                    playback.player.is_playing()
+                    let playing = playback.player.is_playing();
+                    if !playing {
+                        // At the end: stops the engine, which runs until paused.
+                        playback.player.pause();
+                    }
+                    playing
                 });
                 if !matches!(playing, Ok(true)) {
                     break;
@@ -329,7 +339,9 @@ impl NativeView {
             Ok(()) => {
                 self.note_detail.unsaved_recordings.remove(id);
                 self.recording_changed(id, None);
-                self.note_detail.recording_failed = None;
+                self.note_detail
+                    .recording_failed
+                    .take_if(|failed| failed == id);
             }
             Err(error) => self.recording_failed(id, &format!("{error:#}"), cx),
         }

@@ -287,7 +287,7 @@ impl NativeView {
         detail.unsaved_recordings.retain(|id, recording| {
             recording
                 .duration
-                .is_some_and(|duration| notes.set_recording_finished(id, duration, now).is_err())
+                .is_some_and(|duration| notes.finish_recording(id, duration, now).is_err())
         });
         detail.save_failed = !detail.unsaved_titles.is_empty()
             || !detail.unsaved_memos.is_empty()
@@ -410,9 +410,10 @@ impl NativeView {
         {
             return;
         }
-        // The Recording goes with its Note: stop it, and close its files, before they go.
+        // The Recording goes with its Note: stop and keep it, so it stays whole if the delete
+        // fails, and close its files before they go.
         if self.is_recording(id) {
-            self.note_detail.recording = None;
+            self.stop_recording(cx);
         }
         self.note_detail.playback = None;
         let detail = &mut self.note_detail;
