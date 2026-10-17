@@ -8,9 +8,11 @@ on:
 permissions:
   contents: read
 
+# A pull request cancels its superseded runs. Each push to main gets its own group, because a
+# shared group would cancel a queued push run once another one queues behind it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,9 +28,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Installs the toolchain rust-toolchain.toml pins, with clippy and rustfmt. It runs before
-      # rust-cache, which keys its cache on the installed rustc versions.
-      - run: rustup toolchain install
+      # Installs the toolchain rust-toolchain.toml pins, with clippy and rustfmt. rust-cache keys
+      # its cache on every installed rustc, so this runs first and removes the image's stable,
+      # whose updates would otherwise make pull requests miss main's cache.
+      - run: rustup toolchain install && rustup toolchain uninstall stable
 
       - run: cargo fmt --all --check
 
