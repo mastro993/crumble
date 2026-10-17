@@ -10,16 +10,16 @@ publish.workspace = true
 anyhow.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6.2"
-objc2 = "0.6.5"
-objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = [
+block2.workspace = true
+objc2.workspace = true
+objc2-audio-toolbox = { workspace = true, features = [
     "std",
     "AudioFile",
     "ExtendedAudioFile",
     "objc2-core-audio-types",
     "objc2-core-foundation",
 ] }
-objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
+objc2-avf-audio = { workspace = true, features = [
     "std",
     "block2",
     "objc2-core-audio-types",
@@ -34,7 +34,7 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
     "AVAudioTime",
     "AVAudioTypes",
 ] }
-objc2-core-audio = { version = "0.3.2", default-features = false, features = [
+objc2-core-audio = { workspace = true, features = [
     "std",
     "AudioHardware",
     "HostTime",
@@ -42,9 +42,9 @@ objc2-core-audio = { version = "0.3.2", default-features = false, features = [
     "objc2-core-audio-types",
     "objc2-foundation",
 ] }
-objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDictionary", "CFURL"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
+objc2-core-audio-types = { workspace = true, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation.workspace = true
+objc2-foundation = { workspace = true, features = [
     "std",
     "NSArray",
     "NSBundle",
