@@ -314,7 +314,7 @@ impl Notes {
     }
 
     /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
-    /// its folder, and one with nothing readable is deleted. Run at launch, before anything
+    /// its folder, and one with no audio is deleted. Run at launch, before anything
     /// records; `crumble_audio::recorded_length` reads the files.
     pub fn recover_recordings(
         &mut self,

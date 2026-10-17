@@ -123,7 +123,8 @@ impl Recorder {
     }
 
     /// Stops, finalizes the files and returns the Recording's length: its longest track. Errors
-    /// when a track could not be written in full; its file keeps what was written before.
+    /// when a track could not be written or closed in full, its file keeping what was written
+    /// before, and when no audio arrived at all.
     pub fn stop(mut self) -> anyhow::Result<Duration> {
         self.finish()
     }
@@ -150,11 +151,15 @@ impl Recorder {
         {
             bail!("the {track:?} track stopped being written: {error:#}");
         }
-        Ok(written
+        let length = written
             .iter()
             .map(Written::length)
             .max()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        if length.is_zero() {
+            bail!("no audio arrived before the Recording stopped");
+        }
+        Ok(length)
     }
 }
 
@@ -220,8 +225,10 @@ fn write(mut written: Vec<Written>) -> Vec<Written> {
                     }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        // Dropping the file flushes the encoder and closes it.
-                        track.file = None;
+                        if let Some(Err(error)) = track.file.take().map(AacFile::close) {
+                            eprintln!("Recording: {:?}: {error:#}", track.track);
+                            track.failed.get_or_insert(error);
+                        }
                         break;
                     }
                 }
@@ -473,8 +480,12 @@ unsafe extern "C-unwind" fn io_proc(
     // SAFETY: `client` is the `Feed` registered with this proc, alive until it is destroyed,
     // and Core Audio passes a valid input list for the cycle.
     let (feed, list) = unsafe { (&*client.cast::<Feed>(), input.as_ref()) };
+    // `mBuffers` holds `mNumberBuffers` entries, so the first exists only when that is nonzero.
+    if list.mNumberBuffers == 0 {
+        return 0;
+    }
     let buffer = list.mBuffers[0];
-    if list.mNumberBuffers == 0 || buffer.mData.is_null() || buffer.mNumberChannels == 0 {
+    if buffer.mData.is_null() || buffer.mNumberChannels == 0 {
         return 0;
     }
     let channels = buffer.mNumberChannels as usize;

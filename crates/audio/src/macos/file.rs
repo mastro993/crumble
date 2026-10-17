@@ -86,10 +86,19 @@ impl AacFile {
     }
 }
 
+impl AacFile {
+    /// Flushes the encoder's last packets and closes the file, reporting whether that worked.
+    pub(super) fn close(self) -> anyhow::Result<()> {
+        let file = std::mem::ManuallyDrop::new(self);
+        // SAFETY: the handle is live, and `ManuallyDrop` keeps `Drop` from disposing it again.
+        check(unsafe { ExtAudioFileDispose(file.0) }, "close the file")
+    }
+}
+
 impl Drop for AacFile {
-    /// Flushes the encoder's last packets and closes the file.
+    /// Closes a file never given to [`AacFile::close`], as when starting fails.
     fn drop(&mut self) {
-        // SAFETY: the handle is live and disposed only here.
+        // SAFETY: the handle is live and disposed only here or in `close`.
         let status = unsafe { ExtAudioFileDispose(self.0) };
         if let Err(error) = check(status, "close the file") {
             eprintln!("Recording: {error}");
@@ -202,7 +211,7 @@ mod tests {
         for _ in 0..3 {
             ok(aac.write(&tone()));
         }
-        drop(aac);
+        ok(aac.close());
         let read = length(&path);
         let _ = std::fs::remove_file(&path);
         let read = ok(read);

@@ -45,7 +45,7 @@ pub fn request_mic_access(done: impl FnOnce(bool) + Send + 'static) {
 }
 
 /// How much audio the Recording in `dir` holds: its longest readable track. Reads what a crash
-/// left behind as well as a finished Recording.
+/// left behind as well as a finished Recording. Errors when no track holds any audio.
 pub fn recorded_length(dir: &Path) -> anyhow::Result<Duration> {
     Track::BOTH
         .into_iter()
@@ -55,5 +55,25 @@ pub fn recorded_length(dir: &Path) -> anyhow::Result<Duration> {
                 .ok()
         })
         .max()
-        .ok_or_else(|| anyhow!("no readable track in {dir:?}"))
+        .filter(|length| !length.is_zero())
+        .ok_or_else(|| anyhow!("no audio in {dir:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Track, file, recorded_length};
+
+    #[test]
+    fn a_recording_with_no_audio_has_no_length() {
+        let dir = std::env::temp_dir().join(format!("crumble-audio-{}-empty", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let created =
+            file::AacFile::create(&Track::Mic.path(&dir), 48_000.0).and_then(|aac| aac.close());
+        let length = recorded_length(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(error) = created {
+            panic!("{error:#}");
+        }
+        assert!(length.is_err(), "{length:?}");
+    }
 }

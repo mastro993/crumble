@@ -150,7 +150,7 @@ impl NativeView {
     }
 
     /// Stops the Recording and keeps its length; on quit and window close too. A stop that
-    /// fails keeps what the files hold, and a Recording with nothing readable is deleted.
+    /// fails keeps what the files hold, and a Recording with no audio is deleted.
     pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
         let Some(active) = self.note_detail.recording.take() else {
             return;
@@ -183,7 +183,7 @@ impl NativeView {
             // What was kept stays, but part of it may be missing.
             Ok(info) if !clean => {
                 self.recording_changed(&id, info);
-                self.recording_failed(&id, "kept what was written before it failed", cx);
+                self.recording_failed(&id, "it did not stop cleanly", cx);
             }
             Ok(info) => {
                 self.recording_changed(&id, info);
