@@ -61,10 +61,6 @@ struct Block {
 
 impl Block {
     /// The host time of the block's first frame, in seconds.
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "host time and frame counts fit in f64"
-    )]
     fn time(&self, sample_rate: f64) -> Option<f64> {
         if self.host_time == 0 {
             return None;
@@ -214,7 +210,7 @@ impl Drop for Recorder {
 struct Written {
     track: Track,
     blocks: Receiver<Block>,
-    /// `None` once its queue closed and the file was finalized.
+    /// `None` once stop was signalled, its queue emptied, and the file finalized.
     file: Option<AacFile>,
     frames: u64,
     sample_rate: f64,
@@ -250,10 +246,6 @@ impl Written {
         }
     }
 
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "frames of hours of audio fit in f64"
-    )]
     fn length(&self) -> Duration {
         Duration::from_secs_f64(self.frames as f64 / self.sample_rate)
     }
@@ -629,4 +621,56 @@ unsafe extern "C-unwind" fn io_proc(
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc::sync_channel;
+
+    use super::{AacFile, BLOCK, Block, QUEUE, Track, Written, write};
+
+    /// A track whose queue holds `blocks` blocks without host times, then closes, as at stop.
+    fn queued(track: Track, dir: &Path, blocks: usize) -> anyhow::Result<Written> {
+        let (sender, receiver) = sync_channel(QUEUE);
+        for _ in 0..blocks {
+            sender.send(Block {
+                len: BLOCK,
+                host_time: 0,
+                offset: 0,
+                samples: [0.1; BLOCK],
+            })?;
+        }
+        Ok(Written {
+            track,
+            blocks: receiver,
+            file: Some(AacFile::create(&track.path(dir), 48_000.0)?),
+            frames: 0,
+            sample_rate: 48_000.0,
+            heard: Default::default(),
+            failed: None,
+        })
+    }
+
+    #[test]
+    fn stopping_writes_every_microphone_sample_even_past_its_reference() {
+        let dir = std::env::temp_dir().join(format!("crumble-capture-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // The microphone runs past its reference but within the canceller's wait, so its tail
+        // comes out only when the writer finishes it.
+        let written = queued(Track::Mic, &dir, 20)
+            .and_then(|mic| Ok(vec![mic, queued(Track::System, &dir, 4)?]))
+            .map(|written| write(written, &AtomicBool::new(true)));
+        let _ = std::fs::remove_dir_all(&dir);
+        let written = written.unwrap_or_else(|error| panic!("{error:#}"));
+        let frames = |of: Track| {
+            written
+                .iter()
+                .find(|track| track.track == of)
+                .map(|track| (track.frames, track.file.is_none(), track.failed.is_none()))
+        };
+        assert_eq!(frames(Track::Mic), Some((20 * BLOCK as u64, true, true)));
+        assert_eq!(frames(Track::System), Some((4 * BLOCK as u64, true, true)));
+    }
 }

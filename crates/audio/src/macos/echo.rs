@@ -232,11 +232,6 @@ fn hertz(rate: f64) -> anyhow::Result<usize> {
     if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
     }
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a whole number in range"
-    )]
     Ok(rate as usize)
 }
 
