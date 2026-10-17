@@ -110,7 +110,8 @@ impl NoteDetail {
             // Quitting within the pause still keeps what was typed, and a running Recording.
             cx.on_app_quit(|view, cx| {
                 view.save_note(cx);
-                view.stop_recording(cx);
+                // The next launch transcribes it.
+                let _ = view.stop_recording(cx);
                 async {}
             }),
         ];
@@ -221,7 +222,7 @@ impl NativeView {
         self.save_note(cx);
         let detail = &self.note_detail;
         if detail.unsaved_titles.is_empty() && detail.unsaved_memos.is_empty() {
-            self.stop_recording(cx);
+            let _ = self.stop_recording(cx);
             return true;
         }
         let view = cx.weak_entity();
@@ -234,7 +235,9 @@ impl NativeView {
                 .ok_text("Close")
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
-                    let _ = view.update(cx, |view, cx| view.stop_recording(cx));
+                    let _ = view.update(cx, |view, cx| {
+                        let _ = view.stop_recording(cx);
+                    });
                     window.remove_window();
                     true
                 })
@@ -303,12 +306,12 @@ impl NativeView {
     fn save_note(&mut self, cx: &mut Context<Self>) {
         self.save_title(cx);
         self.save_memo(cx);
-        self.retry_unsaved();
+        self.retry_unsaved(cx);
     }
 
     /// Writes again the titles, Memos and Recording lengths that failed to save, and says
-    /// "Couldn't save" while any still fails.
-    fn retry_unsaved(&mut self) {
+    /// "Couldn't save" while any still fails. A Recording whose length saves is transcribed.
+    fn retry_unsaved(&mut self, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
         let notes = &mut self.notes;
         let now = Utc::now();
@@ -328,10 +331,15 @@ impl NativeView {
             }
             failed
         });
+        let mut saved_recordings = Vec::new();
         detail.unsaved_recordings.retain(|id, recording| {
-            recording
+            let failed = recording
                 .duration
-                .is_some_and(|duration| notes.finish_recording(id, duration, now).is_err())
+                .is_some_and(|duration| notes.finish_recording(id, duration, now).is_err());
+            if !failed {
+                saved_recordings.push(id.clone());
+            }
+            failed
         });
         detail.save_failed = !detail.unsaved_titles.is_empty()
             || !detail.unsaved_memos.is_empty()
@@ -342,6 +350,9 @@ impl NativeView {
         }
         for (id, memo) in saved_memos {
             self.update_quick_note(&id, |note| note.memo = memo);
+        }
+        for id in saved_recordings {
+            self.transcribe(id, cx);
         }
     }
 
@@ -387,7 +398,7 @@ impl NativeView {
             detail.unsaved_memos.remove(&note.id);
         }
         self.agenda.note_changed(&note);
-        self.retry_unsaved();
+        self.retry_unsaved(cx);
         cx.notify();
     }
 
@@ -413,7 +424,7 @@ impl NativeView {
             detail.unsaved_titles.remove(&note.id);
         }
         self.agenda.note_changed(&note);
-        self.retry_unsaved();
+        self.retry_unsaved(cx);
         cx.notify();
     }
 
@@ -455,9 +466,9 @@ impl NativeView {
             return;
         }
         // The Recording goes with its Note: stop and keep it, so it stays whole if the delete
-        // fails, and close its files before they go.
+        // fails, and close its files before they go. It is not transcribed, as it is going.
         if self.is_recording(id) {
-            self.stop_recording(cx);
+            let _ = self.stop_recording(cx);
         }
         self.note_detail.playback = None;
         self.cancel_transcription(id);
@@ -476,7 +487,7 @@ impl NativeView {
             self.agenda.quick_note_deleted(id);
         }
         // Clears "Couldn't save" from an earlier failed attempt.
-        self.retry_unsaved();
+        self.retry_unsaved(cx);
         self.show_note(None, window, cx);
     }
 }

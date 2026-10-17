@@ -153,13 +153,12 @@ impl NativeView {
 
     /// Stops the Recording and keeps it as [`Notes::finish_recording`] does; on quit, window
     /// close and Note deletion too. A stop that fails keeps what the files hold. One whose
-    /// files cannot be read stays unfinished, for the next launch to read again.
+    /// files cannot be read stays unfinished, for the next launch to read again. Returns the
+    /// Note when its finished Recording is stored, so Stop can transcribe it.
     ///
     /// [`Notes::finish_recording`]: crumble_notes::Notes::finish_recording
-    pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
-        let Some(active) = self.note_detail.recording.take() else {
-            return;
-        };
+    pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) -> Option<NoteId> {
+        let active = self.note_detail.recording.take()?;
         let id = active.target.note;
         let dir = self.notes.recording_dir(&id);
         let stopped = active.recorder.stop();
@@ -186,6 +185,9 @@ impl NativeView {
                 finished => finished,
             }
         });
+        let stored = (finished.as_ref().ok()).is_some_and(|info| {
+            info.is_some() && !self.note_detail.unsaved_recordings.contains_key(&id)
+        });
         match finished {
             Ok(info) => {
                 self.recording_changed(&id, info);
@@ -197,9 +199,6 @@ impl NativeView {
                     // What was kept stays, but part of it may be missing.
                     self.recording_failed(&id, "it did not stop cleanly", cx);
                 }
-                if info.is_some() {
-                    self.transcribe(id.clone(), cx);
-                }
             }
             Err(error) => self.recording_failed(&id, &format!("{error:#}"), cx),
         }
@@ -208,6 +207,7 @@ impl NativeView {
             self.show_player(cx);
         }
         cx.notify();
+        stored.then_some(id)
     }
 
     /// Keeps every in-memory copy of the Note `id` in step with its Recording.
@@ -404,7 +404,11 @@ impl NativeView {
                             .small()
                             .icon(app_icon("stop").size_4())
                             .label("Stop")
-                            .on_click(cx.listener(|view, _, _, cx| view.stop_recording(cx))),
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                if let Some(id) = view.stop_recording(cx) {
+                                    view.transcribe(id, cx);
+                                }
+                            })),
                     )
                     .into_any_element(),
             );

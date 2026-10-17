@@ -135,13 +135,13 @@ Recording is defined in [CONTEXT.md](../../CONTEXT.md); the design is [ADR 0005]
 
 Transcript and Model are defined in [CONTEXT.md](../../CONTEXT.md); the design is [ADR 0006](../adr/0006-on-device-transcription-via-swift-bridge.md).
 
-- When a Recording stops, its Note is queued to be transcribed. At launch, after recovering Recordings, so is every Note whose finished Recording has no Transcript, as when the app quit mid-transcription; nothing partial is kept. Transcribe again and Try again queue it too. One job runs at a time, first come first, on GPUI's background executor; it sends its progress and result over a channel, and the result is stored through `Notes` on the main thread. Deleting the Recording or the Note drops its job's result. A call into Swift cannot be stopped, so a job already running finishes unseen, and the next one waits for it.
+- When Stop ends a Recording and its length is stored, its Note is queued to be transcribed; a length kept in memory after a failed save is queued once it saves. A Recording stopped by quitting, closing the window or deleting its Note is not queued. At launch, after recovering Recordings, every Note whose finished Recording has no Transcript is queued, as when the app quit mid-transcription; nothing partial is kept. Transcribe again and Try again queue it too. One job runs at a time, first come first, on GPUI's background executor; it sends its progress and result over a channel, and the result is stored through `Notes` on the main thread. Deleting the Recording or the Note drops its job's result. A call into Swift cannot be stopped, so a job already running finishes unseen, and the next one waits for it.
 - A job transcribes in the Mac's current locale (`Locale.current`). If that locale's speech model is not installed it downloads it first, Apple's shared on-device asset of a few hundred MB per language. Then it transcribes `mic.aac` and `system.aac`, whichever exist, each on its own, and merges their segments in time order. The Model is stored as "Apple SpeechAnalyzer".
 - The Transcript tab shows, by state:
   - Waiting behind another job: "Waiting to transcribe…".
   - Downloading the model: "Downloading the speech model for English (United States)… 42%" with a progress bar.
   - Transcribing: "Transcribing… 42%" with a progress bar.
-  - Failed: "Couldn't download the speech model." or "Couldn't transcribe this recording.", with Try again; the error is logged.
+  - Failed: "Couldn't download the speech model.", "Couldn't transcribe this recording." or "Couldn't save the Transcript.", with Try again; the error is logged.
   - The locale cannot be transcribed: "Transcription isn't available for <language> on this Mac.", with no other language tried.
   - Done: "Transcribed by Apple, on this Mac" in small muted text, then one line per segment: its start as `m:ss`, a link that seeks the player there; "You" for the microphone or "Others" for the Mac's sound; and the text. A Transcript with no segments says "No speech was heard."
 
