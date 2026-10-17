@@ -84,11 +84,15 @@ impl Echo {
         self.drain(false, out);
     }
 
-    /// Appends to `out` everything still waiting, as the microphone stopped: whole frames
-    /// cleaned against whatever reference there is, and the last partial frame as it was.
+    /// Appends to `out` everything still waiting, as the microphone stopped, cleaned against
+    /// whatever reference there is. The last partial frame is padded with silence to be cleaned
+    /// whole, so the end stays in step with what came before, and the padding is left out.
     pub(super) fn finish(&mut self, out: &mut Vec<f32>) {
+        let waiting = self.mic.samples.len();
+        let padding = waiting.next_multiple_of(self.mic_in.len()) - waiting;
+        self.mic.samples.extend(std::iter::repeat_n(0.0, padding));
         self.drain(true, out);
-        self.mic.take_all(out);
+        out.truncate(out.len() - padding);
     }
 
     /// Cleans each whole microphone frame whose reference is in, or has waited [`MAX_WAIT`];
@@ -200,13 +204,6 @@ impl Stream {
         count
     }
 
-    /// Moves every sample into `out`.
-    fn take_all(&mut self, out: &mut Vec<f32>) {
-        let count = self.samples.len();
-        out.extend(self.samples.drain(..));
-        self.advance(count);
-    }
-
     fn drop_front(&mut self, count: usize) {
         let count = count.min(self.samples.len());
         self.samples.drain(..count);
@@ -227,8 +224,8 @@ impl Stream {
 }
 
 /// A device's nominal rate as the whole hertz the canceller takes: a multiple of 100, so its
-/// 10 ms frames hold whole samples and keep time with the other track's, and from 8 kHz, below
-/// which `sonora`'s resampler panics, to 384 kHz.
+/// 10 ms frames hold whole samples and keep time with the other track's, and from 8 kHz, the
+/// lowest rate a microphone uses, to 384 kHz. `sonora`'s resampler panics below about 4.9 kHz.
 fn hertz(rate: f64) -> anyhow::Result<usize> {
     if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
@@ -305,9 +302,9 @@ mod tests {
         samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32
     }
 
-    /// How much quieter `out` is than `mic` over the last 5 s, in dB.
-    fn reduction(mic: &[f32], out: &[f32]) -> f32 {
-        let tail = mic.len() - 48_000 * 5..;
+    /// How much quieter `out` is than `mic` over the last `tail` samples, in dB.
+    fn reduction(mic: &[f32], out: &[f32], tail: usize) -> f32 {
+        let tail = mic.len() - tail..;
         10.0 * (energy(&mic[tail.clone()]) / energy(&out[tail])).log10()
     }
 
@@ -394,7 +391,7 @@ mod tests {
         let [out, arrived] = run(&mut echo(), &mic, &far[first..], delivery);
         // Every microphone sample comes out, one for one.
         assert_eq!(out.len(), arrived.len());
-        reduction(&arrived, &out)
+        reduction(&arrived, &out, 48_000 * 5)
     }
 
     fn assert_cancelled(reduction: f32) {
@@ -473,8 +470,7 @@ mod tests {
             Echo::new(mic_rate, reference_rate, QUEUED).unwrap_or_else(|error| panic!("{error:#}"));
         let [out, arrived] = run(&mut echo, &mic, &reference, delivery);
         assert_eq!(out.len(), arrived.len());
-        let tail = arrived.len() - (mic_rate * 5.0) as usize..;
-        10.0 * (energy(&arrived[tail.clone()]) / energy(&out[tail])).log10()
+        reduction(&arrived, &out, (mic_rate * 5.0) as usize)
     }
 
     #[test]
@@ -518,7 +514,7 @@ mod tests {
         let [over, _] = run(&mut echo(), &mic, &far, ALL);
         let [alone, _] = run(&mut echo(), &voice, &vec![0.0; voice.len()], ALL);
         // Alone, the voice comes out as it went in.
-        let change = reduction(&voice, &alone);
+        let change = reduction(&voice, &alone, 48_000 * 5);
         assert!(change.abs() < 1.0, "alone {change:.1} dB");
         // Over the call, the same voice is in the cleaned microphone at its level.
         let tail = voice.len() - 48_000 * 5..;
@@ -528,6 +524,19 @@ mod tests {
             / dot(&alone[tail.clone()], &alone[tail]);
         let kept = 20.0 * kept.log10();
         assert!(kept.abs() < 1.0, "over the call {kept:.1} dB");
+    }
+
+    #[test]
+    fn the_last_partial_frame_is_cleaned_too() {
+        let far = call(3, RATE, 0.0, SECONDS);
+        // Stops 5 ms into a frame.
+        let mic: Vec<f32> = (0..far.len() - 240)
+            .map(|index| index.checked_sub(DELAY).map_or(0.0, |at| far[at] * 0.5))
+            .collect();
+        let [out, arrived] = run(&mut echo(), &mic, &far, ALL);
+        assert_eq!(out.len(), arrived.len());
+        let reduction = reduction(&arrived, &out, 240);
+        assert!(reduction > 10.0, "the end only {reduction:.1} dB quieter");
     }
 
     #[test]
