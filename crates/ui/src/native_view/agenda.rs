@@ -236,6 +236,8 @@ impl NativeView {
         self.agenda.step_scroll_to_top(window, cx);
         let sync = self.calendar_sync.read(cx);
         if sync.access() != Access::Granted {
+            // The rows are gone, so is their selection.
+            self.agenda.selected = None;
             return;
         }
         let ids = self.store.shown_calendar_ids(sync.calendars());
@@ -258,7 +260,9 @@ impl NativeView {
             agenda.built = Some((minute, loaded.reads()));
             let from = loaded.span().map_or(today, |span| span.from);
             let end = !loaded.reading() && from <= horizon;
-            agenda.quick_notes = read_quick_notes(notes, from, today);
+            if let Some(quick_notes) = read_quick_notes(notes, from, today) {
+                agenda.quick_notes = quick_notes;
+            }
             let quick_notes: Vec<Rc<QuickNote>> = agenda
                 .quick_notes
                 .iter()
@@ -469,17 +473,17 @@ impl NativeView {
     }
 }
 
-/// The Quick notes listed from `from` through `today`, newest first; none when they cannot be
-/// read, which is logged.
-fn read_quick_notes(notes: &mut Notes, from: NaiveDate, today: NaiveDate) -> Vec<Note> {
+/// The Quick notes listed from `from` through `today`, newest first; `None` when they cannot be
+/// read, which is logged, so the listed ones stay.
+fn read_quick_notes(notes: &mut Notes, from: NaiveDate, today: NaiveDate) -> Option<Vec<Note>> {
     let start = |day: NaiveDate| local_midnight(day).map(|start| start.with_timezone(&Utc));
     let (Some(from), Some(to)) = (start(from), today.succ_opt().and_then(start)) else {
-        return Vec::new();
+        return Some(Vec::new());
     };
-    notes.quick_notes(from..to).unwrap_or_else(|error| {
-        eprintln!("Could not read the Quick notes: {error}");
-        Vec::new()
-    })
+    notes
+        .quick_notes(from..to)
+        .inspect_err(|error| eprintln!("Could not read the Quick notes: {error}"))
+        .ok()
 }
 
 /// A Quick note's title, or `Quick note` when it has none.

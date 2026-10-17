@@ -78,6 +78,8 @@ enum Failure {
     /// Apple's speech model did not download.
     Download,
     Transcribe,
+    /// The Transcript was made but could not be stored.
+    Save,
 }
 
 /// What the job sends back to the main thread.
@@ -225,8 +227,10 @@ impl NativeView {
                 self.cancel_summary(id);
                 self.summarize(id.clone(), None, cx);
             }
-            // As when the Recording or its Note went while the job ran.
-            Err(error) => eprintln!("Could not keep the Transcript: {error:#}"),
+            Err(error) => {
+                eprintln!("Could not keep the Transcript: {error:#}");
+                (self.note_detail.transcription.failed).insert(id.clone(), Failure::Save);
+            }
         }
     }
 
@@ -331,17 +335,15 @@ impl NativeView {
                         "Transcription isn't available for {language} on this Mac."
                     ))
                     .into_any_element(),
-                Failure::Download | Failure::Transcribe => h_flex()
+                Failure::Download | Failure::Transcribe | Failure::Save => h_flex()
                     .gap_2()
                     .text_sm()
                     .text_color(muted)
-                    .child(div().flex_1().min_w_0().child(
-                        if matches!(failure, Failure::Download) {
-                            "Couldn't download the speech model."
-                        } else {
-                            "Couldn't transcribe this recording."
-                        },
-                    ))
+                    .child(div().flex_1().min_w_0().child(match failure {
+                        Failure::Download => "Couldn't download the speech model.",
+                        Failure::Save => "Couldn't save the Transcript.",
+                        _ => "Couldn't transcribe this recording.",
+                    }))
                     .child(
                         button("transcript-retry")
                             .outline()

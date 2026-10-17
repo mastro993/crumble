@@ -140,6 +140,8 @@ pub struct Notes {
     connection: Option<SqliteConnection>,
     /// The folder holding one folder of audio per Recording.
     recordings: PathBuf,
+    /// Whether `recordings` is a temporary folder, deleted with `Notes`.
+    temporary: bool,
 }
 
 #[derive(Queryable, Selectable, Insertable)]
@@ -185,6 +187,7 @@ impl Notes {
             Ok(Self {
                 connection: Some(connection),
                 recordings: crumble_db::data_dir()?.join("recordings"),
+                temporary: false,
             })
         });
         opened.unwrap_or_else(|error| {
@@ -193,7 +196,8 @@ impl Notes {
         })
     }
 
-    /// An in-memory database, with Recordings in a fresh temporary folder, as neither is kept.
+    /// An in-memory database, with Recordings in a fresh temporary folder deleted on drop, as
+    /// neither is kept.
     fn in_memory() -> Self {
         let connection = crumble_db::open(":memory:")
             .inspect_err(|error| eprintln!("Could not open an in-memory database: {error}"))
@@ -203,6 +207,7 @@ impl Notes {
         Self {
             connection,
             recordings,
+            temporary: true,
         }
     }
 
@@ -248,8 +253,10 @@ impl Notes {
     }
 
     /// The Note of this occurrence: the one whose key matches the Event's, else the oldest whose
-    /// snapshot matches its title and start, as for a Note made before the Event synced. A read
-    /// only; stored keys are never rewritten here.
+    /// snapshot matches its title and start: a Note made before the Event synced, or one of its
+    /// series whose occurrence key changed. A Note keyed to another series never matches, so two
+    /// Events that share a title and start keep their own Notes. A read only; stored keys are
+    /// never rewritten here.
     pub fn for_event(&mut self, event: &Event) -> anyhow::Result<Option<Note>> {
         let occurrence = event.occurrence.map(encode_occurrence);
         // With no UID, `event_series_uid = NULL` is never true, so only the snapshot matches.
@@ -258,7 +265,12 @@ impl Notes {
             .and(notes::event_occurrence.is(occurrence.as_deref()));
         let snapshot = notes::event_title
             .eq(&event.title)
-            .and(notes::event_start.eq(encode_occurrence(start_of(&event.when))));
+            .and(notes::event_start.eq(encode_occurrence(start_of(&event.when))))
+            .and(
+                notes::event_series_uid
+                    .is_null()
+                    .or(notes::event_series_uid.eq(event.series_uid.as_deref())),
+            );
         let row = notes::table
             .filter(notes::deleted_at.is_null())
             .filter(key.or(snapshot))
@@ -308,9 +320,12 @@ impl Notes {
     }
 
     /// Soft delete: sets `deleted_at`, and every read skips the Note. Its row stays only as a
-    /// tombstone for sync: what the user wrote or said goes for good, in one transaction, with
-    /// its title, Memo, Event link, Recording, Transcript and Summary.
+    /// tombstone for sync: what the user wrote or said goes for good, the Recording's audio
+    /// first, then its title, Memo, Event link, Recording, Transcript and Summary in one
+    /// transaction.
     pub fn delete(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first: once the Note is deleted, nothing can reach its folder again.
+        self.remove_audio(id)?;
         let now = encode_time(now);
         self.connection()?.transaction(|connection| {
             let updated = diesel::update(live(id))
@@ -334,8 +349,7 @@ impl Notes {
             written(updated, id)?;
             diesel::delete(segments_of(id)).execute(connection)?;
             anyhow::Ok(())
-        })?;
-        self.remove_audio(id)
+        })
     }
 
     /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
@@ -366,8 +380,32 @@ impl Notes {
         })
     }
 
-    /// Stores how long the Note `id`'s Recording is, once it stopped or was recovered.
-    pub fn set_recording_finished(
+    /// Keeps the Note `id`'s stopped or recovered Recording at `duration` and returns it as
+    /// stored. One zero long holds no audio, so it is deleted instead and `None` comes back.
+    pub fn finish_recording(
+        &mut self,
+        id: &NoteId,
+        duration: Duration,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Option<RecordingInfo>> {
+        if duration.is_zero() {
+            self.delete_recording(id, now)?;
+            return Ok(None);
+        }
+        self.set_recording_finished(id, duration, now)?;
+        let started_at = notes::table
+            .find(id.0.as_str())
+            .select(notes::recording_started_at)
+            .first::<Option<String>>(self.connection()?)?
+            .ok_or_else(|| anyhow!("Note {id} has no Recording"))?;
+        Ok(Some(RecordingInfo {
+            started_at: decode_time(&started_at)?,
+            duration: Some(duration),
+        }))
+    }
+
+    /// Stores how long the Note `id`'s Recording is.
+    fn set_recording_finished(
         &mut self,
         id: &NoteId,
         duration: Duration,
@@ -384,8 +422,10 @@ impl Notes {
     }
 
     /// Removes the Note `id`'s Recording, and the Transcript and Summary made from it, which
-    /// nothing can make again: forgets them, then deletes the audio's folder.
+    /// nothing can make again: deletes the audio's folder, then forgets them.
     pub fn delete_recording(&mut self, id: &NoteId, now: DateTime<Utc>) -> anyhow::Result<()> {
+        // The audio goes first, so a failure leaves the Recording listed for another try.
+        self.remove_audio(id)?;
         self.connection()?.transaction(|connection| {
             let updated = diesel::update(live(id))
                 .set((
@@ -401,8 +441,7 @@ impl Notes {
             written(updated, id)?;
             diesel::delete(segments_of(id)).execute(connection)?;
             anyhow::Ok(())
-        })?;
-        self.remove_audio(id)
+        })
     }
 
     /// Stores `segments`, in order, as the Transcript of the Note `id`, made by `model` in
@@ -539,26 +578,31 @@ impl Notes {
         Ok(ids.into_iter().map(NoteId).collect())
     }
 
-    /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
-    /// its folder, and one with nothing readable is deleted. Run at launch, before anything
-    /// records; `crumble_audio::recorded_length` reads the files.
+    /// Finishes the Recordings a crash left running, as [`Notes::finish_recording`] does with
+    /// the length `length` reads from each folder. One `length` cannot read stays unfinished, as
+    /// its files may still hold audio, and is tried again at the next launch. A Recording that
+    /// fails does not stop the others; the first error comes back once all were tried. Run at
+    /// launch, before anything records; `crumble_audio::recorded_length` reads the files.
     pub fn recover_recordings(
         &mut self,
         length: impl Fn(&Path) -> anyhow::Result<Duration>,
         now: DateTime<Utc>,
     ) -> anyhow::Result<()> {
+        let mut failed = None;
         for id in self.unfinished_recordings()? {
-            match length(&self.recording_dir(&id)) {
-                Ok(duration) => self.set_recording_finished(&id, duration, now)?,
-                Err(error) => {
-                    eprintln!(
-                        "Deleting the Recording of Note {id}, as none of it is readable: {error}"
-                    );
-                    self.delete_recording(&id, now)?;
-                }
+            let recovered = length(&self.recording_dir(&id))
+                .inspect_err(|error| {
+                    eprintln!("Could not read the Recording of Note {id}, so it is left for later: {error:#}");
+                })
+                .map_or(Ok(()), |duration| {
+                    self.finish_recording(&id, duration, now).map(drop)
+                });
+            if let Err(error) = recovered {
+                eprintln!("Could not recover the Recording of Note {id}: {error:#}");
+                failed.get_or_insert(error);
             }
         }
-        Ok(())
+        failed.map_or(Ok(()), Err)
     }
 
     /// The Notes whose Recording started but never finished, as when the app died while
@@ -580,6 +624,14 @@ impl Notes {
                 "could not delete the Recording of Note {id}: {error}"
             )),
             _ => Ok(()),
+        }
+    }
+}
+
+impl Drop for Notes {
+    fn drop(&mut self) {
+        if self.temporary {
+            let _ = std::fs::remove_dir_all(&self.recordings);
         }
     }
 }
