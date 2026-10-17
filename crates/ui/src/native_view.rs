@@ -7,6 +7,7 @@ mod card;
 mod controls;
 mod custom_color;
 mod menu;
+mod notes;
 mod route;
 mod settings_page;
 mod shell;
@@ -22,6 +23,7 @@ pub use shell::{GoBack, GoForward, ToggleSidebar};
 use account_alias::{AliasFields, Rename};
 use agenda::AgendaPage;
 use calendar::CalendarPage;
+use crumble_notes::Notes;
 use crumble_store::{SidebarSection, Store};
 use crumble_sync::{CalendarEvents, CalendarSync};
 use gpui_kit::component::ActiveTheme;
@@ -30,6 +32,7 @@ use gpui_kit::{
     ParentElement, Render, ScrollHandle, Styled, Task, Window, div, prelude::FluentBuilder,
 };
 use menu::OpenMenu;
+use notes::NoteDetail;
 use route::{History, Route};
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
@@ -47,6 +50,9 @@ pub struct NativeView {
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
     store: Store,
+    notes: Notes,
+    /// The Note the Agenda content area or the Event page shows.
+    note_detail: NoteDetail,
     first_day_select: WeekdaySelect,
     calendar: CalendarPage,
     events: Entity<CalendarEvents>,
@@ -81,6 +87,8 @@ impl NativeView {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let store = Store::open();
+        let notes = Notes::open();
+        let note_detail = NoteDetail::new(window, cx);
         let first_day_select = settings_page::first_day_select(&store, window, cx);
         let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
@@ -106,6 +114,8 @@ impl NativeView {
             sidebar_motion: 0,
             sidebar_closing: false,
             store,
+            notes,
+            note_detail,
             first_day_select,
             calendar,
             events,
@@ -158,12 +168,12 @@ impl Render for NativeView {
         if self.route == Route::Agenda {
             self.maintain_agenda(window, cx);
         }
+        self.maintain_note_detail(window, cx);
         let page = match &self.route {
             Route::Agenda => self.render_agenda(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
             Route::Settings => self.render_settings(cx).into_any_element(),
-            // The Event's details are in the header for now.
-            Route::Event(_) => div().into_any_element(),
+            Route::Event(_) => self.render_note_detail(cx),
             route => div().text_xl().child(route.title()).into_any_element(),
         };
         let colors = cx.theme().colors;
