@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use crumble_eventkit::{Event, Occurrence, When};
+use diesel::RunQueryDsl;
+use diesel::sql_types::{Nullable, Text};
 
 use super::{
     EventLink, Note, Notes, decode_occurrence, decode_time, encode_occurrence, encode_time,
@@ -105,7 +107,7 @@ fn a_moved_repeating_occurrence_keeps_its_notes_by_key() {
         "Standup, later",
         timed(at(9)),
     );
-    assert_eq!(ok(notes.for_event(&moved)), [note]);
+    assert_eq!(ok(notes.for_event(&moved)), Some(note));
 }
 
 #[test]
@@ -120,7 +122,7 @@ fn a_created_note_reads_back_as_it_was_returned() {
     );
     let note = ok(notes.create(Some(&standup), at(6) + Duration::nanoseconds(987_654_321)));
     assert_eq!(note.created_at, at(6) + Duration::milliseconds(987));
-    assert_eq!(ok(notes.for_event(&standup)), [note]);
+    assert_eq!(ok(notes.for_event(&standup)), Some(note));
 }
 
 #[test]
@@ -128,7 +130,7 @@ fn a_moved_single_event_keeps_its_notes_by_key() {
     let mut notes = Notes::in_memory();
     let note = ok(notes.create(Some(&event(Some("uid"), None, "1:1", timed(at(7)))), at(6)));
     let moved = event(Some("uid"), None, "1:1 moved", timed(at(10)));
-    assert_eq!(ok(notes.for_event(&moved)), [note]);
+    assert_eq!(ok(notes.for_event(&moved)), Some(note));
 }
 
 #[test]
@@ -136,7 +138,11 @@ fn a_note_made_before_its_event_synced_is_found_by_snapshot() {
     let mut notes = Notes::in_memory();
     let note = ok(notes.create(Some(&event(None, None, "Lunch", timed(at(12)))), at(6)));
     let synced = event(Some("uid"), None, "Lunch", timed(at(12)));
-    assert_eq!(ok(notes.for_event(&synced)), [note]);
+    assert_eq!(ok(notes.for_event(&synced)), Some(note.clone()));
+    // Making one again, before or after the sync, finds the same Note.
+    let unsynced = event(None, None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.create(Some(&unsynced), at(7))), note);
+    assert_eq!(ok(notes.create(Some(&synced), at(8))), note);
 }
 
 #[test]
@@ -155,20 +161,73 @@ fn another_occurrence_of_the_series_does_not_match() {
         "Standup",
         timed(at(7) + Duration::days(1)),
     );
-    assert_eq!(ok(notes.for_event(&tuesday)), []);
+    assert_eq!(ok(notes.for_event(&tuesday)), None);
     // Nor does the series' non-repeating twin with the same UID.
     let single = event(Some("uid"), None, "Standup", timed(at(8)));
-    assert_eq!(ok(notes.for_event(&single)), []);
+    assert_eq!(ok(notes.for_event(&single)), None);
 }
 
 #[test]
-fn notes_of_an_occurrence_come_oldest_first() {
+fn an_occurrence_has_one_note_in_every_calendar() {
     let mut notes = Notes::in_memory();
-    let standup = event(Some("uid"), None, "Standup", timed(at(7)));
-    let second = ok(notes.create(Some(&standup), at(8)));
-    let first = ok(notes.create(Some(&standup), at(6)));
-    let found = ok(notes.for_event(&standup));
-    assert_eq!(ids(&found), [first.id.0.as_str(), second.id.0.as_str()]);
+    let mine = event(
+        Some("uid"),
+        Some(Occurrence::At(at(7))),
+        "Standup",
+        timed(at(7)),
+    );
+    let note = ok(notes.create(Some(&mine), at(6)));
+    let invited = Event {
+        id: "other".into(),
+        calendar_id: "work".into(),
+        ..mine
+    };
+    assert_eq!(ok(notes.create(Some(&invited), at(8))), note);
+    assert_eq!(ok(notes.for_event(&invited)), Some(note));
+}
+
+#[test]
+fn the_key_wins_over_an_older_snapshot() {
+    let mut notes = Notes::in_memory();
+    let unsynced = ok(notes.create(Some(&event(None, None, "Lunch", timed(at(12)))), at(5)));
+    let renamed = event(Some("uid"), None, "Lunch, moved", timed(at(12)));
+    let keyed = ok(notes.create(Some(&renamed), at(6)));
+    assert_ne!(keyed.id, unsynced.id);
+    let back = event(Some("uid"), None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.for_event(&back)), Some(keyed));
+}
+
+/// Inserts an attached Note straight into the table, past `create`'s lookup.
+fn insert(
+    notes: &mut Notes,
+    id: &str,
+    uid: Option<&str>,
+    occurrence: Option<&str>,
+) -> diesel::QueryResult<usize> {
+    diesel::sql_query(
+        "INSERT INTO notes (id, event_series_uid, event_occurrence, event_title, event_start, \
+         created_at, updated_at) VALUES (?, ?, ?, 'Standup', '2026-10-13T07:00:00Z', \
+         '2026-10-13T06:00:00.000Z', '2026-10-13T06:00:00.000Z')",
+    )
+    .bind::<Text, _>(id)
+    .bind::<Nullable<Text>, _>(uid)
+    .bind::<Nullable<Text>, _>(occurrence)
+    .execute(ok(notes.connection()))
+}
+
+#[test]
+fn the_database_keeps_one_live_note_per_key() {
+    let mut notes = Notes::in_memory();
+    assert!(insert(&mut notes, "single", Some("uid"), None).is_ok());
+    assert!(insert(&mut notes, "single again", Some("uid"), None).is_err());
+    assert!(insert(&mut notes, "monday", Some("uid"), Some("2026-10-13")).is_ok());
+    assert!(insert(&mut notes, "monday again", Some("uid"), Some("2026-10-13")).is_err());
+    // Notes with no UID yet are left out; `create` keeps them single instead.
+    assert!(insert(&mut notes, "unsynced", None, None).is_ok());
+    assert!(insert(&mut notes, "unsynced again", None, None).is_ok());
+    // So are deleted Notes.
+    ok(notes.delete(&super::NoteId("single".into()), at(7)));
+    assert!(insert(&mut notes, "single after delete", Some("uid"), None).is_ok());
 }
 
 #[test]
@@ -178,7 +237,7 @@ fn quick_notes_are_never_an_events() {
     assert_eq!(quick.event, None);
     // An Event with no UID and no title still finds nothing: a Quick note has no snapshot.
     let untitled = event(None, None, "", timed(at(7)));
-    assert_eq!(ok(notes.for_event(&untitled)), []);
+    assert_eq!(ok(notes.for_event(&untitled)), None);
 }
 
 #[test]
@@ -202,16 +261,15 @@ fn edits_are_kept_and_bump_updated_at() {
     let note = ok(notes.create(Some(&standup), at(6)));
     ok(notes.set_title(&note.id, Some("Plan"), at(7)));
     ok(notes.set_memo(&note.id, "Ship it", at(8)));
-    let [found] = <[Note; 1]>::try_from(ok(notes.for_event(&standup)))
-        .unwrap_or_else(|found| panic!("{found:?}"));
+    let found = ok(notes.for_event(&standup)).unwrap_or_else(|| panic!("no Note"));
     assert_eq!(found.title.as_deref(), Some("Plan"));
     assert_eq!(found.memo, "Ship it");
     assert_eq!(found.created_at, at(6));
     assert_eq!(found.updated_at, at(8));
     ok(notes.set_title(&note.id, None, at(9)));
-    let found = ok(notes.for_event(&standup));
-    assert_eq!(found[0].title, None);
-    assert_eq!(found[0].updated_at, at(9));
+    let found = ok(notes.for_event(&standup)).unwrap_or_else(|| panic!("no Note"));
+    assert_eq!(found.title, None);
+    assert_eq!(found.updated_at, at(9));
 }
 
 #[test]
@@ -222,7 +280,7 @@ fn a_deleted_note_is_gone_everywhere_and_stays_deleted() {
     let quick = ok(notes.create(None, at(6)));
     ok(notes.delete(&attached.id, at(7)));
     ok(notes.delete(&quick.id, at(7)));
-    assert_eq!(ok(notes.for_event(&standup)), []);
+    assert_eq!(ok(notes.for_event(&standup)), None);
     assert_eq!(ok(notes.quick_notes(at(0)..at(23))), []);
     assert!(notes.set_memo(&attached.id, "back?", at(8)).is_err());
     assert!(notes.set_title(&quick.id, Some("back?"), at(8)).is_err());
