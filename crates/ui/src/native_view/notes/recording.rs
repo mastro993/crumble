@@ -288,14 +288,16 @@ impl NativeView {
         if self.is_recording(id) {
             return;
         }
-        // Closes the files before they go, and the Transcript goes with them.
+        // Closes the files before they go, and the Transcript and Summary go with them.
         self.note_detail.playback = None;
         self.cancel_transcription(id);
+        self.cancel_summary(id);
         match self.notes.delete_recording(id, Utc::now()) {
             Ok(()) => {
                 self.note_changed(id, |note| {
                     note.recording = None;
                     note.transcript = None;
+                    note.summary = None;
                 });
                 self.show_transcript();
             }

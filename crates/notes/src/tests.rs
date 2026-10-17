@@ -553,6 +553,7 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
         &[line(super::Track::Mic, 0, "Hi.")],
         at(8),
     ));
+    ok(notes.set_summary(&note.id, "claude", "m1", "Secret summary", at(8)));
     ok(notes.delete(&note.id, at(9)));
 
     let connection = ok(notes.connection());
@@ -584,6 +585,15 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
         (row.recording_started_at, row.recording_duration_ms),
         (None, None)
     );
+    assert_eq!(
+        (
+            row.summary,
+            row.summary_provider,
+            row.summary_model,
+            row.summarized_at
+        ),
+        (None, None, None, None)
+    );
     assert_eq!(row.updated_at, encode_time(at(9)));
     let deleted_at: Option<String> = ok(table::table
         .find(&note.id.0)
@@ -602,5 +612,89 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
     assert_eq!(ok(notes.quick_notes(at(0)..at(23))), []);
     assert_eq!(ok(notes.transcript(&note.id)), []);
     assert_eq!(ok(notes.untranscribed()), []);
+    assert_eq!(ok(notes.unsummarized()), []);
+    remove_recordings(notes);
+}
+
+/// A Quick note with a finished Recording and a one-line Transcript.
+fn transcribed(notes: &mut Notes) -> Note {
+    let note = recorded(notes);
+    ok(notes.set_transcript(
+        &note.id,
+        "Model",
+        "en_US",
+        &[line(super::Track::Mic, 0, "Hi.")],
+        at(8),
+    ));
+    note
+}
+
+fn summary(notes: &mut Notes) -> Option<super::SummaryInfo> {
+    ok(notes.quick_notes(at(0)..at(23))).remove(0).summary
+}
+
+#[test]
+fn a_summary_is_kept_and_replaced() {
+    let mut notes = Notes::in_memory();
+    let note = transcribed(&mut notes);
+    let info = ok(notes.set_summary(&note.id, "apple", "Foundation Models", "# Hi", at(9)));
+    assert_eq!(info.summarized_at, at(9));
+    assert_eq!(summary(&mut notes), Some(info));
+    ok(notes.set_summary(&note.id, "claude", "m1", "# Hello", at(10)));
+    let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
+    assert_eq!(
+        found
+            .summary
+            .map(|info| (info.text, info.provider, info.model)),
+        Some(("# Hello".into(), "claude".into(), "m1".into()))
+    );
+    assert_eq!(found.updated_at, at(10));
+}
+
+#[test]
+fn a_summary_needs_a_transcript() {
+    let mut notes = Notes::in_memory();
+    let note = recorded(&mut notes);
+    assert!(
+        notes
+            .set_summary(&note.id, "apple", "m", "# Hi", at(9))
+            .is_err()
+    );
+    assert_eq!(summary(&mut notes), None);
+}
+
+#[test]
+fn a_new_transcript_or_none_clears_the_summary() {
+    let mut notes = Notes::in_memory();
+    let note = transcribed(&mut notes);
+    ok(notes.set_summary(&note.id, "apple", "m", "# Hi", at(9)));
+    ok(notes.set_transcript(&note.id, "Model", "en_US", &[], at(10)));
+    assert_eq!(summary(&mut notes), None);
+
+    ok(notes.set_transcript(
+        &note.id,
+        "Model",
+        "en_US",
+        &[line(super::Track::Mic, 0, "Hi.")],
+        at(10),
+    ));
+    ok(notes.set_summary(&note.id, "apple", "m", "# Hi", at(11)));
+    ok(notes.delete_recording(&note.id, at(12)));
+    assert_eq!(summary(&mut notes), None);
+    remove_recordings(notes);
+}
+
+#[test]
+fn only_a_spoken_transcript_without_a_summary_needs_one() {
+    let mut notes = Notes::in_memory();
+    recorded(&mut notes);
+    let silent = recorded(&mut notes);
+    ok(notes.set_transcript(&silent.id, "Model", "en_US", &[], at(8)));
+    let waiting = transcribed(&mut notes);
+    let done = transcribed(&mut notes);
+    ok(notes.set_summary(&done.id, "apple", "m", "# Hi", at(9)));
+    let deleted = transcribed(&mut notes);
+    ok(notes.delete(&deleted.id, at(9)));
+    assert_eq!(ok(notes.unsummarized()), [waiting.id]);
     remove_recordings(notes);
 }
