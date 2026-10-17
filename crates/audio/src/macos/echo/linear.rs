@@ -5,8 +5,10 @@
 //!
 //! AEC3 runs at 48 kHz in three bands of 16 kHz. Its filter works on the lowest, below 8 kHz,
 //! where speech and its echo are, and the filter's output is what this keeps there. Above 8 kHz
-//! there is no filter, so the suppressor's output is kept: little of a voice is up there. A
-//! track at another rate is resampled to 48 kHz and, for the microphone, back.
+//! there is no filter, so the suppressor's output is kept: little of a voice is up there. The
+//! suppressor's output comes a block after the filter's, so the filter's is held a block to keep
+//! the bands in step where they meet. A track at another rate is resampled to 48 kHz and, for
+//! the microphone, back.
 
 use sonora::high_pass_filter::HighPassFilter;
 use sonora::three_band_filter_bank::{
@@ -15,7 +17,7 @@ use sonora::three_band_filter_bank::{
 use sonora_aec3::block::Block;
 use sonora_aec3::block_framer::BlockFramer;
 use sonora_aec3::block_processor::BlockProcessor;
-use sonora_aec3::common::SUB_FRAME_LENGTH;
+use sonora_aec3::common::{BLOCK_SIZE, SUB_FRAME_LENGTH};
 use sonora_aec3::config::EchoCanceller3Config;
 use sonora_aec3::frame_blocker::FrameBlocker;
 use sonora_common_audio::push_resampler::PushResampler;
@@ -26,6 +28,8 @@ const RATE: usize = 48_000;
 const BAND_RATE: i32 = 16_000;
 /// AEC3 takes samples scaled to the 16-bit range.
 const SCALE: f32 = 32_768.0;
+/// A scaled sample this loud means the microphone clipped, which AEC3 must not adapt to.
+const SATURATED: f32 = 32_700.0;
 
 /// The filter, and the blocks AEC3 takes 10 ms in.
 pub(super) struct Linear {
@@ -40,6 +44,8 @@ pub(super) struct Linear {
     framer: BlockFramer,
     block: Block,
     filtered: Block,
+    /// The filter's output for the previous block, which goes out with this block's upper bands.
+    held: [f32; BLOCK_SIZE],
     /// Half of a cleaned frame: band, channel, sample.
     cleaned: Vec<Vec<Vec<f32>>>,
 }
@@ -59,6 +65,7 @@ impl Linear {
             framer: BlockFramer::new(NUM_BANDS, 1),
             block: Block::new(NUM_BANDS, 1),
             filtered: Block::new(1, 1),
+            held: [0.0; BLOCK_SIZE],
             cleaned: vec![vec![vec![0.0; SUB_FRAME_LENGTH]]; NUM_BANDS],
         }
     }
@@ -77,13 +84,14 @@ impl Linear {
         }
 
         self.mic.split(mic);
+        let saturated = self.mic.full.iter().any(|sample| sample.abs() >= SATURATED);
         self.low[0].copy_from_slice(&self.mic.split[0]);
         self.high_pass.process_channels(&mut self.low);
         self.mic.split[0].copy_from_slice(&self.low[0]);
         for half in 0..2 {
             self.mic_blocker
                 .insert_sub_frame_and_extract_block(&self.mic.half(half), &mut self.block);
-            self.cancel();
+            self.cancel(saturated);
             self.framer
                 .insert_block_and_extract_sub_frame(&self.block, &mut self.cleaned);
             for (band, cleaned) in self.mic.split.iter_mut().zip(&self.cleaned) {
@@ -92,19 +100,19 @@ impl Linear {
         }
         if self.mic_blocker.is_block_available() {
             self.mic_blocker.extract_block(&mut self.block);
-            self.cancel();
+            self.cancel(saturated);
             self.framer.insert_block(&self.block);
         }
         self.mic.merge(out);
     }
 
-    /// Runs AEC3 over the microphone's `block`, then puts the filter's output in the lowest band.
-    fn cancel(&mut self) {
+    /// Runs AEC3 over the microphone's `block`, then puts the filter's output, a block late, in
+    /// the lowest band.
+    fn cancel(&mut self, saturated: bool) {
         self.processor
-            .process_capture(false, false, Some(&mut self.filtered), &mut self.block);
-        self.block
-            .view_mut(0, 0)
-            .copy_from_slice(self.filtered.view(0, 0));
+            .process_capture(false, saturated, Some(&mut self.filtered), &mut self.block);
+        self.block.view_mut(0, 0).copy_from_slice(&self.held);
+        self.held.copy_from_slice(self.filtered.view(0, 0));
     }
 }
 
@@ -150,10 +158,9 @@ impl Bands {
     }
 
     /// The first or second half of each band, as AEC3 takes 10 ms in two.
-    fn half(&self, half: usize) -> Vec<Vec<&[f32]>> {
-        self.split
-            .iter()
-            .map(|band| vec![&band[half * SUB_FRAME_LENGTH..][..SUB_FRAME_LENGTH]])
-            .collect()
+    fn half(&self, half: usize) -> [Vec<&[f32]>; NUM_BANDS] {
+        std::array::from_fn(|band| {
+            vec![&self.split[band][half * SUB_FRAME_LENGTH..][..SUB_FRAME_LENGTH]]
+        })
     }
 }

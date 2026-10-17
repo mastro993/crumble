@@ -227,7 +227,8 @@ impl Stream {
 }
 
 /// A device's nominal rate as the whole hertz the canceller takes: a multiple of 100, so its
-/// 10 ms frames hold whole samples and keep time with the other track's.
+/// 10 ms frames hold whole samples and keep time with the other track's, and from 8 kHz, below
+/// which `sonora`'s resampler panics, to 384 kHz.
 fn hertz(rate: f64) -> anyhow::Result<usize> {
     if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
@@ -455,10 +456,9 @@ mod tests {
         assert_cancelled(cancelled(0, untimed));
     }
 
-    #[test]
-    fn a_microphone_at_another_rate_is_cleaned_too() {
-        let (mic_rate, reference_rate) = (44_100.0, RATE);
-        // The microphone hears the call 40 ms after the Mac plays it, at half the level.
+    /// The reduction when the microphone at `mic_rate` hears the call 40 ms after the Mac plays
+    /// it at `reference_rate`, at half the level.
+    fn cancelled_at(mic_rate: f64, reference_rate: f64) -> f32 {
         let mic: Vec<f32> = call(3, mic_rate, -0.04, SECONDS)
             .iter()
             .map(|sample| sample * 0.5)
@@ -473,9 +473,35 @@ mod tests {
             Echo::new(mic_rate, reference_rate, QUEUED).unwrap_or_else(|error| panic!("{error:#}"));
         let [out, arrived] = run(&mut echo, &mic, &reference, delivery);
         assert_eq!(out.len(), arrived.len());
-        let tail = arrived.len() - 44_100 * 5..;
-        let reduction = 10.0 * (energy(&arrived[tail.clone()]) / energy(&out[tail])).log10();
-        assert_cancelled(reduction);
+        let tail = arrived.len() - (mic_rate * 5.0) as usize..;
+        10.0 * (energy(&arrived[tail.clone()]) / energy(&out[tail])).log10()
+    }
+
+    #[test]
+    fn a_microphone_at_another_rate_is_cleaned_too() {
+        assert_cancelled(cancelled_at(44_100.0, RATE));
+    }
+
+    #[test]
+    fn a_tap_at_another_rate_is_cleaned_against_too() {
+        assert_cancelled(cancelled_at(RATE, 44_100.0));
+    }
+
+    #[test]
+    fn a_voice_alone_comes_out_whole() {
+        // Noise covers every band, so the bands must come back in step to rebuild it.
+        let voice = noise(48_000 * 3, 11);
+        let [out, _] = run(&mut echo(), &voice, &vec![0.0; voice.len()], ALL);
+        let (input, power) = (&voice[48_000..96_000], energy(&voice[48_000..96_000]));
+        // How alike the voice and the output are, at the delay the canceller adds.
+        let likeness = (0..2_000)
+            .map(|lag| {
+                let output = &out[48_000 + lag..96_000 + lag];
+                let dot: f32 = input.iter().zip(output).map(|(a, b)| a * b).sum();
+                dot / input.len() as f32 / (power * energy(output)).sqrt()
+            })
+            .fold(0.0, f32::max);
+        assert!(likeness > 0.9, "{likeness:.3} alike");
     }
 
     #[test]
@@ -539,5 +565,6 @@ mod tests {
         // 10 ms of 22 050 Hz is not a whole number of samples.
         assert!(Echo::new(22_050.0, RATE, QUEUED).is_err());
         assert!(Echo::new(44_100.0, RATE, QUEUED).is_ok());
+        assert!(Echo::new(RATE, 8_000.0, QUEUED).is_ok());
     }
 }
