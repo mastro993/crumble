@@ -131,7 +131,8 @@ pub struct Event {
 pub enum Occurrence {
     /// An all-day occurrence: a date with no time zone, so it survives the Mac changing zones.
     Day(NaiveDate),
-    /// A timed occurrence, as an instant.
+    /// A timed occurrence, as an instant. For a floating Event, one with no time zone, it is the
+    /// wall time read as UTC, which stays the same when the Mac changes zones.
     At(DateTime<Utc>),
 }
 

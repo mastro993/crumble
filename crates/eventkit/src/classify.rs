@@ -77,21 +77,26 @@ pub(crate) fn is_google_event_id(external_id: &str) -> bool {
 
 /// The iCalendar UID in an external identifier. Exchange and some CalDAV servers append
 /// `/RID=<n>` to it for a detached occurrence, which would split that occurrence from its series.
+/// `<n>` is a whole number of seconds; any other suffix is part of the UID.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn series_uid(external: &str) -> Option<String> {
     let uid = match external.rsplit_once("/RID=") {
-        Some((uid, _)) => uid,
-        None => external,
+        Some((uid, seconds)) if seconds.parse::<i64>().is_ok() => uid,
+        _ => external,
     };
     (!uid.is_empty()).then(|| uid.to_owned())
 }
 
 /// An occurrence that started at `original`: all-day ones by their local date, as
-/// [`crate::When::AllDay`] reads it, timed ones by their instant.
+/// [`crate::When::AllDay`] reads it, timed ones by their instant. A floating Event, one with no
+/// time zone, keeps its wall time whatever zone the Mac is in, so its key is that wall time read
+/// as UTC.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn occurrence(all_day: bool, original: DateTime<Local>) -> Occurrence {
+pub(crate) fn occurrence(all_day: bool, floating: bool, original: DateTime<Local>) -> Occurrence {
     if all_day {
         Occurrence::Day(original.date_naive())
+    } else if floating {
+        Occurrence::At(original.naive_local().and_utc())
     } else {
         Occurrence::At(original.with_timezone(&Utc))
     }
@@ -502,22 +507,32 @@ mod tests {
             series_uid("team/standup-1").as_deref(),
             Some("team/standup-1")
         );
+        // Only a number of seconds is a detached occurrence's suffix.
+        assert_eq!(
+            series_uid("team/RID=draft").as_deref(),
+            Some("team/RID=draft")
+        );
         assert_eq!(series_uid(""), None);
         assert_eq!(series_uid("/RID=811159200"), None);
     }
 
     #[test]
     fn all_day_occurrences_are_dates_and_timed_ones_instants() {
-        let Some(start) = Local.with_ymd_and_hms(2026, 10, 13, 0, 0, 0).earliest() else {
-            panic!("midnight exists");
+        let (Some(start), Some(wall)) = (
+            Local.with_ymd_and_hms(2026, 10, 13, 9, 30, 0).earliest(),
+            Utc.with_ymd_and_hms(2026, 10, 13, 9, 30, 0).earliest(),
+        ) else {
+            panic!("09:30 exists");
         };
         assert_eq!(
-            occurrence(true, start),
+            occurrence(true, true, start),
             Occurrence::Day(NaiveDate::from_ymd_opt(2026, 10, 13).unwrap_or_default())
         );
         assert_eq!(
-            occurrence(false, start),
+            occurrence(false, false, start),
             Occurrence::At(start.with_timezone(&Utc))
         );
+        // A floating Event keeps its 09:30 in any zone.
+        assert_eq!(occurrence(false, true, start), Occurrence::At(wall));
     }
 }

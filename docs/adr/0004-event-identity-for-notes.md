@@ -4,9 +4,9 @@ A Note belongs to one occurrence of an Event and must find it again after the Ev
 
 ## Rules
 
-- `series_uid` is the external identifier with a trailing `/RID=<n>` removed. Exchange and some CalDAV servers append it to a detached occurrence, which would otherwise split that occurrence from its series. An empty or missing identifier, as on an Event not yet synced to its server, is `None`.
+- `series_uid` is the external identifier with a trailing `/RID=<n>` removed, where `<n>` is a whole number of seconds; any other suffix is part of the UID. Exchange and some CalDAV servers append it to a detached occurrence, which would otherwise split that occurrence from its series. An empty or missing identifier, as on an Event not yet synced to its server, is `None`.
 - `occurrence` is set only when the Event repeats or is a detached occurrence. Otherwise the UID alone names the Event. When EventKit gives no `occurrenceDate`, the start stands in.
-- An all-day occurrence is its local date, the same date `When::AllDay` shows, so it survives the Mac changing time zones. A timed one is an instant in UTC.
+- An all-day occurrence is its local date, the same date `When::AllDay` shows, so it survives the Mac changing time zones. A timed one is an instant in UTC. A floating timed one, with no time zone, keeps its wall time in every zone, so its key is that wall time read as UTC; an instant would change when the Mac changes zones and differ between Macs in different zones.
 
 ## Considered Options
 
@@ -22,5 +22,6 @@ anarlog, an open-source meeting-notes app for macOS, keys Apple Calendar Events 
 - A Note whose Event vanished, deleted or out of reach, is kept with its snapshot and never deleted. How the UI shows it is decided with the Notes UI.
 - One Event can show in two Calendars, as an invitation seen through two Accounts, with the same UID. A key that matches more than once is ambiguous, and whoever re-matches must pick or ask rather than guess silently.
 - Editing "this and following events" in Google Calendar splits the series: the later occurrences get a new UID, the old one plus `_R<date>`. A Note on one of them no longer matches by key and falls back to its snapshot. Crumble does not strip `_R<date>`, since it names a real, separate series; anarlog does not either.
+- Changing one occurrence from all-day to timed, or back, changes its key from a date to an instant or the reverse, since EventKit tells only what the occurrence is now, not what its series slot was. A Note on it falls back to its snapshot. anarlog has the same limit.
 - An Event made on this Mac has no UID until it syncs. A Note made then has only its snapshot until the UID appears.
 - `Account::id` and `Calendar::id` are not stable either: they change when an Account is added again and can change after a full re-sync. Stored preferences (each Account's order, color, Alias, Disabled and Hidden choices, and Disabled Calendars) are keyed by them and can be lost then. Rekeying them is a separate follow-up.

@@ -307,7 +307,7 @@ fn convert(event: &EKEvent) -> Option<Event> {
                 .as_deref()
                 .and_then(local)
                 .unwrap_or(start);
-            classify::occurrence(event.isAllDay(), original)
+            classify::occurrence(event.isAllDay(), event.timeZone().is_none(), original)
         });
         let url = event
             .URL()
