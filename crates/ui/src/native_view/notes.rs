@@ -217,16 +217,29 @@ impl NativeView {
             }
             failed
         });
-        detail
-            .unsaved_memos
-            .retain(|id, memo| notes.set_memo(id, memo, now).is_err());
-        detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
-        // A rebuilt Agenda listed a Quick note with its stored title from before.
-        for (id, title) in saved_titles {
-            if let Some(mut note) = self.agenda.quick_note(&id).cloned() {
-                note.title = title;
-                self.agenda.note_changed(&note);
+        let mut saved_memos = Vec::new();
+        detail.unsaved_memos.retain(|id, memo| {
+            let failed = notes.set_memo(id, memo, now).is_err();
+            if !failed {
+                saved_memos.push((id.clone(), memo.clone()));
             }
+            failed
+        });
+        detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
+        // A rebuilt Agenda listed a Quick note as stored before, so it takes the saved edits.
+        for (id, title) in saved_titles {
+            self.update_quick_note(&id, |note| note.title = title);
+        }
+        for (id, memo) in saved_memos {
+            self.update_quick_note(&id, |note| note.memo = memo);
+        }
+    }
+
+    /// Changes the Agenda's listed copy of the Quick note `id`, if it is listed.
+    fn update_quick_note(&mut self, id: &NoteId, change: impl FnOnce(&mut Note)) {
+        if let Some(mut note) = self.agenda.quick_note(id).cloned() {
+            change(&mut note);
+            self.agenda.note_changed(&note);
         }
     }
 
