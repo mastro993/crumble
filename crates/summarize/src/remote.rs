@@ -2,8 +2,8 @@
 //! servers. Each gets the whole Transcript in one request. An API key goes only into its
 //! request's header: never into an error, a log, or anything else this module returns.
 
-use anyhow::{Context as _, anyhow, bail};
-use crumble_remote::{Provider, base_url, failure, post_json, without_userinfo};
+use anyhow::{Context as _, bail};
+use crumble_remote::{Provider, base_url, failure, no_response, post_json, without_userinfo};
 use serde_json::{Value, json};
 
 use crate::{Summarizer, prompt};
@@ -80,10 +80,8 @@ impl Claude {
             ("x-api-key", self.api_key.as_str()),
             ("anthropic-version", CLAUDE_VERSION),
         ];
-        let (status, text) = post_json(CLAUDE_URL, &headers, &body).map_err(|error| {
-            eprintln!("Could not reach Claude: {error}");
-            anyhow!("Couldn't reach Claude. Check the internet connection.")
-        })?;
+        let (status, text) = post_json(CLAUDE_URL, &headers, &body)
+            .map_err(|error| no_response("Claude", "Check the internet connection.", &error))?;
         if status != 200 {
             return Err(failure(Provider::Claude, &self.model, status, &text));
         }
@@ -134,8 +132,7 @@ impl OpenAiCompatible {
         let (status, text) = post_json(&url, &headers, &body).map_err(|error| {
             // The address may hold a user name and password.
             let base = without_userinfo(base);
-            eprintln!("Could not reach {base}: {error}");
-            anyhow!("Couldn't reach {base}. Check that the server is running.")
+            no_response(&base, "Check that the server is running.", &error)
         })?;
         if status != 200 {
             return Err(failure(

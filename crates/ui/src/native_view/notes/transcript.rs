@@ -123,8 +123,8 @@ impl NativeView {
     /// transcribing, when the Transcription Model keeps the audio on the Mac and has what it
     /// needs. A remote one gets an older Recording only when the user asks, from its Note's
     /// Transcript tab. A Note whose last attempt failed keeps its error until it is tried again
-    /// or its Provider's settings change. Run at launch, when a Transcription Model is picked,
-    /// and when the server's address, Transcription Model or key is finished.
+    /// or its Provider's settings change. Run at launch, when a Transcription Model or Language is
+    /// picked, and when the server's address, Transcription Model or key is finished.
     pub(in super::super) fn transcribe_untranscribed(&mut self, cx: &mut Context<Self>) {
         let provider = self.transcription_provider();
         if !runs_locally(provider, self.store.openai_base_url()) || !self.can_transcribe(provider) {

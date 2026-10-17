@@ -7,7 +7,7 @@ use super::super::controls::button;
 use super::super::route::Route;
 use chrono::Utc;
 use crumble_notes::{NoteId, Track};
-use crumble_remote::{Provider, runs_locally};
+use crumble_remote::{Provider, base_url, runs_locally};
 use crumble_store::secrets;
 use crumble_summarize::{
     Apple, Availability, Claude, OpenAiCompatible, Speaker, Summarizer, apple_availability,
@@ -125,7 +125,8 @@ impl NativeView {
                 self.models.has_key(provider) && !self.store.claude_model().is_empty()
             }
             Provider::OpenAiCompatible => {
-                !self.store.openai_base_url().is_empty() && !self.store.openai_model().is_empty()
+                base_url(self.store.openai_base_url()).is_ok()
+                    && !self.store.openai_model().is_empty()
             }
         }
     }

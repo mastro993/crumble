@@ -251,6 +251,7 @@ pub(super) fn model_settings(
                     TRANSCRIBERS
                         .into_iter()
                         .for_each(|provider| view.forget_transcription_failures(provider));
+                    view.transcribe_untranscribed(cx);
                     cx.notify();
                 }
             },

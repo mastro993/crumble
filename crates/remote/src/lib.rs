@@ -175,6 +175,20 @@ pub fn post(
     Ok((status, response.body_mut().read_to_string()?))
 }
 
+/// What to tell the user when a request to `who` got no response, with `hint` saying what to
+/// check; the cause is logged. One that ran out of time says so, as a slow Model is no
+/// unreachable server.
+pub fn no_response(who: &str, hint: &str, error: &ureq::Error) -> anyhow::Error {
+    eprintln!("Could not reach {who}: {error}");
+    match error {
+        ureq::Error::Timeout(_) => anyhow!(
+            "{who} didn't answer within {} minutes. Try again later.",
+            TIMEOUT.as_secs() / 60
+        ),
+        _ => anyhow!("Couldn't reach {who}. {hint}"),
+    }
+}
+
 /// What to tell the user when `provider` answered a request for `model` with `status` and
 /// `body`: a sentence they can act on.
 pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyhow::Error {
@@ -209,7 +223,7 @@ pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyh
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, base_url, failure, host, runs_locally, without_userinfo};
+    use super::{Provider, base_url, failure, host, no_response, runs_locally, without_userinfo};
 
     #[test]
     fn provider_ids_round_trip() {
@@ -308,6 +322,25 @@ mod tests {
             "http://localhost:11434/v1/a@b"
         );
         assert_eq!(without_userinfo("me@host/v1"), "host/v1");
+    }
+
+    #[test]
+    fn no_response_tells_a_timeout_apart() {
+        let timeout = ureq::Error::Timeout(ureq::Timeout::Global);
+        assert_eq!(
+            no_response(
+                "http://whisper.lan/v1",
+                "Check that the server is running.",
+                &timeout
+            )
+            .to_string(),
+            "http://whisper.lan/v1 didn't answer within 10 minutes. Try again later."
+        );
+        let refused = ureq::Error::ConnectionFailed;
+        assert_eq!(
+            no_response("Claude", "Check the internet connection.", &refused).to_string(),
+            "Couldn't reach Claude. Check the internet connection."
+        );
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
-use crumble_remote::{Provider, base_url, failure, post, without_userinfo};
+use anyhow::{Context, bail};
+use crumble_remote::{Provider, base_url, failure, no_response, post, without_userinfo};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -49,7 +49,7 @@ impl Transcriber for OpenAiCompatible {
             bail!("Enter the server's Transcription Model in Settings.");
         }
         let mut uploads = Vec::new();
-        for (track, path) in tracks(dir)? {
+        for (track, path) in tracks(dir).context("This Recording has no audio to transcribe.")? {
             let audio = std::fs::read(&path)
                 .with_context(|| format!("could not read {}", path.display()))
                 .context("Couldn't read the Recording's audio.")?;
@@ -101,8 +101,7 @@ impl OpenAiCompatible {
         let (status, text) = post(url, &headers, &content_type, &body).map_err(|error| {
             // The address may hold a user name and password.
             let base = without_userinfo(base);
-            eprintln!("Could not reach {base}: {error}");
-            anyhow!("Couldn't reach {base}. Check that the server is running.")
+            no_response(&base, "Check that the server is running.", &error)
         })?;
         if status != 200 {
             return Err(failure(
