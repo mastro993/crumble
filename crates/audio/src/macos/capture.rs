@@ -42,8 +42,8 @@ use crate::{RecorderStatus, Track, downmix, is_silent};
 const BLOCK: usize = 1024;
 /// Blocks the queue holds per track: about 10 s at 48 kHz, allocated once at start.
 const QUEUE: usize = 512;
-/// Blocks the writer takes from one queue before it turns to the next, so a busy track cannot
-/// starve the other.
+/// Microphone blocks the writer takes before it turns to the system queue, so a busy
+/// microphone cannot starve it.
 const BATCH: usize = 16;
 /// How long the writer sleeps once both queues are empty. It polls, so an IO proc never has to
 /// wake it, which could take a lock.
@@ -259,10 +259,10 @@ impl Written {
     }
 }
 
-/// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
-/// until each is empty or closed once `done` is set, then returns. While the canceller runs,
-/// the system track is the reference the microphone is cleaned against: it goes first and is
-/// drained in full, so the microphone never gives up on a reference still in its queue.
+/// The writer thread: drains each queue into its file until each is empty or closed once
+/// `done` is set, then returns. The system queue goes first and is drained in full, as it is
+/// the reference the microphone is cleaned against, so the microphone never gives up on a
+/// reference still queued; then up to [`BATCH`] microphone blocks.
 fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     written.sort_by_key(|track| track.track == Track::Mic);
     let mut echo = echo(&written);
@@ -276,9 +276,9 @@ fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
             if track.file.is_none() {
                 continue;
             }
-            let batch = match (track.track, &echo) {
-                (Track::System, Some(_)) => QUEUE,
-                _ => BATCH,
+            let batch = match track.track {
+                Track::System => QUEUE,
+                Track::Mic => BATCH,
             };
             for _ in 0..batch {
                 match track.blocks.try_recv() {

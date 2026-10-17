@@ -97,35 +97,37 @@ impl Echo {
     /// `out` the cleaned samples that are ready. Some wait for their reference, at most
     /// [`MAX_WAIT`].
     pub(super) fn mic(&mut self, at: Option<f64>, samples: &[f32], out: &mut Vec<f32>) {
-        if self.failed {
-            // What waited goes first, so the samples stay in order.
-            out.extend(self.mic.samples.drain(..));
-            out.extend_from_slice(samples);
-            return;
-        }
         self.note_untimed(at);
         self.mic.push(at, samples);
-        while self.mic.samples.len() >= self.mic_in.len() {
-            let waited = self.mic.samples.len() as f64 / self.mic.rate;
-            if !self.take_reference(waited >= MAX_WAIT) {
-                break;
-            }
-            self.clean_frame(out);
-        }
+        self.drain(false, out);
     }
 
     /// Appends to `out` everything still waiting, as the microphone stopped: whole frames
     /// cleaned against whatever reference there is, and the last partial frame as it was.
     pub(super) fn finish(&mut self, out: &mut Vec<f32>) {
+        self.drain(true, out);
+        self.mic.take_all(out);
+    }
+
+    /// Cleans each whole microphone frame whose reference is in, or has waited [`MAX_WAIT`];
+    /// every whole frame when `stopping`.
+    fn drain(&mut self, stopping: bool, out: &mut Vec<f32>) {
         while self.mic.samples.len() >= self.mic_in.len() {
-            self.take_reference(true);
+            if self.failed {
+                // The canceller stopped: the rest passes through as recorded, in order.
+                self.mic.take_all(out);
+                return;
+            }
+            let waited = self.mic.samples.len() as f64 / self.mic.rate;
+            if !self.take_reference(stopping || waited >= MAX_WAIT) {
+                return;
+            }
             self.clean_frame(out);
         }
-        out.extend(self.mic.samples.drain(..));
     }
 
     fn note_untimed(&mut self, at: Option<f64>) {
-        if at.is_none() && !self.untimed {
+        if at.is_none() && !self.untimed && !self.failed {
             eprintln!(
                 "Recording: a block came without a host time; the tracks are paired by count"
             );
@@ -168,29 +170,25 @@ impl Echo {
         true
     }
 
-    /// Feeds `reference_in`, then cleans the microphone's next frame and appends it to `out`.
+    /// Feeds `reference_in`, then cleans the microphone's next frame and appends it to `out`;
+    /// on an error, the frame as it was.
     fn clean_frame(&mut self, out: &mut Vec<f32>) {
         self.mic.take(&mut self.mic_in);
-        if !self.failed {
-            let processed = self
-                .processing
-                .process_render_f32(&[&self.reference_in], &mut [&mut self.reference_out])
-                .and_then(|()| {
-                    self.processing
-                        .process_capture_f32(&[&self.mic_in], &mut [&mut self.mic_out])
-                });
-            match processed {
-                Ok(()) => {
-                    out.extend_from_slice(&self.mic_out);
-                    return;
-                }
-                Err(error) => {
-                    eprintln!("Recording: echo cancellation stopped: {error}");
-                    self.failed = true;
-                }
+        let processed = self
+            .processing
+            .process_render_f32(&[&self.reference_in], &mut [&mut self.reference_out])
+            .and_then(|()| {
+                self.processing
+                    .process_capture_f32(&[&self.mic_in], &mut [&mut self.mic_out])
+            });
+        match processed {
+            Ok(()) => out.extend_from_slice(&self.mic_out),
+            Err(error) => {
+                eprintln!("Recording: echo cancellation stopped: {error}");
+                self.failed = true;
+                out.extend_from_slice(&self.mic_in);
             }
         }
-        out.extend_from_slice(&self.mic_in);
     }
 }
 
@@ -238,6 +236,13 @@ impl Stream {
         }
         self.advance(count);
         count
+    }
+
+    /// Moves every sample into `out`.
+    fn take_all(&mut self, out: &mut Vec<f32>) {
+        let count = self.samples.len();
+        out.extend(self.samples.drain(..));
+        self.advance(count);
     }
 
     fn drop_front(&mut self, count: usize) {
@@ -424,6 +429,16 @@ mod tests {
             ..ALL
         };
         assert_cancelled(cancelled(0, gap));
+    }
+
+    #[test]
+    fn a_tap_that_stalls_longer_than_the_wait_lines_up_again() {
+        // About 750 ms of the tap never arrive, more than the microphone waits.
+        let stall = Delivery {
+            arrives: |is_mic, index| is_mic || !(190..260).contains(&index),
+            ..ALL
+        };
+        assert_cancelled(cancelled(0, stall));
     }
 
     #[test]
