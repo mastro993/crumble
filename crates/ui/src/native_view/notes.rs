@@ -209,13 +209,25 @@ impl NativeView {
         let detail = &mut self.note_detail;
         let notes = &mut self.notes;
         let now = Utc::now();
-        detail
-            .unsaved_titles
-            .retain(|id, title| notes.set_title(id, title.as_deref(), now).is_err());
+        let mut saved_titles = Vec::new();
+        detail.unsaved_titles.retain(|id, title| {
+            let failed = notes.set_title(id, title.as_deref(), now).is_err();
+            if !failed {
+                saved_titles.push((id.clone(), title.clone()));
+            }
+            failed
+        });
         detail
             .unsaved_memos
             .retain(|id, memo| notes.set_memo(id, memo, now).is_err());
         detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
+        // A rebuilt Agenda listed a Quick note with its stored title from before.
+        for (id, title) in saved_titles {
+            if let Some(mut note) = self.agenda.quick_note(&id).cloned() {
+                note.title = title;
+                self.agenda.note_changed(&note);
+            }
+        }
     }
 
     fn memo_changed(&mut self, cx: &mut Context<Self>) {
@@ -323,6 +335,8 @@ impl NativeView {
         if matches!(detail.subject, Some(Subject::QuickNote(_))) {
             self.agenda.quick_note_deleted(id);
         }
+        // Clears "Couldn't save" from an earlier failed attempt.
+        self.retry_unsaved();
         self.show_note(None, window, cx);
     }
 }
