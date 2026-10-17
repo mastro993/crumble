@@ -4,6 +4,7 @@
 //! allocating; a full queue drops the block and counts it (ADR 0005).
 
 use std::ffi::{CStr, c_void};
+use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
@@ -64,6 +65,11 @@ pub struct Recorder {
     /// Stopped before the writer is waited for, so the queues close.
     captures: Vec<Capture>,
     writer: Option<JoinHandle<Vec<Written>>>,
+    /// Set once the captures are stopped: the writer then closes each file when its queue is
+    /// empty, even if an IO proc could not be unregistered and keeps its queue open.
+    done: Arc<AtomicBool>,
+    /// Whether each track, in [`Track::BOTH`] order, is being recorded.
+    recording: [bool; 2],
     /// Whether each track, in [`Track::BOTH`] order, has heard more than silence.
     heard: [Arc<AtomicBool>; 2],
     started: Instant,
@@ -93,8 +99,11 @@ impl Recorder {
                 })
                 .is_ok()
         });
-        for track in Track::BOTH {
-            if !tracks.iter().any(|(written, _)| written.track == track) {
+        let recording =
+            Track::BOTH.map(|track| tracks.iter().any(|(written, _)| written.track == track));
+        // A track left out keeps no file.
+        for (track, recording) in Track::BOTH.into_iter().zip(recording) {
+            if !recording {
                 let _ = std::fs::remove_file(track.path(dir));
             }
         }
@@ -102,23 +111,31 @@ impl Recorder {
             bail!("neither the microphone nor the Mac's sound can be recorded");
         }
         let (written, captures): (Vec<_>, Vec<_>) = tracks.into_iter().unzip();
+        let done = Arc::new(AtomicBool::new(false));
         let writer = thread::Builder::new()
             .name("crumble-recording".into())
-            .spawn(move || write(written))?;
+            .spawn({
+                let done = Arc::clone(&done);
+                move || write(written, &done)
+            })?;
         Ok(Self {
             captures,
             writer: Some(writer),
+            done,
+            recording,
             heard,
             started: Instant::now(),
         })
     }
 
-    /// Elapsed time and whether each track has heard anything but digital silence so far.
+    /// Elapsed time and whether each recorded track has heard only digital silence so far.
     pub fn status(&self) -> RecorderStatus {
+        let silent =
+            |track: usize| self.recording[track] && !self.heard[track].load(Ordering::Relaxed);
         RecorderStatus {
             elapsed: self.started.elapsed(),
-            mic_heard: self.heard[0].load(Ordering::Relaxed),
-            system_heard: self.heard[1].load(Ordering::Relaxed),
+            mic_silent: silent(0),
+            system_silent: silent(1),
         }
     }
 
@@ -139,6 +156,7 @@ impl Recorder {
                 );
             }
         }
+        self.done.store(true, Ordering::Release);
         let Some(writer) = self.writer.take() else {
             return Ok(Duration::ZERO);
         };
@@ -196,8 +214,8 @@ impl Written {
 }
 
 /// The writer thread: drains every queue into its file, [`BATCH`] blocks at a time per queue,
-/// until each closes, then returns.
-fn write(mut written: Vec<Written>) -> Vec<Written> {
+/// until each closes, or is empty once `done` is set, then returns.
+fn write(mut written: Vec<Written>, done: &AtomicBool) -> Vec<Written> {
     while written.iter().any(|track| track.file.is_some()) {
         let mut idle = true;
         for track in &mut written {
@@ -223,8 +241,8 @@ fn write(mut written: Vec<Written>) -> Vec<Written> {
                             }
                         }
                     }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
+                    Err(TryRecvError::Empty) if !done.load(Ordering::Acquire) => break,
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                         if let Some(Err(error)) = track.file.take().map(AacFile::close) {
                             eprintln!("Recording: {:?}: {error:#}", track.track);
                             track.failed.get_or_insert(error);
@@ -412,8 +430,9 @@ struct Capture {
     source: Source,
     proc_id: AudioDeviceIOProcID,
     started: bool,
-    /// Boxed so its address stays put while Core Audio holds it.
-    feed: Box<Feed>,
+    /// Boxed so its address stays put while Core Audio holds it. Freed only once the IO proc is
+    /// unregistered; leaked if that fails, as Core Audio may still call it.
+    feed: ManuallyDrop<Box<Feed>>,
 }
 
 impl Capture {
@@ -438,7 +457,7 @@ impl Capture {
             source,
             proc_id,
             started: false,
-            feed,
+            feed: ManuallyDrop::new(feed),
         })
     }
 
@@ -455,13 +474,17 @@ impl Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        // SAFETY: stops and unregisters the IO proc created in `new`; Core Audio does not call
-        // it again once `AudioDeviceDestroyIOProcID` returns, so `feed` may then be freed.
-        unsafe {
+        // SAFETY: stops and unregisters the IO proc created in `new`.
+        let status = unsafe {
             if self.started {
                 AudioDeviceStop(self.source.device, self.proc_id);
             }
-            AudioDeviceDestroyIOProcID(self.source.device, self.proc_id);
+            AudioDeviceDestroyIOProcID(self.source.device, self.proc_id)
+        };
+        match check(status, "unregister from audio") {
+            // SAFETY: Core Audio no longer calls the IO proc, and `feed` is dropped only here.
+            Ok(()) => unsafe { ManuallyDrop::drop(&mut self.feed) },
+            Err(error) => eprintln!("Recording: {:?}: {error:#}; leaking its queue", self.track),
         }
     }
 }

@@ -150,7 +150,8 @@ impl NativeView {
     }
 
     /// Stops the Recording and keeps its length; on quit and window close too. A stop that
-    /// fails keeps what the files hold, and a Recording with no audio is deleted.
+    /// fails keeps what the files hold, and a Recording with no audio is deleted. One whose
+    /// files cannot be read stays unfinished, for the next launch to read again.
     pub(super) fn stop_recording(&mut self, cx: &mut Context<Self>) {
         let Some(active) = self.note_detail.recording.take() else {
             return;
@@ -165,6 +166,10 @@ impl NativeView {
         });
         let now = Utc::now();
         let info = match length {
+            Ok(duration) if duration.is_zero() => {
+                eprintln!("Deleting the Recording, as it holds no audio");
+                self.notes.delete_recording(&id, now).map(|()| None)
+            }
             Ok(duration) => self
                 .notes
                 .set_recording_finished(&id, duration, now)
@@ -174,10 +179,7 @@ impl NativeView {
                         duration: Some(duration),
                     })
                 }),
-            Err(error) => {
-                eprintln!("Deleting the Recording, as none of it is readable: {error:#}");
-                self.notes.delete_recording(&id, now).map(|()| None)
-            }
+            Err(error) => Err(error),
         };
         match info {
             // What was kept stays, but part of it may be missing.
@@ -478,7 +480,7 @@ impl NativeView {
                 .into_any_element()
         };
         let mut hints = Vec::new();
-        if !status.system_heard {
+        if status.system_silent {
             hints.push(hint(
                 "recording-hint-system",
                 "No sound from the Mac yet. If a call is playing, allow Crumble in System Settings › \
@@ -486,7 +488,7 @@ impl NativeView {
                 SYSTEM_AUDIO_SETTINGS,
             ));
         }
-        if !status.mic_heard {
+        if status.mic_silent {
             hints.push(hint(
                 "recording-hint-mic",
                 "No sound from the microphone yet. Allow Crumble in System Settings › Privacy & \

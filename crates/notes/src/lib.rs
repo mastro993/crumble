@@ -314,8 +314,9 @@ impl Notes {
     }
 
     /// Finishes the Recordings a crash left running: each keeps the length `length` reads from
-    /// its folder, and one with no audio is deleted. Run at launch, before anything
-    /// records; `crumble_audio::recorded_length` reads the files.
+    /// its folder, and one zero long is deleted. One `length` cannot read stays unfinished, as
+    /// its files may still hold audio, and is tried again at the next launch. Run at launch,
+    /// before anything records; `crumble_audio::recorded_length` reads the files.
     pub fn recover_recordings(
         &mut self,
         length: impl Fn(&Path) -> anyhow::Result<Duration>,
@@ -323,13 +324,14 @@ impl Notes {
     ) -> anyhow::Result<()> {
         for id in self.unfinished_recordings()? {
             match length(&self.recording_dir(&id)) {
-                Ok(duration) => self.set_recording_finished(&id, duration, now)?,
-                Err(error) => {
-                    eprintln!(
-                        "Deleting the Recording of Note {id}, as none of it is readable: {error}"
-                    );
+                Ok(duration) if duration.is_zero() => {
+                    eprintln!("Deleting the Recording of Note {id}, as it holds no audio");
                     self.delete_recording(&id, now)?;
                 }
+                Ok(duration) => self.set_recording_finished(&id, duration, now)?,
+                Err(error) => eprintln!(
+                    "Could not read the Recording of Note {id}, so it is left for later: {error:#}"
+                ),
             }
         }
         Ok(())

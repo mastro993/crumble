@@ -434,36 +434,38 @@ fn a_quick_note_is_listed_at_its_recordings_start() {
 fn a_crash_left_recording_keeps_what_its_files_hold() {
     let mut notes = Notes::in_memory();
     let kept = ok(notes.create(None, at(5)));
+    let empty = ok(notes.create(None, at(5)));
     let unreadable = ok(notes.create(None, at(5)));
     let finished = ok(notes.create(None, at(5)));
-    for note in [&kept, &unreadable, &finished] {
+    for note in [&kept, &empty, &unreadable, &finished] {
         ok(notes.set_recording_started(&note.id, at(6)));
     }
     ok(notes.set_recording_finished(&finished.id, std::time::Duration::from_secs(9), at(7)));
-    let unreadable_dir = notes.recording_dir(&unreadable.id);
     let kept_dir = notes.recording_dir(&kept.id);
+    let empty_dir = notes.recording_dir(&empty.id);
+    let unreadable_dir = notes.recording_dir(&unreadable.id);
     ok(notes.recover_recordings(
         |dir| {
-            assert!(dir == kept_dir || dir == unreadable_dir, "{dir:?}");
             if dir == kept_dir {
                 Ok(std::time::Duration::from_secs(42))
+            } else if dir == empty_dir {
+                Ok(std::time::Duration::ZERO)
             } else {
-                Err(anyhow::anyhow!("no audio"))
+                assert_eq!(dir, unreadable_dir);
+                Err(anyhow::anyhow!("cannot read"))
             }
         },
         at(8),
     ));
     let recordings: Vec<_> = ok(notes.quick_notes(at(0)..at(23)))
         .into_iter()
-        .map(|note| {
-            (
-                note.id,
-                note.recording.and_then(|recording| recording.duration),
-            )
-        })
+        .map(|note| (note.id, note.recording.map(|recording| recording.duration)))
         .collect();
-    assert!(recordings.contains(&(kept.id, Some(std::time::Duration::from_secs(42)))));
-    assert!(recordings.contains(&(unreadable.id, None)));
-    assert!(recordings.contains(&(finished.id, Some(std::time::Duration::from_secs(9)))));
-    assert_eq!(ok(notes.unfinished_recordings()), []);
+    assert!(recordings.contains(&(kept.id, Some(Some(std::time::Duration::from_secs(42))))));
+    // Nothing in it: deleted.
+    assert!(recordings.contains(&(empty.id, None)));
+    // Its files may still hold audio: left unfinished for the next launch.
+    assert!(recordings.contains(&(unreadable.id.clone(), Some(None))));
+    assert!(recordings.contains(&(finished.id, Some(Some(std::time::Duration::from_secs(9))))));
+    assert_eq!(ok(notes.unfinished_recordings()), [unreadable.id]);
 }
