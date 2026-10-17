@@ -103,15 +103,19 @@ pub fn day_order<'a>(
     day
 }
 
-/// `opened` as last read in `events`: the same occurrence, else the one occurrence of its
-/// calendar item, as after the Event moved and its start changed; else `opened` as it was.
+/// `opened` as last read in `events`: the same occurrence, else the one Event with its
+/// [`Event::series_uid`] and [`Event::occurrence`], as after the Event moved and its start
+/// changed; else `opened` as it was.
 pub fn latest<'a>(events: &'a [Event], opened: &'a Event) -> &'a Event {
     if let Some(same) = events.iter().find(|event| event.id == opened.id) {
         return same;
     }
-    let mut moved = events
-        .iter()
-        .filter(|event| event.item_id() == opened.item_id());
+    if opened.series_uid.is_none() {
+        return opened;
+    }
+    let mut moved = events.iter().filter(|event| {
+        event.series_uid == opened.series_uid && event.occurrence == opened.occurrence
+    });
     match (moved.next(), moved.next()) {
         (Some(only), None) => only,
         _ => opened,
@@ -147,8 +151,8 @@ pub fn when_text(when: &When) -> String {
 #[cfg(test)]
 mod tests {
     use super::{columns, day_order, latest, minutes_on, on_day, when_text};
-    use chrono::{Local, NaiveDate, TimeZone};
-    use crumble_eventkit::{Event, When};
+    use chrono::{Local, NaiveDate, TimeZone, Utc};
+    use crumble_eventkit::{Event, Occurrence, When};
 
     fn date(day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap_or_default()
@@ -167,6 +171,8 @@ mod tests {
         };
         Event {
             id: title.into(),
+            series_uid: None,
+            occurrence: None,
             calendar_id: "calendar".into(),
             title: title.into(),
             when: When::Timed {
@@ -251,20 +257,84 @@ mod tests {
         assert_eq!(titles, ["Holiday", "Standup", "Lunch"]);
     }
 
-    #[test]
-    fn an_opened_event_follows_its_calendar_item_when_it_moves() {
-        let with_id = |id: &str, event: Event| Event {
+    fn in_series(id: &str, uid: &str, occurrence: Option<Occurrence>, event: Event) -> Event {
+        Event {
             id: id.into(),
+            series_uid: Some(uid.into()),
+            occurrence,
             ..event
-        };
-        let opened = with_id("item@1", timed("Standup", (13, 9, 0), (13, 9, 15)));
-        let moved = with_id("item@2", timed("Standup", (13, 10, 0), (13, 10, 15)));
-        let other = with_id("other@1", timed("Lunch", (13, 12, 0), (13, 13, 0)));
+        }
+    }
+
+    #[test]
+    fn an_opened_event_follows_its_series_uid_when_it_moves() {
+        let opened = in_series(
+            "a@1",
+            "uid",
+            None,
+            timed("Standup", (13, 9, 0), (13, 9, 15)),
+        );
+        let moved = in_series(
+            "a@2",
+            "uid",
+            None,
+            timed("Standup", (13, 10, 0), (13, 10, 15)),
+        );
+        let other = in_series(
+            "b@1",
+            "other",
+            None,
+            timed("Lunch", (13, 12, 0), (13, 13, 0)),
+        );
         assert_eq!(latest(&[other.clone(), moved.clone()], &opened), &moved);
-        // Two occurrences of a repeating Event are ambiguous, so the opened one stays.
-        let next_week = with_id("item@3", timed("Standup", (20, 9, 0), (20, 9, 15)));
-        assert_eq!(latest(&[moved, next_week], &opened), &opened);
+        // The same UID twice, as when one Event shows in two Calendars, is ambiguous.
+        let copy = Event {
+            id: "c@2".into(),
+            ..moved.clone()
+        };
+        assert_eq!(latest(&[moved, copy], &opened), &opened);
         assert_eq!(latest(&[other], &opened), &opened);
+        // An Event not yet synced has no UID to follow.
+        let unsynced = Event {
+            series_uid: None,
+            ..opened.clone()
+        };
+        let unsynced_moved = Event {
+            id: "a@2".into(),
+            ..unsynced.clone()
+        };
+        assert_eq!(latest(&[unsynced_moved], &unsynced), &unsynced);
+    }
+
+    #[test]
+    fn an_opened_occurrence_follows_its_original_date_when_it_moves() {
+        let original = |day| {
+            Local
+                .with_ymd_and_hms(2026, 10, day, 9, 0, 0)
+                .earliest()
+                .map(|start| Occurrence::At(start.with_timezone(&Utc)))
+        };
+        let opened = in_series(
+            "a@1",
+            "uid",
+            original(13),
+            timed("Standup", (13, 9, 0), (13, 9, 15)),
+        );
+        let moved = in_series(
+            "a@2",
+            "uid",
+            original(13),
+            timed("Standup", (13, 11, 0), (13, 11, 15)),
+        );
+        let next_week = in_series(
+            "a@3",
+            "uid",
+            original(20),
+            timed("Standup", (20, 9, 0), (20, 9, 15)),
+        );
+        assert_eq!(latest(&[next_week.clone(), moved.clone()], &opened), &moved);
+        // Other occurrences of the series never stand in for the opened one.
+        assert_eq!(latest(&[next_week], &opened), &opened);
     }
 
     #[test]

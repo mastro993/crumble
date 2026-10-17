@@ -335,6 +335,8 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap_or_default();
         let event = Event {
             id: "standup".into(),
+            series_uid: None,
+            occurrence: None,
             calendar_id: "work".into(),
             title: "Standup".into(),
             when: When::AllDay {
