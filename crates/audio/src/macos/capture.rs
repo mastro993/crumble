@@ -630,6 +630,7 @@ mod tests {
     use std::sync::mpsc::sync_channel;
 
     use super::{AacFile, BLOCK, Block, QUEUE, Track, Written, write};
+    use crate::macos::tests::folder;
 
     /// A track whose queue holds `blocks` blocks without host times, then closes, as at stop.
     fn queued(track: Track, dir: &Path, blocks: usize) -> anyhow::Result<Written> {
@@ -655,8 +656,7 @@ mod tests {
 
     #[test]
     fn stopping_writes_every_microphone_sample_even_past_its_reference() {
-        let dir = std::env::temp_dir().join(format!("crumble-capture-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = folder("writer");
         // The microphone runs past its reference but within the canceller's wait, so its tail
         // comes out only when the writer finishes it.
         let written = queued(Track::Mic, &dir, 20)
