@@ -32,4 +32,25 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(accounts, app_state, calendars, folded_sections,);
+diesel::table! {
+    notes (id) {
+        id -> Text,
+        title -> Nullable<Text>,
+        memo -> Text,
+        event_series_uid -> Nullable<Text>,
+        event_occurrence -> Nullable<Text>,
+        event_title -> Nullable<Text>,
+        event_start -> Nullable<Text>,
+        created_at -> Text,
+        updated_at -> Text,
+        deleted_at -> Nullable<Text>,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(
+    accounts,
+    app_state,
+    calendars,
+    folded_sections,
+    notes,
+);

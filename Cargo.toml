@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/calendar", "crates/eventkit", "crates/store", "crates/sync", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/store", "crates/sync", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -21,13 +21,16 @@ gpui-kit = "=0.7.0"
 # GPUI core for crates that hold entities but no components; the version gpui-kit pins.
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 crumble-calendar = { path = "crates/calendar" }
+crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
+crumble-notes = { path = "crates/notes" }
 crumble-store = { path = "crates/store" }
 crumble-sync = { path = "crates/sync" }
 # Agent automation for `--features mcp` builds. The rev matches the `gpui-mcp` server it talks to.
 gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb49990261e3fdaa26abe38112d30dafb", default-features = false, features = ["gpui-pre"] }
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
+uuid = { version = "1.28", features = ["v7"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
