@@ -42,6 +42,8 @@ pub(crate) struct State {
     pub(crate) transcription_locale: Option<String>,
     /// Each (Provider id, Model, host) the user agreed to send Recordings' audio to.
     pub(crate) audio_consents: BTreeSet<AudioConsent>,
+    /// Whether a meeting's start brings a notification that suggests recording it.
+    pub(crate) suggest_recording: bool,
 }
 
 /// A Provider id, Model and lowercase host that may receive Recordings' audio (ADR 0008).
@@ -72,6 +74,7 @@ impl Default for State {
             transcription_model: TRANSCRIPTION_MODEL.to_owned(),
             transcription_locale: None,
             audio_consents: BTreeSet::new(),
+            suggest_recording: true,
         }
     }
 }
@@ -94,11 +97,13 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
         (i32, String),
         (Option<String>, String, String, String),
         (String, String, Option<String>),
+        bool,
     );
     if let Some((
         (day, view),
         (provider, claude_model, openai_base_url, openai_model),
         (transcription_provider, transcription_model, transcription_locale),
+        suggest_recording,
     )) = app_state::table
         .select((
             (app_state::first_day_of_week, app_state::calendar_view),
@@ -113,6 +118,7 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
                 app_state::transcription_model,
                 app_state::transcription_locale,
             ),
+            app_state::suggest_recording,
         ))
         .first::<Row>(connection)
         .optional()?
@@ -126,6 +132,7 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
         state.transcription_provider = transcription_provider;
         state.transcription_model = transcription_model;
         state.transcription_locale = transcription_locale;
+        state.suggest_recording = suggest_recording;
     }
     state.audio_consents = remote_audio_consents::table
         .select((
@@ -182,6 +189,7 @@ pub(crate) fn write_app_state(connection: &mut SqliteConnection, state: &State) 
             app_state::transcription_provider.eq(&state.transcription_provider),
             app_state::transcription_model.eq(&state.transcription_model),
             app_state::transcription_locale.eq(&state.transcription_locale),
+            app_state::suggest_recording.eq(state.suggest_recording),
         ))
         .execute(connection)?;
     Ok(())

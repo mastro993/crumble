@@ -58,7 +58,8 @@ impl CalendarPage {
 /// The hour Week view shows at the top when the app starts.
 const WEEK_OPENS_AT: f32 = 8.0;
 
-/// Redraws Week view at the start of every minute, so its current time line keeps up.
+/// At the start of every minute: redraws Week view, so its current time line keeps up, and
+/// posts the Suggestions due, reading today's Events again once the day changes.
 pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
     cx.spawn(async move |view, cx| {
         loop {
@@ -70,6 +71,8 @@ pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
                 if view.route == Route::Calendar && view.calendar.view == CalendarView::Week {
                     cx.notify();
                 }
+                view.refresh_today(false, cx);
+                view.suggest(cx);
             });
             if redrawn.is_err() {
                 break;
@@ -79,8 +82,9 @@ pub(super) fn tick_minutes(cx: &mut Context<NativeView>) -> Task<()> {
 }
 
 impl NativeView {
-    /// Reads the Events of the dates on screen in the shown Calendars, unless they are already
-    /// read; `force` reads again anyway, as after EventKit reports a change.
+    /// Reads the Events of the dates on screen, and today's for Suggestions, in the shown
+    /// Calendars, unless they are already read; `force` reads again anyway, as after EventKit
+    /// reports a change.
     pub(super) fn refresh_events(&mut self, force: bool, cx: &mut Context<Self>) {
         let CalendarPage { view, focused, .. } = self.calendar;
         let sync = self.calendar_sync.read(cx);
@@ -91,6 +95,7 @@ impl NativeView {
         self.events.update(cx, |events, cx| {
             events.refresh(range, calendar_ids, force, cx);
         });
+        self.refresh_today(force, cx);
     }
 
     fn step_period(&mut self, forward: bool, cx: &mut Context<Self>) {

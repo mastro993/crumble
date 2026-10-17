@@ -1,12 +1,13 @@
 //! Calendar logic that needs no GPUI: Calendar views and their Periods, where Events fall on
-//! the Calendar page, what the Agenda page lists and reads, and the links in an Event's
-//! description. Everything here is plain data and pure functions; EventKit reads stay with the
-//! caller.
+//! the Calendar page, what the Agenda page lists and reads, which Events to suggest recording,
+//! and the links in an Event's description. Everything here is plain data and pure functions;
+//! EventKit reads stay with the caller.
 
 pub mod agenda;
 pub mod events;
 pub mod links;
 pub mod period;
+pub mod suggestions;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeDelta, TimeZone};
 pub use period::CalendarView;

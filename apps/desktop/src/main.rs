@@ -81,6 +81,13 @@ fn run() -> anyhow::Result<()> {
                 KeyBinding::new(&key("left"), PreviousPeriod, None),
                 KeyBinding::new(&key("right"), NextPeriod, None),
             ]);
+            // Posts a Suggestion for an invented Event, to try notifications by hand.
+            #[cfg(debug_assertions)]
+            cx.bind_keys([KeyBinding::new(
+                &key("alt-shift-s"),
+                crumble_ui::SuggestSample,
+                None,
+            )]);
             cx.set_menus(vec![
                 Menu {
                     name: "Crumble".into(),

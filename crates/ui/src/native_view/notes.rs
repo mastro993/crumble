@@ -404,7 +404,7 @@ impl NativeView {
 }
 
 /// An Event's title, or `(No title)`.
-fn event_title(event: &Event) -> String {
+pub(super) fn event_title(event: &Event) -> String {
     if event.title.is_empty() {
         "(No title)".to_owned()
     } else {
