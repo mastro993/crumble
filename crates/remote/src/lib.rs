@@ -134,11 +134,11 @@ fn url_parts(url: &str) -> [&str; 4] {
     ]
 }
 
-/// How long a request may take in all: a local Model can take minutes on an hour's speech, and
-/// an upload of a long track takes a while too.
-const TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a JSON request may take in all, and the least an upload gets: a local Model can
+/// take minutes on an hour's speech.
+pub const TIMEOUT: Duration = Duration::from_secs(600);
 
-/// POSTs `body` as JSON. See [`post`].
+/// POSTs `body` as JSON, within [`TIMEOUT`]. See [`post`].
 pub fn post_json(
     url: &str,
     headers: &[(&str, &str)],
@@ -147,22 +147,22 @@ pub fn post_json(
     post(
         url,
         headers,
-        "application/json",
-        body.to_string().as_bytes(),
+        ("application/json", body.to_string().as_bytes()),
+        TIMEOUT,
     )
 }
 
-/// POSTs `body` as `content_type` and returns the status and the response's text, whatever the
-/// status, within 10 minutes. Only a request that got no response errors; its error holds no
-/// header.
+/// POSTs `body`, a content type and its bytes, and returns the status and the response's text,
+/// whatever the status, within `timeout`. Only a request that got no response errors; its
+/// error holds no header.
 pub fn post(
     url: &str,
     headers: &[(&str, &str)],
-    content_type: &str,
-    body: &[u8],
+    (content_type, body): (&str, &[u8]),
+    timeout: Duration,
 ) -> Result<(u16, String), ureq::Error> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into();
@@ -176,14 +176,14 @@ pub fn post(
 }
 
 /// What to tell the user when a request to `who` got no response, with `hint` saying what to
-/// check; the cause is logged. One that ran out of time says so, as a slow Model is no
+/// check; the cause is logged. One that ran out of its `timeout` says so, as a slow Model is no
 /// unreachable server.
-pub fn no_response(who: &str, hint: &str, error: &ureq::Error) -> anyhow::Error {
+pub fn no_response(who: &str, hint: &str, timeout: Duration, error: &ureq::Error) -> anyhow::Error {
     eprintln!("Could not reach {who}: {error}");
     match error {
         ureq::Error::Timeout(_) => anyhow!(
             "{who} didn't answer within {} minutes. Try again later.",
-            TIMEOUT.as_secs() / 60
+            timeout.as_secs() / 60
         ),
         _ => anyhow!("Couldn't reach {who}. {hint}"),
     }
@@ -223,7 +223,10 @@ pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyh
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, base_url, failure, host, no_response, runs_locally, without_userinfo};
+    use super::{
+        Provider, TIMEOUT, base_url, failure, host, no_response, runs_locally, without_userinfo,
+    };
+    use std::time::Duration;
 
     #[test]
     fn provider_ids_round_trip() {
@@ -331,14 +334,21 @@ mod tests {
             no_response(
                 "http://whisper.lan/v1",
                 "Check that the server is running.",
+                Duration::from_secs(80 * 60),
                 &timeout
             )
             .to_string(),
-            "http://whisper.lan/v1 didn't answer within 10 minutes. Try again later."
+            "http://whisper.lan/v1 didn't answer within 80 minutes. Try again later."
         );
         let refused = ureq::Error::ConnectionFailed;
         assert_eq!(
-            no_response("Claude", "Check the internet connection.", &refused).to_string(),
+            no_response(
+                "Claude",
+                "Check the internet connection.",
+                TIMEOUT,
+                &refused
+            )
+            .to_string(),
             "Couldn't reach Claude. Check the internet connection."
         );
     }

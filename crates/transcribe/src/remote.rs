@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use crumble_remote::{Provider, base_url, failure, no_response, post, without_userinfo};
+use crumble_remote::{Provider, TIMEOUT, base_url, failure, no_response, post, without_userinfo};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -67,7 +67,9 @@ impl Transcriber for OpenAiCompatible {
             let mut heard = Vec::new();
             for piece in pieces {
                 let m4a = scratch.m4a(&audio[piece.bytes.clone()])?;
-                let response = self.upload(&url, base, &m4a, language(locale))?;
+                // A local server may transcribe slower than the audio plays.
+                let timeout = TIMEOUT.max(piece.length * 2);
+                let response = self.upload(&url, base, &m4a, language(locale), timeout)?;
                 heard.extend(parse(&response, *track, piece)?);
                 done += 1;
                 #[allow(clippy::cast_precision_loss, reason = "a few pieces")]
@@ -80,8 +82,15 @@ impl Transcriber for OpenAiCompatible {
 }
 
 impl OpenAiCompatible {
-    /// Sends one piece of audio and returns the server's answer.
-    fn upload(&self, url: &str, base: &str, m4a: &[u8], language: &str) -> anyhow::Result<String> {
+    /// Sends one piece of audio and returns the server's answer, within `timeout`.
+    fn upload(
+        &self,
+        url: &str,
+        base: &str,
+        m4a: &[u8],
+        language: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
         let boundary = format!("crumble-{}", Uuid::now_v7().simple());
         let mut fields = vec![
             ("model", self.model.trim()),
@@ -98,11 +107,12 @@ impl OpenAiCompatible {
             .map(|value| ("authorization", value.as_str()))
             .collect();
         let content_type = format!("multipart/form-data; boundary={boundary}");
-        let (status, text) = post(url, &headers, &content_type, &body).map_err(|error| {
-            // The address may hold a user name and password.
-            let base = without_userinfo(base);
-            no_response(&base, "Check that the server is running.", &error)
-        })?;
+        let (status, text) =
+            post(url, &headers, (&content_type, &body), timeout).map_err(|error| {
+                // The address may hold a user name and password.
+                let base = without_userinfo(base);
+                no_response(&base, "Check that the server is running.", timeout, &error)
+            })?;
         if status != 200 {
             return Err(failure(
                 Provider::OpenAiCompatible,

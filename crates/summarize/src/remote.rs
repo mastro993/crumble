@@ -3,7 +3,9 @@
 //! request's header: never into an error, a log, or anything else this module returns.
 
 use anyhow::{Context as _, bail};
-use crumble_remote::{Provider, base_url, failure, no_response, post_json, without_userinfo};
+use crumble_remote::{
+    Provider, TIMEOUT, base_url, failure, no_response, post_json, without_userinfo,
+};
 use serde_json::{Value, json};
 
 use crate::{Summarizer, prompt};
@@ -80,8 +82,9 @@ impl Claude {
             ("x-api-key", self.api_key.as_str()),
             ("anthropic-version", CLAUDE_VERSION),
         ];
-        let (status, text) = post_json(CLAUDE_URL, &headers, &body)
-            .map_err(|error| no_response("Claude", "Check the internet connection.", &error))?;
+        let (status, text) = post_json(CLAUDE_URL, &headers, &body).map_err(|error| {
+            no_response("Claude", "Check the internet connection.", TIMEOUT, &error)
+        })?;
         if status != 200 {
             return Err(failure(Provider::Claude, &self.model, status, &text));
         }
@@ -132,7 +135,7 @@ impl OpenAiCompatible {
         let (status, text) = post_json(&url, &headers, &body).map_err(|error| {
             // The address may hold a user name and password.
             let base = without_userinfo(base);
-            no_response(&base, "Check that the server is running.", &error)
+            no_response(&base, "Check that the server is running.", TIMEOUT, &error)
         })?;
         if status != 200 {
             return Err(failure(
