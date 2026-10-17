@@ -197,6 +197,17 @@ fn the_key_wins_over_an_older_snapshot() {
     assert_eq!(ok(notes.for_event(&back)), Some(keyed));
 }
 
+#[test]
+fn events_of_other_series_with_the_same_title_and_start_keep_their_own_notes() {
+    let mut notes = Notes::in_memory();
+    let mine = ok(notes.create(Some(&event(Some("a"), None, "Lunch", timed(at(12)))), at(6)));
+    let other = event(Some("b"), None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.for_event(&other)), None);
+    assert_ne!(ok(notes.create(Some(&other), at(7))).id, mine.id);
+    let unsynced = event(None, None, "Lunch", timed(at(12)));
+    assert_eq!(ok(notes.for_event(&unsynced)), None);
+}
+
 /// Inserts an attached Note straight into the table, past `create`'s lookup.
 fn insert(
     notes: &mut Notes,

@@ -127,8 +127,10 @@ impl Notes {
     }
 
     /// The Note of this occurrence: the one whose key matches the Event's, else the oldest whose
-    /// snapshot matches its title and start, as for a Note made before the Event synced. A read
-    /// only; stored keys are never rewritten here.
+    /// snapshot matches its title and start: a Note made before the Event synced, or one of its
+    /// series whose occurrence key changed. A Note keyed to another series never matches, so two
+    /// Events that share a title and start keep their own Notes. A read only; stored keys are
+    /// never rewritten here.
     pub fn for_event(&mut self, event: &Event) -> anyhow::Result<Option<Note>> {
         let occurrence = event.occurrence.map(encode_occurrence);
         // With no UID, `event_series_uid = NULL` is never true, so only the snapshot matches.
@@ -137,7 +139,12 @@ impl Notes {
             .and(notes::event_occurrence.is(occurrence.as_deref()));
         let snapshot = notes::event_title
             .eq(&event.title)
-            .and(notes::event_start.eq(encode_occurrence(start_of(&event.when))));
+            .and(notes::event_start.eq(encode_occurrence(start_of(&event.when))))
+            .and(
+                notes::event_series_uid
+                    .is_null()
+                    .or(notes::event_series_uid.eq(event.series_uid.as_deref())),
+            );
         let row = notes::table
             .filter(notes::deleted_at.is_null())
             .filter(key.or(snapshot))
