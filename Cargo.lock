@@ -1366,6 +1366,8 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "sonora",
+ "sonora-aec3",
+ "sonora-common-audio",
 ]
 
 [[package]]

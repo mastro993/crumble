@@ -1,40 +1,43 @@
 //! Removing the Mac's own sound from the microphone. On speakers the microphone hears the call
 //! too, so the mic track would hold the other side a second time, a little later. The system
-//! track is what the Mac played, so it is the reference that WebRTC's echo canceller (AEC3,
-//! through `sonora`) subtracts from the microphone, 10 ms at a time (ADR 0005).
+//! track is what the Mac played, so it is the reference whose echo WebRTC's echo canceller (AEC3,
+//! from `sonora`) subtracts from the microphone, 10 ms at a time (ADR 0005).
 //!
 //! The writer thread feeds both tracks here as their blocks arrive. Each block carries the host
 //! time of its first sample, so a microphone frame is paired with the reference from the same
-//! moment, whichever device started first, and across a gap or two clocks drifting apart. The
-//! microphone's samples all come out, in order, one for one; only the reference is trimmed or
-//! padded with silence to line up.
+//! moment, [`LEAD`] on, whichever device started first, and across a gap or two clocks drifting
+//! apart. The microphone's samples all come out, in order, one for one; only the reference is
+//! trimmed or padded with silence to line up.
+
+mod linear;
 
 use std::collections::VecDeque;
 
 use anyhow::anyhow;
-use sonora::config::{EchoCanceller, MaxProcessingRate, Pipeline};
-use sonora::{AudioProcessing, Config, StreamConfig};
 
-/// How far the reference may sit from the microphone frame before it is trimmed or padded to
-/// line up. Within it, AEC3's own delay estimate absorbs the difference.
-const TOLERANCE: f64 = 0.002;
+use linear::Linear;
+
+/// How much later than the microphone frame the reference it is paired with starts. The echo
+/// filter only finds echo that comes after its reference, so this keeps it there even if the
+/// tap stamps its blocks a little after the Mac plays them.
+const LEAD: f64 = 0.05;
+/// How far the reference may drift from where [`LEAD`] puts it before it is trimmed or padded to
+/// line up: well above any jitter in the host times. Within it, AEC3's own delay estimate
+/// follows.
+const TOLERANCE: f64 = 0.01;
 /// How long the microphone waits for its reference before it is cleaned against silence, so a
 /// stalled tap never holds the microphone back for long.
 const MAX_WAIT: f64 = 0.5;
 
 /// The echo canceller and the samples of each track still waiting to be paired.
 pub(super) struct Echo {
-    processing: AudioProcessing,
+    linear: Linear,
     mic: Stream,
     reference: Stream,
     /// Scratch frames of 10 ms, at each track's rate, allocated once.
     mic_in: Vec<f32>,
     mic_out: Vec<f32>,
     reference_in: Vec<f32>,
-    reference_out: Vec<f32>,
-    /// Set after the first processing error, which is logged once; the microphone then passes
-    /// through as it was recorded.
-    failed: bool,
     /// The most reference samples kept: what the writer may drain at once, plus [`MAX_WAIT`].
     kept: usize,
     /// Set once a block came without a host time, which is logged once: such blocks are paired
@@ -45,35 +48,17 @@ pub(super) struct Echo {
 impl Echo {
     /// An echo canceller for a microphone at `mic_rate` and a reference at `reference_rate`,
     /// of which the writer may hand over up to `queued` samples at once, as after a stall. Only
-    /// echo cancellation runs: no noise suppression and no gain control, so the voice stays as
-    /// recorded.
+    /// AEC3 runs, and below 8 kHz only its echo filter ([`linear`]): no noise suppression and no
+    /// gain control, so the voice stays as recorded.
     pub(super) fn new(mic_rate: f64, reference_rate: f64, queued: usize) -> anyhow::Result<Self> {
         let (mic, reference) = (hertz(mic_rate)?, hertz(reference_rate)?);
-        let config = Config {
-            pipeline: Pipeline {
-                // Keeps the band above 16 kHz instead of the 32 kHz default.
-                maximum_internal_processing_rate: MaxProcessingRate::Rate48kHz,
-                ..Pipeline::default()
-            },
-            echo_canceller: Some(EchoCanceller::default()),
-            ..Config::default()
-        };
-        let (mic_config, reference_config) =
-            (StreamConfig::new(mic, 1), StreamConfig::new(reference, 1));
-        let (mic_frame, reference_frame) = (mic_config.num_frames(), reference_config.num_frames());
         Ok(Self {
-            processing: AudioProcessing::builder()
-                .config(config)
-                .capture_config(mic_config)
-                .render_config(reference_config)
-                .build(),
+            linear: Linear::new(mic, reference),
             mic: Stream::new(mic_rate),
             reference: Stream::new(reference_rate),
-            mic_in: vec![0.0; mic_frame],
-            mic_out: vec![0.0; mic_frame],
-            reference_in: vec![0.0; reference_frame],
-            reference_out: vec![0.0; reference_frame],
-            failed: false,
+            mic_in: vec![0.0; mic / 100],
+            mic_out: vec![0.0; mic / 100],
+            reference_in: vec![0.0; reference / 100],
             untimed: false,
             // Enough that a full queue, drained before the microphone, loses none the microphone
             // still needs; and a bound for when the microphone stops while the tap goes on.
@@ -84,9 +69,6 @@ impl Echo {
     /// Adds what the Mac played, starting at host time `at` in seconds when known. Only the
     /// newest `kept` samples stay.
     pub(super) fn reference(&mut self, at: Option<f64>, samples: &[f32]) {
-        if self.failed {
-            return;
-        }
         self.note_untimed(at);
         self.reference.push(at, samples);
         let excess = self.reference.samples.len().saturating_sub(self.kept);
@@ -113,11 +95,6 @@ impl Echo {
     /// every whole frame when `stopping`.
     fn drain(&mut self, stopping: bool, out: &mut Vec<f32>) {
         while self.mic.samples.len() >= self.mic_in.len() {
-            if self.failed {
-                // The canceller stopped: the rest passes through as recorded, in order.
-                self.mic.take_all(out);
-                return;
-            }
             let waited = self.mic.samples.len() as f64 / self.mic.rate;
             if !self.take_reference(stopping || waited >= MAX_WAIT) {
                 return;
@@ -127,7 +104,7 @@ impl Echo {
     }
 
     fn note_untimed(&mut self, at: Option<f64>) {
-        if at.is_none() && !self.untimed && !self.failed {
+        if at.is_none() && !self.untimed {
             eprintln!(
                 "Recording: a block came without a host time; the tracks are paired by count"
             );
@@ -140,16 +117,17 @@ impl Echo {
     fn take_reference(&mut self, now: bool) -> bool {
         let (rate, frame) = (self.reference.rate, self.reference_in.len());
         let ahead = match (self.reference.front_time(), self.mic.front_time()) {
-            (Some(reference), Some(mic)) => reference - mic,
+            (Some(reference), Some(mic)) => reference - mic - LEAD,
             _ => 0.0,
         };
         if ahead < -TOLERANCE {
-            // The reference starts before this frame: what came earlier has no echo left in it.
+            // The reference starts earlier than this frame needs, as when the tap started first:
+            // what came before is dropped.
             let late = (-ahead * rate).round() as usize;
             self.reference.drop_front(late);
         }
-        // The reference starts after this frame, as when the tap started later or had a gap:
-        // nothing played then, so the frame begins with silence.
+        // The reference starts later than this frame needs, as when the tap started later or had
+        // a gap: nothing played then, so the frame begins with silence.
         let silence = if ahead > TOLERANCE {
             ((ahead * rate).round() as usize).min(frame)
         } else {
@@ -167,25 +145,12 @@ impl Echo {
         true
     }
 
-    /// Feeds `reference_in`, then cleans the microphone's next frame and appends it to `out`;
-    /// on an error, the frame as it was.
+    /// Cleans the microphone's next frame against `reference_in` and appends it to `out`.
     fn clean_frame(&mut self, out: &mut Vec<f32>) {
         self.mic.take(&mut self.mic_in);
-        let processed = self
-            .processing
-            .process_render_f32(&[&self.reference_in], &mut [&mut self.reference_out])
-            .and_then(|()| {
-                self.processing
-                    .process_capture_f32(&[&self.mic_in], &mut [&mut self.mic_out])
-            });
-        match processed {
-            Ok(()) => out.extend_from_slice(&self.mic_out),
-            Err(error) => {
-                eprintln!("Recording: echo cancellation stopped: {error}");
-                self.failed = true;
-                out.extend_from_slice(&self.mic_in);
-            }
-        }
+        self.linear
+            .process(&self.reference_in, &self.mic_in, &mut self.mic_out);
+        out.extend_from_slice(&self.mic_out);
     }
 }
 
@@ -263,7 +228,7 @@ impl Stream {
 
 /// A device's nominal rate as the whole hertz the canceller takes: a multiple of 100, so its
 /// 10 ms frames hold whole samples and keep time with the other track's.
-fn hertz(rate: f64) -> anyhow::Result<u32> {
+fn hertz(rate: f64) -> anyhow::Result<usize> {
     if rate % 100.0 != 0.0 || !(8_000.0..=384_000.0).contains(&rate) {
         return Err(anyhow!("no echo cancellation at {rate} Hz"));
     }
@@ -272,7 +237,7 @@ fn hertz(rate: f64) -> anyhow::Result<u32> {
         clippy::cast_sign_loss,
         reason = "a whole number in range"
     )]
-    Ok(rate as u32)
+    Ok(rate as usize)
 }
 
 #[cfg(test)]
@@ -286,8 +251,46 @@ mod tests {
     const QUEUED: usize = 240_000;
     /// 40 ms from the speakers to the microphone.
     const DELAY: usize = 1_920;
+    /// How long a test's call lasts: the filter has converged for the last 5 s.
+    const SECONDS: f64 = 10.0;
 
-    /// Noise in [-0.5, 0.5) from a fixed seed, standing in for a voice.
+    /// A call from a fixed seed: noise below 7 kHz, where the echo filter works, sampled at
+    /// `rate` from `start` seconds for `seconds`. The same call comes out at any rate, from 1 s
+    /// before zero on.
+    fn call(seed: u32, rate: f64, start: f64, seconds: f64) -> Vec<f32> {
+        use std::f64::consts::PI;
+        const CUTOFF: f64 = 7_000.0;
+        // Samples at 48 kHz each side of a point that shape it.
+        const TAPS: isize = 32;
+        let first = -(RATE as isize) - TAPS;
+        let mut next = random(seed);
+        let white: Vec<f64> = (first..((start + seconds) * RATE) as isize + TAPS + 1)
+            .map(|_| next() - 0.5)
+            .collect();
+        (0..(seconds * rate) as usize)
+            .map(|index| {
+                // Where the point falls among the noise's samples.
+                let at = (start + index as f64 / rate) * RATE;
+                let near = at.floor() as isize;
+                let sum: f64 = (near - TAPS + 1..=near + TAPS)
+                    .map(|sample| {
+                        let apart = at - sample as f64;
+                        let x = 2.0 * CUTOFF / RATE * apart;
+                        let sinc = if x == 0.0 {
+                            1.0
+                        } else {
+                            (PI * x).sin() / (PI * x)
+                        };
+                        let window = 0.5 + 0.5 * (PI * apart / TAPS as f64).cos();
+                        white[(sample - first) as usize] * sinc * window
+                    })
+                    .sum();
+                (sum * 2.0 * CUTOFF / RATE) as f32
+            })
+            .collect()
+    }
+
+    /// Noise in [-0.5, 0.5) from a fixed seed.
     fn noise(len: usize, seed: u32) -> Vec<f32> {
         let mut next = random(seed);
         (0..len).map(|_| (next() - 0.5) as f32).collect()
@@ -383,7 +386,7 @@ mod tests {
     fn cancelled(offset: isize, delivery: Delivery) -> f32 {
         // One second of the call before the microphone starts.
         let lead = 48_000;
-        let far = noise(lead + 48_000 * 10, 3);
+        let far = call(3, RATE, 0.0, 1.0 + SECONDS);
         let mic: Vec<f32> = (lead..far.len())
             .map(|index| far[index - DELAY] * 0.5)
             .collect();
@@ -457,34 +460,15 @@ mod tests {
         assert_cancelled(cancelled(0, untimed));
     }
 
-    /// Forty tones from a fixed seed, sampled at `rate` from `start` seconds for `seconds`,
-    /// standing in for a call at any rate.
-    fn tones(rate: f64, start: f64, seconds: f64) -> Vec<f32> {
-        let mut next = random(17);
-        let parts: Vec<(f64, f64)> = (0..40)
-            .map(|_| (100.0 + next() * 7_000.0, next() * std::f64::consts::TAU))
-            .collect();
-        (0..(seconds * rate) as usize)
-            .map(|index| {
-                let time = start + index as f64 / rate;
-                let sum: f64 = parts
-                    .iter()
-                    .map(|(hertz, phase)| (std::f64::consts::TAU * hertz * time + phase).sin())
-                    .sum();
-                (sum / 40.0) as f32
-            })
-            .collect()
-    }
-
     #[test]
     fn a_microphone_at_another_rate_is_cleaned_too() {
         let (mic_rate, reference_rate) = (44_100.0, RATE);
         // The microphone hears the call 40 ms after the Mac plays it, at half the level.
-        let mic: Vec<f32> = tones(mic_rate, -0.04, 10.0)
+        let mic: Vec<f32> = call(3, mic_rate, -0.04, SECONDS)
             .iter()
             .map(|sample| sample * 0.5)
             .collect();
-        let reference = tones(reference_rate, 0.0, 10.0);
+        let reference = call(3, reference_rate, 0.0, SECONDS);
         let delivery = Delivery {
             mic_rate,
             reference_rate,
@@ -500,12 +484,29 @@ mod tests {
     }
 
     #[test]
-    fn a_voice_with_no_echo_stays() {
-        let near = noise(48_000 * 6, 11);
-        let silence = vec![0.0; near.len()];
-        let [out, _] = run(&mut echo(), &near, &silence, ALL);
-        let change = reduction(&near, &out);
-        assert!(change.abs() < 1.0, "{change:.1} dB");
+    fn a_voice_over_the_call_stays() {
+        let voice: Vec<f32> = call(11, RATE, 0.0, SECONDS)
+            .iter()
+            .map(|sample| sample * 0.5)
+            .collect();
+        let far = call(3, RATE, 0.0, SECONDS);
+        // The echo is twice as loud as the voice, as on loud speakers.
+        let mic: Vec<f32> = (0..voice.len())
+            .map(|index| voice[index] + index.checked_sub(DELAY).map_or(0.0, |at| far[at]))
+            .collect();
+        let [over, _] = run(&mut echo(), &mic, &far, ALL);
+        let [alone, _] = run(&mut echo(), &voice, &vec![0.0; voice.len()], ALL);
+        // Alone, the voice comes out as it went in.
+        let change = reduction(&voice, &alone);
+        assert!(change.abs() < 1.0, "alone {change:.1} dB");
+        // Over the call, the same voice is in the cleaned microphone at its level.
+        let tail = voice.len() - 48_000 * 5..;
+        let dot =
+            |a: &[f32], b: &[f32]| -> f64 { a.iter().zip(b).map(|(a, b)| f64::from(a * b)).sum() };
+        let kept = dot(&over[tail.clone()], &alone[tail.clone()])
+            / dot(&alone[tail.clone()], &alone[tail]);
+        let kept = 20.0 * kept.log10();
+        assert!(kept.abs() < 1.0, "over the call {kept:.1} dB");
     }
 
     #[test]
