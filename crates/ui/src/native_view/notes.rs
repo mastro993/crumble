@@ -54,9 +54,10 @@ pub(super) struct NoteDetail {
     memo_dirty: bool,
     /// Saves the Memo once typing pauses.
     memo_save: Task<()>,
-    /// Memos whose save failed, shown again instead of the stored ones so no text is lost; each
-    /// later save tries them again.
-    unsaved: HashMap<NoteId, String>,
+    /// Titles and Memos whose save failed, shown again instead of the stored ones so no text is
+    /// lost; each later save tries them again.
+    unsaved_titles: HashMap<NoteId, Option<String>>,
+    unsaved_memos: HashMap<NoteId, String>,
     /// Whether the last save failed.
     save_failed: bool,
     /// Where the Note actions button was last drawn; its menu opens below it.
@@ -102,7 +103,8 @@ impl NoteDetail {
             memo,
             memo_dirty: false,
             memo_save: Task::ready(()),
-            unsaved: HashMap::new(),
+            unsaved_titles: HashMap::new(),
+            unsaved_memos: HashMap::new(),
             save_failed: false,
             actions: Rc::default(),
             _subscriptions: subscriptions,
@@ -135,8 +137,15 @@ impl NativeView {
         let subject = self.note_subject(cx);
         match (&mut self.note_detail.subject, &subject) {
             (Some(shown), Some(subject)) if shown.same(subject) => {
-                // The same occurrence, maybe with new details.
+                // The same occurrence, maybe with new details, such as a new Event title.
+                let renamed = placeholder(shown) != placeholder(subject);
                 *shown = subject.clone();
+                if renamed {
+                    let placeholder = placeholder(subject);
+                    self.note_detail.title.update(cx, |input, cx| {
+                        input.set_placeholder(placeholder, window, cx);
+                    });
+                }
                 return;
             }
             (None, None) => return,
@@ -155,18 +164,19 @@ impl NativeView {
         self.show_note(note, window, cx);
     }
 
-    /// Shows `note` and fills the fields with it, with a Memo that failed to save in place of
-    /// the stored one.
+    /// Shows `note` and fills the fields with it, with a title or Memo that failed to save in
+    /// place of the stored one.
     fn show_note(&mut self, mut note: Option<Note>, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
-        if let Some(note) = &mut note
-            && let Some(memo) = detail.unsaved.get(&note.id)
-        {
-            note.memo.clone_from(memo);
+        if let Some(note) = &mut note {
+            if let Some(title) = detail.unsaved_titles.get(&note.id) {
+                note.title.clone_from(title);
+            }
+            if let Some(memo) = detail.unsaved_memos.get(&note.id) {
+                note.memo.clone_from(memo);
+            }
         }
-        detail.memo_dirty = note
-            .as_ref()
-            .is_some_and(|note| detail.unsaved.contains_key(&note.id));
+        detail.memo_dirty = false;
         detail.note = note;
         detail.memo_save = Task::ready(());
         let (title, memo) = detail
@@ -174,10 +184,7 @@ impl NativeView {
             .as_ref()
             .map(|note| (note.title.clone().unwrap_or_default(), note.memo.clone()))
             .unwrap_or_default();
-        let placeholder = match &detail.subject {
-            Some(Subject::Event(event)) => event_title(event),
-            _ => "Quick note".to_owned(),
-        };
+        let placeholder = detail.subject.as_ref().map(placeholder).unwrap_or_default();
         detail.title.update(cx, |input, cx| {
             input.set_value(title, window, cx);
             input.set_placeholder(placeholder, window, cx);
@@ -188,16 +195,27 @@ impl NativeView {
         cx.notify();
     }
 
-    /// Saves the shown Note's title and Memo where they changed, and tries again the Memos
-    /// that failed to save.
+    /// Saves the shown Note's title and Memo where they changed, and tries again the ones that
+    /// failed to save.
     fn save_note(&mut self, cx: &mut Context<Self>) {
         self.save_title(cx);
         self.save_memo(cx);
+        self.retry_unsaved();
+    }
+
+    /// Writes again the titles and Memos that failed to save, and says "Couldn't save" while
+    /// any still fails.
+    fn retry_unsaved(&mut self) {
         let detail = &mut self.note_detail;
         let notes = &mut self.notes;
+        let now = Utc::now();
         detail
-            .unsaved
-            .retain(|id, memo| notes.set_memo(id, memo, Utc::now()).is_err());
+            .unsaved_titles
+            .retain(|id, title| notes.set_title(id, title.as_deref(), now).is_err());
+        detail
+            .unsaved_memos
+            .retain(|id, memo| notes.set_memo(id, memo, now).is_err());
+        detail.save_failed = !detail.unsaved_titles.is_empty() || !detail.unsaved_memos.is_empty();
     }
 
     fn memo_changed(&mut self, cx: &mut Context<Self>) {
@@ -209,8 +227,8 @@ impl NativeView {
         });
     }
 
-    /// Writes the Memo field to the shown Note if it changed; a failure keeps the text and
-    /// says so under the card.
+    /// Writes the Memo field to the shown Note if it changed, then tries again what failed to
+    /// save; a failure keeps the text and says so under the card.
     fn save_memo(&mut self, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
         if !detail.memo_dirty {
@@ -224,23 +242,19 @@ impl NativeView {
         };
         note.memo.clone_from(&memo);
         let note = note.clone();
-        match self.notes.set_memo(&note.id, &memo, Utc::now()) {
-            Ok(()) => {
-                detail.unsaved.remove(&note.id);
-                detail.save_failed = false;
-            }
-            Err(error) => {
-                eprintln!("Could not save the Memo: {error}");
-                detail.unsaved.insert(note.id.clone(), memo);
-                detail.memo_dirty = true;
-                detail.save_failed = true;
-            }
+        if let Err(error) = self.notes.set_memo(&note.id, &memo, Utc::now()) {
+            eprintln!("Could not save the Memo: {error}");
+            detail.unsaved_memos.insert(note.id.clone(), memo);
+        } else {
+            detail.unsaved_memos.remove(&note.id);
         }
         self.agenda.note_changed(&note);
+        self.retry_unsaved();
         cx.notify();
     }
 
-    /// Writes the title field to the shown Note if it changed; an empty title is none.
+    /// Writes the title field to the shown Note if it changed, then tries again what failed to
+    /// save; an empty title is none, and a failure keeps the title as the Memo's does.
     fn save_title(&mut self, cx: &mut Context<Self>) {
         let detail = &mut self.note_detail;
         let typed = detail.title.read(cx).value().trim().to_owned();
@@ -251,18 +265,16 @@ impl NativeView {
         if note.title == title {
             return;
         }
-        match self.notes.set_title(&note.id, title.as_deref(), Utc::now()) {
-            Ok(()) => {
-                note.title = title;
-                detail.save_failed = false;
-                let note = note.clone();
-                self.agenda.note_changed(&note);
-            }
-            Err(error) => {
-                eprintln!("Could not save the title: {error}");
-                detail.save_failed = true;
-            }
+        note.title.clone_from(&title);
+        let note = note.clone();
+        if let Err(error) = self.notes.set_title(&note.id, title.as_deref(), Utc::now()) {
+            eprintln!("Could not save the title: {error}");
+            detail.unsaved_titles.insert(note.id.clone(), title);
+        } else {
+            detail.unsaved_titles.remove(&note.id);
         }
+        self.agenda.note_changed(&note);
+        self.retry_unsaved();
         cx.notify();
     }
 
@@ -305,12 +317,22 @@ impl NativeView {
             cx.notify();
             return;
         }
-        detail.unsaved.remove(id);
+        detail.unsaved_titles.remove(id);
+        detail.unsaved_memos.remove(id);
         detail.memo_dirty = false;
         if matches!(detail.subject, Some(Subject::QuickNote(_))) {
             self.agenda.quick_note_deleted(id);
         }
         self.show_note(None, window, cx);
+    }
+}
+
+/// The title field's placeholder while the Note has no title: the Event's title, or
+/// `Quick note`.
+fn placeholder(subject: &Subject) -> String {
+    match subject {
+        Subject::Event(event) => event_title(event),
+        Subject::QuickNote(_) => "Quick note".to_owned(),
     }
 }
 

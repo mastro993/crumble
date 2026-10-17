@@ -3,7 +3,7 @@
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
-use super::{Subject, event_title};
+use super::{Subject, placeholder};
 use chrono::Local;
 use crumble_calendar::events::when_text;
 use crumble_theme::SURFACE_RADIUS;
@@ -39,14 +39,10 @@ impl NativeView {
                 .font_semibold()
                 .into_any_element()
         } else {
-            let title = match subject {
-                Subject::Event(event) => event_title(event),
-                Subject::QuickNote(_) => "Quick note".to_owned(),
-            };
             div()
                 .text_2xl()
                 .font_semibold()
-                .child(title)
+                .child(placeholder(subject))
                 .into_any_element()
         };
         let body = if detail.note.is_some() {
