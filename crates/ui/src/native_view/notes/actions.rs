@@ -1,4 +1,5 @@
-//! The Note actions in the page header: a "…" button opening a menu with Delete note.
+//! The Note actions in the page header: a "…" button opening a menu with Delete recording when
+//! the Note has one, and Delete note.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
@@ -45,20 +46,36 @@ impl NativeView {
         )
     }
 
-    /// Opens the Note actions menu below its button: Delete note.
+    /// Opens the Note actions menu below its button: Delete recording when the shown Note has a
+    /// finished one, and Delete note.
     fn open_note_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let detail = &self.note_detail;
         let Some(shown) = detail.note.as_ref().map(|note| note.id.clone()) else {
             return;
         };
         let view = cx.entity().downgrade();
-        let items = vec![
+        let mut items = Vec::new();
+        let recorded = detail
+            .note
+            .as_ref()
+            .is_some_and(|note| note.recording.is_some() && !self.is_recording(&note.id));
+        if recorded {
+            let id = shown.clone();
+            items.push(
+                MenuItem::new("note-delete-recording", "Delete recording")
+                    .icon("delete")
+                    .on_select(act(&view, move |view, window, cx| {
+                        view.confirm_delete_recording(id.clone(), window, cx)
+                    })),
+            );
+        }
+        items.push(
             MenuItem::new("note-delete", "Delete note")
                 .icon("delete")
                 .on_select(act(&view, move |view, window, cx| {
                     view.confirm_delete_note(shown.clone(), window, cx)
                 })),
-        ];
+        );
         let bounds = detail.actions.get();
         self.menu = Some(OpenMenu::new(
             OWNER,
@@ -83,7 +100,7 @@ impl NativeView {
             let (view, id) = (view.clone(), id.clone());
             alert
                 .title("Delete this note?")
-                .description("Its title and Memo are deleted. This can't be undone.")
+                .description("Its title, Memo and Recording are deleted. This can't be undone.")
                 .show_cancel(true)
                 .ok_text("Delete")
                 .ok_variant(ButtonVariant::Danger)

@@ -44,6 +44,8 @@ diesel::table! {
         created_at -> Text,
         updated_at -> Text,
         deleted_at -> Nullable<Text>,
+        recording_started_at -> Nullable<Text>,
+        recording_duration_ms -> Nullable<Integer>,
     }
 }
 

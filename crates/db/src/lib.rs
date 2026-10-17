@@ -1,4 +1,5 @@
-//! The one SQLite database file Crumble keeps, its migrations and the schema they produce.
+//! The one SQLite database file Crumble keeps, the folder it sits in, its migrations and the
+//! schema they produce.
 //! Domain crates such as `crumble-store` and `crumble-notes` each open their own connection
 //! through [`open_file`] and own their queries.
 
@@ -17,13 +18,19 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 /// so a folder keeps its name for good.
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
-/// `~/Library/Application Support/Crumble/crumble.sqlite3`, its folder created when missing.
-fn path() -> anyhow::Result<PathBuf> {
+/// `~/Library/Application Support/Crumble`, created when missing: the database file, and
+/// beside it what is kept as files, such as Recordings.
+pub fn data_dir() -> anyhow::Result<PathBuf> {
     let dir = dirs::data_dir()
         .ok_or_else(|| anyhow!("no data directory"))?
         .join("Crumble");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("crumble.sqlite3"))
+    Ok(dir)
+}
+
+/// `crumble.sqlite3` in [`data_dir`].
+fn path() -> anyhow::Result<PathBuf> {
+    Ok(data_dir()?.join("crumble.sqlite3"))
 }
 
 /// Opens the app's database file and runs pending migrations.

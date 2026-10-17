@@ -26,5 +26,9 @@
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Crumble shows the events from your calendars on its Calendar page.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Crumble records your microphone when you start a Recording in a Note, and keeps it on this Mac.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Crumble records the sound your Mac plays, such as a call, when you start a Recording in a Note, and keeps it on this Mac.</string>
 </dict>
 </plist>

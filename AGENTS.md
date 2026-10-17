@@ -14,7 +14,8 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `crates/sync` (`crumble-sync`): GPUI entities that read EventKit: `CalendarSync`, `CalendarEvents`, `AgendaEvents`. GPUI core only, no `gpui-kit`.
 - `crates/db` (`crumble-db`): the one SQLite file, its migrations, and the Diesel schema; `open_file()` and `open(url)`. No GPUI.
 - `crates/store` (`crumble-store`): state kept across restarts, and Account rules: order, color, Alias, label, Disabled and Hidden filtering. No GPUI.
-- `crates/notes` (`crumble-notes`): Notes and Quick notes, and how a Note finds its Event. No GPUI.
+- `crates/notes` (`crumble-notes`): Notes and Quick notes, how a Note finds its Event, and the folder each Recording lives in. No GPUI.
+- `crates/audio` (`crumble-audio`): Recordings: microphone and process-tap capture into AAC files, and playback. No GPUI.
 - `crates/theme` (`crumble-theme`): colors, typography, dimensions.
 - `crates/eventkit` (`crumble-eventkit`): read-only EventKit bridge, plain Rust data, no GPUI.
 
@@ -32,6 +33,7 @@ Split on one question: does this code need GPUI?
 - Presentation-only pure helpers (route history, row reordering, menu stepping, sidebar sizing) stay in `crumble-ui` as GPUI-free modules with plain `#[test]`s.
 - Keep `gpui-kit` and the `mcp` feature out of domain crates.
 - Link anything kept about an Event, such as a Note, by `series_uid` and `occurrence` ([ADR 0004](docs/adr/0004-event-identity-for-notes.md)). `Event::id` changes when the Event moves.
+- Core Audio callbacks never block; hand buffers to the writer thread ([ADR 0005](docs/adr/0005-recording-with-a-process-tap.md)).
 
 ## New crates
 
@@ -48,7 +50,7 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 - Use concrete types and functions. Add a trait only when it has two real implementations.
 - Keep crate APIs narrow: `pub(crate)` by default, `pub` only for items another crate uses, each with a doc comment.
 - Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`.
-- Only `crumble-eventkit` uses `unsafe`, under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md)). Every other crate keeps `unsafe_code = "forbid"`.
+- Only `crumble-eventkit` and `crumble-audio` use `unsafe`, each under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md), [ADR 0005](docs/adr/0005-recording-with-a-process-tap.md)). Every other crate keeps `unsafe_code = "forbid"`.
 
 ## Testing
 
