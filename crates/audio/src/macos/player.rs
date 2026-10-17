@@ -138,12 +138,13 @@ impl Player {
         self.halt();
     }
 
-    /// Moves both tracks to `to`, keeping on playing if they were.
+    /// Moves both tracks to `to`, keeping on playing if they were, unless `to` is the end.
     pub fn seek(&mut self, to: Duration) {
         let playing = self.is_playing();
         self.halt();
         self.from = to.as_secs_f64().min(self.length());
-        if playing {
+        // `play` starts over from the end, which a seek there must not do.
+        if playing && self.from < self.length() {
             self.play();
         }
     }
@@ -158,7 +159,8 @@ impl Player {
         Duration::from_secs_f64(self.length())
     }
 
-    /// Whether the tracks are playing; false again once they reach the end.
+    /// Whether the tracks are playing; false again once they reach the end, though the engine
+    /// keeps running until [`Player::pause`].
     pub fn is_playing(&self) -> bool {
         self.playing && self.seconds() < self.length()
     }
