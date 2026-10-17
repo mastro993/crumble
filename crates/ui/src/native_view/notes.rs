@@ -2,11 +2,12 @@
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
 //! The Recording, its player and the header pill are in `recording`; the Transcript and the job
-//! that makes it in `transcript`.
+//! that makes it in `transcript`; the Summary and its job in `summary`.
 
 mod actions;
 mod detail;
 mod recording;
+mod summary;
 mod tabs;
 mod transcript;
 
@@ -85,6 +86,8 @@ pub(super) struct NoteDetail {
     transcript: Vec<TranscriptSegment>,
     /// The Transcripts being made, in the background.
     transcription: transcript::Transcription,
+    /// The Summaries being made, in the background.
+    summarization: summary::Summarization,
     _subscriptions: [Subscription; 3],
 }
 
@@ -139,17 +142,30 @@ impl NoteDetail {
             tab: None,
             transcript: Vec::new(),
             transcription: transcript::Transcription::default(),
+            summarization: summary::Summarization::default(),
             _subscriptions: subscriptions,
         }
     }
 
+    /// Whether the shown Transcript holds speech, which a Summary can be made from.
+    pub(super) fn spoken(&self) -> bool {
+        self.transcript
+            .iter()
+            .any(|segment| !segment.text.trim().is_empty())
+    }
+
     /// The shown Note's tabs, and the one that shows.
     fn tabs(&self) -> (Vec<tabs::NoteTab>, tabs::NoteTab) {
-        let transcript = self
-            .note
-            .as_ref()
-            .is_some_and(|note| note.transcript.is_some() || self.transcription.involves(&note.id));
-        let tabs = tabs::tabs(transcript);
+        let (summary, transcript) = self.note.as_ref().map_or((false, false), |note| {
+            (
+                // Also a spoken Transcript no job took, which the tab offers to summarize.
+                note.summary.is_some()
+                    || self.summarization.involves(&note.id)
+                    || (note.transcript.is_some() && self.spoken()),
+                note.transcript.is_some() || self.transcription.involves(&note.id),
+            )
+        });
+        let tabs = tabs::tabs(summary, transcript);
         let shown = tabs::shown(self.tab, &tabs);
         (tabs, shown)
     }
@@ -472,13 +488,15 @@ impl NativeView {
         }
         self.note_detail.playback = None;
         self.cancel_transcription(id);
-        let detail = &mut self.note_detail;
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");
-            detail.save_failed = true;
+            self.note_detail.save_failed = true;
             cx.notify();
             return;
         }
+        // Only now: a Note that stays keeps its Summary work.
+        self.cancel_summary(id);
+        let detail = &mut self.note_detail;
         detail.unsaved_titles.remove(id);
         detail.unsaved_memos.remove(id);
         detail.unsaved_recordings.remove(id);

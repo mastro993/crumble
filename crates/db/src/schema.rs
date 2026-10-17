@@ -16,6 +16,10 @@ diesel::table! {
         id -> Integer,
         first_day_of_week -> Integer,
         calendar_view -> Text,
+        summary_provider -> Nullable<Text>,
+        claude_model -> Text,
+        openai_base_url -> Text,
+        openai_model -> Text,
     }
 }
 
@@ -49,6 +53,10 @@ diesel::table! {
         transcript_model -> Nullable<Text>,
         transcript_locale -> Nullable<Text>,
         transcribed_at -> Nullable<Text>,
+        summary -> Nullable<Text>,
+        summary_provider -> Nullable<Text>,
+        summary_model -> Nullable<Text>,
+        summarized_at -> Nullable<Text>,
     }
 }
 

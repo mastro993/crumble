@@ -9,6 +9,7 @@ mod custom_color;
 mod menu;
 mod notes;
 mod route;
+mod settings_models;
 mod settings_page;
 mod shell;
 mod sidebar;
@@ -35,6 +36,7 @@ use gpui_kit::{
 use menu::OpenMenu;
 use notes::NoteDetail;
 use route::{History, Route};
+use settings_models::ModelSettings;
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
 use std::collections::{HashMap, HashSet};
@@ -55,6 +57,8 @@ pub struct NativeView {
     /// The Note the Agenda content area or the Event page shows.
     note_detail: NoteDetail,
     first_day_select: WeekdaySelect,
+    /// The fields of Settings › Models.
+    models: ModelSettings,
     calendar: CalendarPage,
     events: Entity<CalendarEvents>,
     agenda: AgendaPage,
@@ -95,6 +99,7 @@ impl NativeView {
         }
         let note_detail = NoteDetail::new(window, cx);
         let first_day_select = settings_page::first_day_select(&store, window, cx);
+        let models = settings_models::model_settings(&store, window, cx);
         let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
         let events = cx.new(|_| CalendarEvents::default());
@@ -122,6 +127,7 @@ impl NativeView {
             notes,
             note_detail,
             first_day_select,
+            models,
             calendar,
             events,
             agenda,
@@ -137,8 +143,10 @@ impl NativeView {
             menu: None,
             _minute_tick: calendar::tick_minutes(cx),
         };
-        // Recordings left without a Transcript, as when the app quit while transcribing.
+        // Recordings left without a Transcript, and Transcripts without a Summary, as when the
+        // app quit while making them.
         view.transcribe_untranscribed(cx);
+        view.summarize_unsummarized(cx);
         view
     }
 
@@ -180,7 +188,7 @@ impl Render for NativeView {
         let page = match &self.route {
             Route::Agenda => self.render_agenda(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
-            Route::Settings => self.render_settings(cx).into_any_element(),
+            Route::Settings => self.render_settings(window, cx).into_any_element(),
             Route::Event(_) => self.render_note_detail(cx),
             route => div().text_xl().child(route.title()).into_any_element(),
         };
