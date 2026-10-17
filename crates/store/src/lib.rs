@@ -4,7 +4,6 @@
 mod account_color;
 mod calendars_section;
 mod db;
-mod schema;
 
 pub use account_color::AccountColor;
 pub use calendars_section::{CalendarsSection, calendars_section};
@@ -36,7 +35,7 @@ impl Store {
     /// Opens the app's database and reads it. When it cannot be opened or read, the app runs on
     /// the defaults in an in-memory database and leaves the file alone.
     pub fn open() -> Self {
-        match db::open_file().and_then(Self::read) {
+        match crumble_db::open_file().and_then(Self::read) {
             Ok(store) => store,
             Err(error) => {
                 eprintln!("Could not open the database, using defaults: {error}");
@@ -46,7 +45,7 @@ impl Store {
     }
 
     fn in_memory() -> Self {
-        match db::open(":memory:").and_then(Self::read) {
+        match crumble_db::open(":memory:").and_then(Self::read) {
             Ok(store) => store,
             Err(error) => {
                 eprintln!("Could not open an in-memory database, changes are not kept: {error}");
@@ -334,7 +333,7 @@ mod tests {
         ));
         let url = path.to_string_lossy().into_owned();
         let open = || {
-            db::open(&url)
+            crumble_db::open(&url)
                 .and_then(Store::read)
                 .unwrap_or_else(|error| panic!("{error}"))
         };

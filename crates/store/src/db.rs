@@ -1,20 +1,15 @@
-//! The SQLite database behind [`crate::Store`]: opening it, reading it into a [`State`], and the
-//! column encodings. A stored value that no longer decodes falls back to its default.
+//! The app state tables behind [`crate::Store`]: reading them into a [`State`], writing it back,
+//! and the column encodings. A stored value that no longer decodes falls back to its default.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
-use anyhow::anyhow;
 use chrono::Weekday;
 use crumble_calendar::CalendarView;
+use crumble_db::schema::{accounts, app_state, calendars, folded_sections};
 use diesel::prelude::*;
 use diesel::upsert::excluded;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
-use crate::schema::{accounts, app_state, calendars, folded_sections};
 use crate::{AccountColor, SidebarSection};
-
-const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
 /// Everything the database holds, as the app reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,33 +43,6 @@ impl Default for State {
             account_aliases: BTreeMap::new(),
         }
     }
-}
-
-/// `~/Library/Application Support/Crumble/crumble.sqlite3`, its folder created when missing.
-fn path() -> anyhow::Result<PathBuf> {
-    let dir = dirs::data_dir()
-        .ok_or_else(|| anyhow!("no data directory"))?
-        .join("Crumble");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("crumble.sqlite3"))
-}
-
-/// Opens the app's database file and runs pending migrations.
-pub(crate) fn open_file() -> anyhow::Result<SqliteConnection> {
-    let path = path()?;
-    let url = path
-        .to_str()
-        .ok_or_else(|| anyhow!("{} is not UTF-8", path.display()))?;
-    open(url)
-}
-
-/// Opens the database at `url`, `:memory:` included, and runs pending migrations.
-pub(crate) fn open(url: &str) -> anyhow::Result<SqliteConnection> {
-    let mut connection = SqliteConnection::establish(url)?;
-    connection
-        .run_pending_migrations(MIGRATIONS)
-        .map_err(|error| anyhow!(error))?;
-    Ok(connection)
 }
 
 #[derive(Queryable, Insertable, AsChangeset)]
