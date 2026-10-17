@@ -5,6 +5,7 @@
 
 use super::NativeView;
 use super::controls::{Inactive, button};
+use super::notes::TRANSCRIBERS;
 use crumble_remote::Provider;
 use crumble_store::{Store, secrets};
 use crumble_summarize::{Availability, Claude, OpenAiCompatible, apple_availability};
@@ -19,8 +20,6 @@ use std::collections::{HashMap, HashSet};
 
 /// Width of each select and field.
 const FIELD_WIDTH: f32 = 240.0;
-/// The Providers that transcribe, in the order Settings lists them.
-const TRANSCRIBERS: [Provider; 2] = [Provider::Apple, Provider::OpenAiCompatible];
 
 /// The Models section's fields, and what it knows of the Keychain.
 pub(super) struct ModelSettings {
@@ -167,11 +166,20 @@ pub(super) fn model_settings(
         Provider::from_id(store.transcription_provider()),
     );
     let transcription = cx.new(|cx| SelectState::new(transcribers, selected, window, cx));
-    let languages = language_items();
-    let selected = languages
-        .iter()
-        .position(|item| item.locale.as_deref() == store.transcription_locale())
-        .unwrap_or_default();
+    let mut languages = language_items();
+    let stored = store.transcription_locale();
+    let selected = (languages.iter())
+        .position(|item| item.locale.as_deref() == stored)
+        .unwrap_or_else(|| {
+            // A locale SpeechAnalyzer no longer lists still applies, so it shows as picked.
+            let locale = stored.unwrap_or_default().to_owned();
+            let name = crumble_transcribe::language_name(&locale).into();
+            languages.push(LanguageItem {
+                locale: Some(locale),
+                name,
+            });
+            languages.len() - 1
+        });
     let language = cx.new(|cx| {
         SelectState::new(languages, Some(IndexPath::new(selected)), window, cx).searchable(true)
     });
@@ -226,6 +234,8 @@ pub(super) fn model_settings(
                 let SelectEvent::Confirm(Some(provider)) = event else {
                     return;
                 };
+                // What the previous Transcription Model failed at is the new one's to try.
+                view.forget_transcription_failures(view.transcription_provider());
                 view.store.set_transcription_provider(provider.id());
                 view.transcribe_untranscribed(cx);
                 cx.notify();
@@ -237,18 +247,31 @@ pub(super) fn model_settings(
             |view, _, event: &SelectEvent<Vec<LanguageItem>>, _, cx| {
                 if let SelectEvent::Confirm(Some(locale)) = event {
                     view.store.set_transcription_locale(locale.as_deref());
+                    // A language that failed, or one Apple's Model lacked, may work now.
+                    TRANSCRIBERS
+                        .into_iter()
+                        .for_each(|provider| view.forget_transcription_failures(provider));
                     cx.notify();
                 }
             },
         ),
         // Not a Summary setting, so Summary checks and failures stay.
-        cx.subscribe_in(&transcription_model, window, |view, input, event, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                let value = input.read(cx).value();
-                view.store.set_transcription_model(&value);
-                cx.notify();
-            }
-        }),
+        cx.subscribe_in(
+            &transcription_model,
+            window,
+            |view, input, event, _, cx| match event {
+                InputEvent::Change => {
+                    let value = input.read(cx).value();
+                    view.store.set_transcription_model(&value);
+                    view.forget_transcription_failures(Provider::OpenAiCompatible);
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                    view.transcribe_untranscribed(cx);
+                }
+                InputEvent::Focus => {}
+            },
+        ),
         saved_on_change(
             &claude_model,
             Provider::Claude,
@@ -327,10 +350,15 @@ fn saved_on_change(
                 save(&mut view.store, &value);
                 view.models.checks.remove(&provider);
                 view.forget_summary_failures(provider);
+                // The server's address serves Transcripts too.
+                view.forget_transcription_failures(provider);
                 cx.notify();
             }
-            // A finished address or Model may make the Summary Model ready to backfill.
-            InputEvent::PressEnter { .. } | InputEvent::Blur => view.summarize_unsummarized(cx),
+            // A finished address or Model may make a Model ready to backfill.
+            InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                view.summarize_unsummarized(cx);
+                view.transcribe_untranscribed(cx);
+            }
             InputEvent::Focus => {}
         },
     )
@@ -357,8 +385,10 @@ impl NativeView {
                 self.models.saved_keys.insert(provider);
                 self.models.checks.remove(&provider);
                 self.forget_summary_failures(provider);
+                self.forget_transcription_failures(provider);
                 field.update(cx, |input, cx| input.set_value("", window, cx));
                 self.summarize_unsummarized(cx);
+                self.transcribe_untranscribed(cx);
             }
             Err(error) => {
                 eprintln!("Could not save the key: {error:#}");
@@ -376,6 +406,7 @@ impl NativeView {
                 self.models.saved_keys.remove(&provider);
                 self.models.checks.remove(&provider);
                 self.forget_summary_failures(provider);
+                self.forget_transcription_failures(provider);
             }
             Err(error) => {
                 eprintln!("Could not remove the key: {error:#}");

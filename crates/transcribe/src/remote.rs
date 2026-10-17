@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
-use crumble_remote::{Provider, failure, post, without_userinfo};
+use crumble_remote::{Provider, base_url, failure, post, without_userinfo};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -44,13 +44,7 @@ impl Transcriber for OpenAiCompatible {
         locale: &str,
         progress: &mut (dyn FnMut(f32) + Send),
     ) -> anyhow::Result<Vec<Segment>> {
-        let base = self.base_url.trim().trim_end_matches('/');
-        if base.is_empty() {
-            bail!("Enter the server's address in Settings.");
-        }
-        if !base.contains("://") {
-            bail!("Start the server's address with http:// or https://.");
-        }
+        let base = base_url(&self.base_url)?;
         if self.model.trim().is_empty() {
             bail!("Enter the server's Transcription Model in Settings.");
         }

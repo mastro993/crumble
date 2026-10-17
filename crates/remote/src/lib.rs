@@ -5,8 +5,9 @@
 
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use serde_json::Value;
+use ureq::http::Uri;
 
 /// Where a Model runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,26 +67,49 @@ pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
     }
 }
 
-/// Whether `url`'s host is `localhost`, `127.0.0.1` or `::1`. An address with no scheme is
-/// never sent, so it is not local either.
+/// Whether `url` can be sent to and its host is `localhost`, `127.0.0.1` or `::1`.
 fn is_loopback(url: &str) -> bool {
-    let [scheme, ..] = url_parts(url.trim());
-    let host = host(url);
-    !scheme.is_empty()
-        && (host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1")
+    host(url).is_some_and(|host| host == "localhost" || host == "127.0.0.1" || host == "::1")
 }
 
-/// `url`'s host, without a port, credentials or IPv6 brackets: `api.openai.com` for
-/// `https://api.openai.com/v1`. Empty when there is none.
-pub fn host(url: &str) -> &str {
-    let [_, _, authority, _] = url_parts(url.trim());
-    match authority.strip_prefix('[') {
-        Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
-        None => authority.split(':').next().unwrap_or_default(),
+/// `url`'s host in lowercase, without a port, credentials or IPv6 brackets: `api.openai.com`
+/// for `https://api.openai.com/v1`. `None` when requests cannot go to `url`.
+pub fn host(url: &str) -> Option<String> {
+    let uri = parse(url)?;
+    let host = uri.host()?;
+    Some(
+        host.trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase(),
+    )
+}
+
+/// `url` with its spaces and trailing `/` trimmed, for a path to follow; or, for the user, why
+/// requests cannot go to it.
+pub fn base_url(url: &str) -> anyhow::Result<&str> {
+    let base = url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        bail!("Enter the server's address in Settings.");
     }
+    if !base.contains("://") {
+        bail!("Start the server's address with http:// or https://.");
+    }
+    if parse(base).is_none() {
+        bail!("Check the server's address in Settings.");
+    }
+    Ok(base)
 }
 
-/// `url` without the `user:password@` before its host, to show in errors and logs.
+/// `url` read as the HTTP client reads it, so what is judged local or asked about is where a
+/// request goes: `None` unless it has an `http` or `https` scheme and a host.
+fn parse(url: &str) -> Option<Uri> {
+    let uri: Uri = url.trim().parse().ok()?;
+    let sendable = matches!(uri.scheme_str(), Some("http" | "https")) && uri.host().is_some();
+    sendable.then_some(uri)
+}
+
+/// `url` without the `user:password@` before its host, to show in errors and logs, even when
+/// it cannot be sent to.
 pub fn without_userinfo(url: &str) -> String {
     let [scheme, _, authority, rest] = url_parts(url);
     format!("{scheme}{authority}{rest}")
@@ -185,7 +209,7 @@ pub fn failure(provider: Provider, model: &str, status: u16, body: &str) -> anyh
 
 #[cfg(test)]
 mod tests {
-    use super::{Provider, failure, host, runs_locally, without_userinfo};
+    use super::{Provider, base_url, failure, host, runs_locally, without_userinfo};
 
     #[test]
     fn provider_ids_round_trip() {
@@ -219,6 +243,9 @@ mod tests {
             "http://localhost@evil.example.com/v1",
             "http://[::2]/v1",
             "http://10.0.0.1/localhost",
+            "evil.example.com/p?u=http://localhost/v1",
+            "http://evil.example.com\\@localhost/v1",
+            "ftp://localhost/v1",
         ] {
             assert!(!runs_locally(OpenAiCompatible, remote), "{remote}");
         }
@@ -226,12 +253,48 @@ mod tests {
 
     #[test]
     fn a_host_drops_scheme_port_path_and_credentials() {
-        assert_eq!(host("https://api.openai.com/v1"), "api.openai.com");
-        assert_eq!(host(" http://user:pw@whisper.lan:8000/v1/ "), "whisper.lan");
-        assert_eq!(host("https://[::1]:8080/v1"), "::1");
-        assert_eq!(host("localhost:11434"), "localhost");
-        assert_eq!(host("http://example.com?x=1"), "example.com");
-        assert_eq!(host(""), "");
+        let host = |url| host(url);
+        assert_eq!(
+            host("https://API.openai.com/v1").as_deref(),
+            Some("api.openai.com")
+        );
+        assert_eq!(
+            host(" http://user:pw@whisper.lan:8000/v1/ ").as_deref(),
+            Some("whisper.lan")
+        );
+        assert_eq!(host("https://[::1]:8080/v1").as_deref(), Some("::1"));
+        assert_eq!(
+            host("http://example.com?x=1").as_deref(),
+            Some("example.com")
+        );
+        for unsendable in [
+            "",
+            "localhost:11434",
+            "evil.example.com/p?u=http://localhost/v1",
+        ] {
+            assert_eq!(host(unsendable), None, "{unsendable}");
+        }
+    }
+
+    #[test]
+    fn a_base_url_must_be_sendable() {
+        assert_eq!(
+            base_url(" http://localhost:8000/v1/ ").ok(),
+            Some("http://localhost:8000/v1")
+        );
+        let error = |url| base_url(url).map_err(|error| error.to_string()).err();
+        assert_eq!(
+            error(" ").as_deref(),
+            Some("Enter the server's address in Settings.")
+        );
+        assert_eq!(
+            error("whisper.lan:8000/v1").as_deref(),
+            Some("Start the server's address with http:// or https://.")
+        );
+        assert_eq!(
+            error("evil.example.com/p?u=http://localhost/v1").as_deref(),
+            Some("Check the server's address in Settings.")
+        );
     }
 
     #[test]

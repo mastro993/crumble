@@ -79,6 +79,34 @@ pub(super) enum Failure {
     Save { provider: Provider },
 }
 
+impl Failure {
+    /// The Provider that failed, which Try again uses.
+    pub(super) fn provider(&self) -> Provider {
+        match self {
+            Failure::Unsupported { .. } | Failure::Download => Provider::Apple,
+            Failure::Transcribe { provider, .. } | Failure::Save { provider } => *provider,
+        }
+    }
+
+    /// What the Transcript tab says about it.
+    pub(super) fn message(&self) -> String {
+        match self {
+            Failure::Unsupported { language } => {
+                format!("Transcription isn't available for {language} on this Mac.")
+            }
+            Failure::Download => "Couldn't download the speech model.".to_owned(),
+            Failure::Transcribe {
+                message: Some(message),
+                ..
+            } => message.clone(),
+            Failure::Transcribe { message: None, .. } => {
+                "Couldn't transcribe this recording.".to_owned()
+            }
+            Failure::Save { .. } => "Couldn't save the Transcript.".to_owned(),
+        }
+    }
+}
+
 /// What the job sends back to the main thread.
 enum Update {
     Stage(Stage),
@@ -92,16 +120,21 @@ enum Update {
 
 impl NativeView {
     /// Queues the Notes whose Recording finished without a Transcript, as when the app quit while
-    /// transcribing, when the Transcription Model keeps the audio on the Mac. A remote one gets
-    /// an older Recording only when the user asks, from its Note's Transcript tab. Run at launch
-    /// and when a Transcription Model is picked.
+    /// transcribing, when the Transcription Model keeps the audio on the Mac and has what it
+    /// needs. A remote one gets an older Recording only when the user asks, from its Note's
+    /// Transcript tab. A Note whose last attempt failed keeps its error until it is tried again
+    /// or its Provider's settings change. Run at launch, when a Transcription Model is picked,
+    /// and when the server's address, Transcription Model or key is finished.
     pub(in super::super) fn transcribe_untranscribed(&mut self, cx: &mut Context<Self>) {
         let provider = self.transcription_provider();
-        if !runs_locally(provider, self.store.openai_base_url()) {
+        if !runs_locally(provider, self.store.openai_base_url()) || !self.can_transcribe(provider) {
             return;
         }
         match self.notes.untranscribed() {
             Ok(ids) => ids
+                .into_iter()
+                .filter(|id| !self.note_detail.transcription.failed.contains_key(id))
+                .collect::<Vec<_>>()
                 .into_iter()
                 .for_each(|id| self.enqueue_transcription(id, provider, true, cx)),
             Err(error) => eprintln!("Could not find the Recordings to transcribe: {error:#}"),
@@ -119,6 +152,12 @@ impl NativeView {
         cx: &mut Context<Self>,
     ) {
         let provider = provider.unwrap_or_else(|| self.transcription_provider());
+        if !self.can_transcribe(provider) {
+            // Its Transcript tab points to Settings instead.
+            self.note_detail.transcription.failed.remove(&id);
+            cx.notify();
+            return;
+        }
         match (self.consent_needed(provider), window) {
             (None, _) => self.queue_transcription(id, provider, cx),
             (Some(consent), Some(window)) => self.ask_consent(id, consent, window, cx),
@@ -154,6 +193,12 @@ impl NativeView {
         transcription.queue.push_back((id, provider, backfill));
         self.next_transcription(cx);
         cx.notify();
+    }
+
+    /// Forgets what `provider` failed at, so its Notes can be transcribed again once its
+    /// settings change.
+    pub(in super::super) fn forget_transcription_failures(&mut self, provider: Provider) {
+        (self.note_detail.transcription.failed).retain(|_, failure| failure.provider() != provider);
     }
 
     /// Forgets the Note `id`'s Transcript work, as when its Recording is deleted: a job running

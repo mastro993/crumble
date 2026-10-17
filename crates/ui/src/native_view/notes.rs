@@ -14,6 +14,8 @@ mod tabs;
 mod transcript;
 mod transcript_tab;
 
+pub(super) use consent::TRANSCRIBERS;
+
 use super::NativeView;
 use super::agenda::Selected;
 use chrono::Utc;

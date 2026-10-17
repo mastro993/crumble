@@ -3,7 +3,7 @@
 //! request's header: never into an error, a log, or anything else this module returns.
 
 use anyhow::{Context as _, anyhow, bail};
-use crumble_remote::{Provider, failure, post_json, without_userinfo};
+use crumble_remote::{Provider, base_url, failure, post_json, without_userinfo};
 use serde_json::{Value, json};
 
 use crate::{Summarizer, prompt};
@@ -120,13 +120,7 @@ impl OpenAiCompatible {
 
     /// Sends the prompt and returns the response's body, or why it failed.
     fn ask(&self, instructions: &str, prompt: &str) -> anyhow::Result<String> {
-        let base = self.base_url.trim().trim_end_matches('/');
-        if base.is_empty() {
-            bail!("Enter the server's address in Settings.");
-        }
-        if !base.contains("://") {
-            bail!("Start the server's address with http:// or https://.");
-        }
+        let base = base_url(&self.base_url)?;
         if self.model.trim().is_empty() {
             bail!("Enter the server's Model in Settings.");
         }

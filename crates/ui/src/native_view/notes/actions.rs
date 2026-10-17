@@ -5,6 +5,7 @@
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
 use super::super::menu::{MenuItem, OpenMenu};
+use super::consent::TRANSCRIBERS;
 use crumble_remote::Provider;
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::{Sizable, WindowExt};
@@ -110,7 +111,7 @@ impl NativeView {
             .transcript
             .as_ref()
             .map(|transcript| transcript.provider.as_str());
-        let providers: Vec<MenuItem> = Provider::ALL
+        let providers: Vec<MenuItem> = TRANSCRIBERS
             .into_iter()
             .filter(|provider| self.can_transcribe(*provider))
             .map(|provider| {
