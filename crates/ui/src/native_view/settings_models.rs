@@ -343,9 +343,8 @@ impl NativeView {
             let selected = self.summary_provider();
             self.models.provider.update(cx, |select, cx| {
                 select.set_items(provider_items(apple), window, cx);
-                if let Some(provider) = selected {
-                    select.set_selected_value(&provider, window, cx);
-                }
+                // Apple's row may have been shown as picked only because it could run.
+                select.set_selected_index(index_of(selected), window, cx);
             });
         }
         let muted = cx.theme().muted_foreground;

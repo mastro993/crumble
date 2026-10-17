@@ -91,11 +91,16 @@ impl NativeView {
         }) else {
             return;
         };
-        // Each keeps this Provider, so a remote one picked while they wait never gets them.
+        // Each keeps this Provider, so a remote one picked while they wait never gets them. A
+        // Note that failed keeps its error and Try again rather than running again unasked.
         match self.notes.unsummarized() {
-            Ok(ids) => ids
-                .into_iter()
-                .for_each(|id| self.queue_summary(id, Some(provider), true, cx)),
+            Ok(ids) => {
+                for id in ids {
+                    if !self.note_detail.summarization.failed.contains_key(&id) {
+                        self.queue_summary(id, Some(provider), true, cx);
+                    }
+                }
+            }
             Err(error) => eprintln!("Could not find the Transcripts to summarize: {error:#}"),
         }
     }

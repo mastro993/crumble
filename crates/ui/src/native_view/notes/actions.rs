@@ -107,10 +107,13 @@ impl NativeView {
     /// "Summarize again with…", or "Summarize with…" before there is a Summary: a submenu of the
     /// Providers ready to summarize, the one that made the shown Note's Summary checked.
     /// Picking one is the Note's own choice over Settings'. `None` while the Note has no
-    /// Transcript, or its Summary is being made.
+    /// Transcript with speech, or its Summary is being made.
     fn summarize_again_item(&self, view: &WeakEntity<NativeView>) -> Option<MenuItem> {
         let note = self.note_detail.note.as_ref()?;
-        if note.transcript.is_none() || self.note_detail.summarization.busy(&note.id) {
+        if note.transcript.is_none()
+            || !self.note_detail.spoken()
+            || self.note_detail.summarization.busy(&note.id)
+        {
             return None;
         }
         let made_by = note
