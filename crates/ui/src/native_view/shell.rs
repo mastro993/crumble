@@ -73,7 +73,8 @@ impl NativeView {
             .flex()
             .flex_1()
             .min_w_0()
-            .h_full()
+            // Stretched by the row rather than `h_full`, which would push the bottom inset
+            // past the window.
             .overflow_hidden()
             .mr(px(PANEL_INSET))
             .mb(px(PANEL_INSET))
