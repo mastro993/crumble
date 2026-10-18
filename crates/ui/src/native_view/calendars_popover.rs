@@ -56,7 +56,9 @@ impl NativeView {
         if !over {
             popover.dismissed = false;
         }
-        !popover.dismissed && (popover.pinned || over || held)
+        // A hold only keeps an open popover open: a menu opened elsewhere, such as a Note's
+        // actions, must not open it.
+        !popover.dismissed && (popover.pinned || over || (held && popover.open))
     }
 
     /// Opens or closes the popover after the delay when the pointer or a hold changed what it
@@ -126,6 +128,8 @@ impl NativeView {
                 .child("Calendars");
             let surface = panel(div().id("calendars-popover"), cx)
                 .w(px(WIDTH))
+                // A long list scrolls instead of running past the window.
+                .max_h(window.viewport_size().height - px(2.0 * WINDOW_MARGIN))
                 .on_hover(cx.listener(|view, _, window, cx| view.settle_calendars(window, cx)))
                 .on_mouse_down_out(cx.listener(|view, _, window, cx| {
                     // The button's own click toggles the popover, and a row's menu is outside
@@ -146,7 +150,14 @@ impl NativeView {
                         .inset_0(),
                 )
                 .child(title)
-                .children(self.render_calendars_section(window, cx));
+                .child(
+                    div()
+                        .id("calendars-popover-rows")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .children(self.render_calendars_section(window, cx)),
+                );
             deferred(
                 Positioner::side(bounds.get())
                     .placement(Placement::Right)
