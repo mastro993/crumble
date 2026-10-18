@@ -3,7 +3,7 @@
 use std::{rc::Rc, time::Duration};
 
 use super::NativeView;
-use gpui_kit::component::h_flex;
+use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::{
     Animation, AnimationExt, AnyElement, AppContext, Axis, Context, DragMoveEvent, ElementId,
     EmptyView, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -14,6 +14,10 @@ pub(super) const DEFAULT_WIDTH: f32 = 320.0;
 const SIDEBAR_MIN_WIDTH: f32 = 240.0;
 const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 const SIDEBAR_MOTION: Duration = Duration::from_millis(220);
+/// Width of the edge's highlight while the sidebar is resized.
+const HIGHLIGHT_WIDTH: f32 = 3.0;
+/// Strength of the ring color in that highlight.
+const HIGHLIGHT_OPACITY: f32 = 0.5;
 
 /// Drag payload; the resize handle hands it to GPUI wrapped in an `Rc`.
 struct SidebarDrag(pub(super) gpui_kit::EntityId);
@@ -139,9 +143,22 @@ impl NativeView {
             }))
             .child(
                 gpui_kit::base::resize_handle("sidebar-resize", Axis::Horizontal)
-                    // The sidebar's own hairline border is the divider; the kit line would
-                    // double it at 1pt.
-                    .with_appearance(Rc::new(|_, _, _| Some(div().into_any_element())))
+                    // At rest the sidebar's own hairline border is the divider; the kit line
+                    // would double it at 1pt. While pressed or dragged, a wider line in a light
+                    // tint of the ring color covers the hairline, centred on the handle's 1pt
+                    // line.
+                    .with_appearance(Rc::new(|handle, _, cx| {
+                        let line = div().flex_none();
+                        Some(if handle.is_active() {
+                            line.h_full()
+                                .w(px(HIGHLIGHT_WIDTH))
+                                .ml(px((1.0 - HIGHLIGHT_WIDTH) / 2.0))
+                                .bg(cx.theme().ring.opacity(HIGHLIGHT_OPACITY))
+                                .into_any_element()
+                        } else {
+                            line.into_any_element()
+                        })
+                    }))
                     .on_drag(SidebarDrag(cx.entity_id()), |_, _, _, cx| {
                         cx.new(|_| EmptyView)
                     }),
