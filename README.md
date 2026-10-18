@@ -31,7 +31,7 @@ cargo test --workspace --locked
 
 CI (`.github/workflows/ci.yml`) runs these three on macOS 26 for every pull request and every push to `main`.
 
-Run `git config core.hooksPath .githooks` once per clone to turn on the pre-commit hook. It rejects a commit that stages a file over 5,000 tokens (bytes / 4) and explains how to split it. Lockfiles, generated code, vendored skills and binary files are exempt; `.gitattributes` lists the exempt paths as `linguist-generated` or `linguist-vendored`.
+Run `git config core.hooksPath .githooks` once per clone to turn on the pre-commit hook. It rejects a commit that stages a file over 20,000 bytes and explains how to split it. Lockfiles, generated code, vendored skills and binary files are exempt; `.gitattributes` lists the exempt paths as `linguist-generated` or `linguist-vendored`.
 
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
 

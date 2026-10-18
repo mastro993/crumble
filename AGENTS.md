@@ -76,7 +76,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-The pre-commit hook in `.githooks/` rejects a staged file over 5,000 tokens (bytes / 4). Split the file as its message says; do not bypass it with `--no-verify`.
+The pre-commit hook in `.githooks/` rejects a staged file over 20,000 bytes. Split the file as its message says; do not bypass it with `--no-verify`.
 
 `cargo run -p crumble --locked` launches `Crumble.app` through `scripts/macos-runner.sh`; see the README for signing.
 
