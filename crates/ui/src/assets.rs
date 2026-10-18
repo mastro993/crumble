@@ -15,6 +15,10 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/solid/NotebookTabsIcon.svg"),
     ),
     (
+        "icons/ai-brain.svg",
+        include_bytes!("../../../assets/hugeicons/AiBrain01Icon.svg"),
+    ),
+    (
         "icons/arrow-down.svg",
         include_bytes!("../../../assets/hugeicons/ArrowDown01Icon.svg"),
     ),
@@ -89,6 +93,10 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/home-selected.svg",
         include_bytes!("../../../assets/hugeicons/solid/Home01Icon.svg"),
+    ),
+    (
+        "icons/key.svg",
+        include_bytes!("../../../assets/hugeicons/Key01Icon.svg"),
     ),
     (
         "icons/mic.svg",

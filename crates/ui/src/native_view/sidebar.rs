@@ -1,14 +1,16 @@
-//! The second-level sidebar, such as the Agenda list: its open/close motion and resizing.
+//! The second-level sidebar, such as the Agenda list: its surface, its open/close motion and
+//! resizing.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use super::NativeView;
+use crumble_theme::SURFACE_RADIUS;
 use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, AppContext, Axis, Context, DragMoveEvent, ElementId,
-    EmptyView, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
-    div, prelude::FluentBuilder, px,
+    Animation, AnimationExt, AnyElement, App, AppContext, Axis, Context, Div, DragMoveEvent,
+    ElementId, EmptyView, Hsla, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 pub(super) const DEFAULT_WIDTH: f32 = 320.0;
@@ -35,6 +37,27 @@ fn sliding(toggled: Option<Instant>, now: Instant) -> bool {
 /// Width of the sidebar still on screen after `delta` of the transition toward `collapsed`.
 pub(super) fn visible_width(width: f32, collapsed: bool, delta: f32) -> f32 {
     width * if collapsed { 1.0 - delta } else { delta }
+}
+
+/// A second-level column's opaque surface: half the sidebar over the page, so the column sits
+/// between them.
+pub(super) fn surface(cx: &App) -> Hsla {
+    let theme = cx.theme();
+    theme.background.blend(theme.sidebar.opacity(0.5))
+}
+
+/// A second-level column filling its parent, on its surface, with a hairline on its trailing
+/// edge.
+pub(super) fn column(window: &Window, cx: &App) -> Div {
+    // One device pixel, matching the panel's hairline.
+    let hairline = px(1.0 / window.scale_factor());
+    div()
+        .size_full()
+        // Over the panel's rounded corner, which does not clip its children.
+        .rounded_tl(px(SURFACE_RADIUS))
+        .bg(surface(cx))
+        .border_r(hairline)
+        .border_color(cx.theme().border)
 }
 
 impl NativeView {
@@ -102,7 +125,7 @@ impl NativeView {
     }
 
     /// The second-level sidebar, `sidebar`, sliding open and shut, then its resize handle while
-    /// open. Dragging the handle measures from the leading edge of this element's parent.
+    /// open.
     pub(super) fn render_sidebar(
         &self,
         sidebar: impl IntoElement,
@@ -110,23 +133,44 @@ impl NativeView {
     ) -> AnyElement {
         let collapsed = self.sidebar_collapsed;
         let shown = !collapsed || self.sidebar_closing;
-        h_flex()
-            .h_full()
-            .flex_shrink_0()
-            .on_drag_move(
-                cx.listener(|view, event: &DragMoveEvent<Rc<SidebarDrag>>, _, cx| {
-                    if event.drag(cx).0 != cx.entity_id() {
-                        return;
-                    }
-                    view.sidebar_width = clamp_sidebar_width(f32::from(
-                        event.event.position.x - event.bounds.left(),
-                    ));
-                    cx.notify();
-                }),
-            )
+        self.resizable(cx)
             .when(shown, |row| row.child(self.render_sidebar_frame(sidebar)))
             .when(!collapsed, |row| row.child(self.render_resize_control(cx)))
             .into_any_element()
+    }
+
+    /// A second-level sidebar that stays open, such as the Settings sections: `sidebar` at the
+    /// width every sidebar shares, then its resize handle.
+    pub(super) fn render_open_sidebar(
+        &self,
+        sidebar: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.resizable(cx)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .w(px(self.sidebar_width))
+                    .h_full()
+                    .child(sidebar),
+            )
+            .child(self.render_resize_control(cx))
+            .into_any_element()
+    }
+
+    /// The row holding a sidebar and its resize handle. Dragging the handle measures from this
+    /// row's leading edge.
+    fn resizable(&self, cx: &mut Context<Self>) -> Div {
+        h_flex().h_full().flex_shrink_0().on_drag_move(cx.listener(
+            |view, event: &DragMoveEvent<Rc<SidebarDrag>>, _, cx| {
+                if event.drag(cx).0 != cx.entity_id() {
+                    return;
+                }
+                view.sidebar_width =
+                    clamp_sidebar_width(f32::from(event.event.position.x - event.bounds.left()));
+                cx.notify();
+            },
+        ))
     }
 
     fn render_resize_control(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use super::NativeView;
 use super::controls::app_icon;
-use super::route::Route;
+use super::settings_page::SettingsSection;
 use super::sidebar_reorder::{RowDrag, grab_cursor};
 use super::sidebar_row::{activate, row};
 use crumble_store::{AccountColor, CalendarsSection, calendars_section};
@@ -102,7 +102,7 @@ impl NativeView {
                     "all-accounts-disabled",
                     "All accounts disabled · Open Settings",
                     cx,
-                    |view, _, cx| view.navigate(Route::Settings, cx),
+                    |view, _, cx| view.open_settings(SettingsSection::Calendars, cx),
                 )
                 .into_any_element(),
             ],

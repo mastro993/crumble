@@ -1,8 +1,8 @@
-//! Settings › Models: the Summary Model, the Transcription Model and its language, and what each
-//! remote Provider needs: Claude's API key and Model id, and an OpenAI-compatible server's
-//! address, optional key, and a Model for each job. Choices are kept through `Store`; keys go to
-//! the Keychain through `secrets` and are never shown again.
-//! The fields and what their changes do are in `fields`; the section is drawn in `render`.
+//! Settings › Models: the Summary Model, the Transcription Model and its language; and
+//! Settings › Providers: what each remote Provider needs, Claude's API key and Model id, and an
+//! OpenAI-compatible server's address, optional key, and a Model for each job. Choices are kept
+//! through `Store`; keys go to the Keychain through `secrets` and are never shown again.
+//! The fields and what their changes do are in `fields`; both sections are drawn in `render`.
 
 mod fields;
 mod render;
@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 /// Width of each select and field.
 const FIELD_WIDTH: f32 = 240.0;
 
-/// The Models section's fields, and what it knows of the Keychain.
+/// The Models and Providers sections' fields, and what they know of the Keychain.
 pub(super) struct ModelSettings {
     provider: Entity<SelectState<Vec<ProviderItem>>>,
     /// Apple's availability the select's items were made with.
