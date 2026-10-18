@@ -1,0 +1,46 @@
+#!/bin/sh
+# Rejects a commit that stages a file over 5,000 tokens, counted as bytes / 4, so every file
+# stays small enough for an agent to read whole. Binary files and paths .gitattributes marks
+# linguist-generated or linguist-vendored are skipped: agents do not write them.
+
+max_tokens=5000
+tab=$(printf '\t')
+too_big=
+
+# Binary files show "-" for their line counts.
+while IFS=$tab read -r added _ path; do
+	[ "$added" = - ] && continue
+	git check-attr --cached linguist-generated linguist-vendored -- "$path" |
+		grep -Eq ': (set|true)$' && continue
+	tokens=$(($(git cat-file -s ":$path") / 4))
+	[ "$tokens" -gt "$max_tokens" ] &&
+		too_big="$too_big  $path: $tokens tokens
+"
+done <<LIST
+$(git -c core.quotePath=false diff --cached --numstat --no-renames --diff-filter=ACM)
+LIST
+
+[ -z "$too_big" ] && exit 0
+
+cat >&2 <<MESSAGE
+pre-commit: these staged files are over $max_tokens tokens (bytes / 4):
+$too_big
+Split each one, then stage the result and commit again:
+
+1. Find the seams: groups of items that change together and share private helpers,
+   such as one view, one state machine, one query family, or the tests.
+2. Rust: turn foo.rs into foo.rs plus foo/<part>.rs files, declared in foo.rs with
+   "mod <part>;". Re-export what callers use with "pub use" or "pub(crate) use" so no
+   caller changes. Move a large "#[cfg(test)] mod tests" into foo/tests.rs.
+   crates/ui/src/native_view/notes.rs and notes/ show the pattern.
+3. Markdown: move each large section into its own file beside the original and link to it.
+4. Move code as is. Do not rewrite or rename while splitting.
+5. Leave each new file well under the limit, near 3,000 tokens, so the next change fits.
+6. Run cargo fmt --all, cargo clippy --workspace --all-targets --locked -- -D warnings,
+   and cargo test --workspace --locked.
+7. Stage the new files and the shortened original: git add <files>.
+
+A file no agent writes, such as a lockfile or generated code, belongs in .gitattributes
+as linguist-generated instead.
+MESSAGE
+exit 1

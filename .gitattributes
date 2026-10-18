@@ -1,0 +1,6 @@
+# Files agents do not write. The pre-commit hook skips them in its size check, and GitHub
+# collapses them in diffs.
+Cargo.lock linguist-generated
+skills-lock.json linguist-generated
+crates/db/src/schema.rs linguist-generated
+.agents/skills/** linguist-vendored

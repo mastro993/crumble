@@ -3,7 +3,7 @@
 Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads Events through EventKit.
 
 - [`CONTEXT.md`](CONTEXT.md) is the domain glossary. Use its terms in code, docs, and commits.
-- [`docs/architecture/native.md`](docs/architecture/native.md) describes behavior and which crate owns what.
+- [`docs/architecture/native.md`](docs/architecture/native.md) says which crate owns what and links one page per area that describes its behavior.
 - [`docs/adr/`](docs/adr/) records decisions. Read the relevant ADR before changing what it decided.
 
 ## Crates
@@ -58,6 +58,7 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 - Use concrete types and functions. Add a trait only when it has two real implementations.
 - Keep crate APIs narrow: `pub(crate)` by default, `pub` only for items another crate uses, each with a doc comment.
 - Take dependency versions from `[workspace.dependencies]` and set `[lints] workspace = true`.
+- A module with submodules is `foo.rs` plus a `foo/` folder, never `foo/mod.rs`; clippy's `mod_module_files` rejects `mod.rs`. A crate with its own lint table repeats that lint.
 - Only `crumble-eventkit`, `crumble-audio`, `crumble-transcribe`, `crumble-summarize` and `crumble-notify` use `unsafe`, each under its own lint table ([ADR 0001](docs/adr/0001-read-only-events-via-eventkit.md), [ADR 0005](docs/adr/0005-recording-with-a-process-tap.md), [ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md), [ADR 0007](docs/adr/0007-summaries-and-model-providers.md), [ADR 0009](docs/adr/0009-suggestions-through-user-notifications.md)). Every other crate keeps `unsafe_code = "forbid"`.
 
 ## Testing
@@ -75,10 +76,12 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+The pre-commit hook in `.githooks/` rejects a staged file over 5,000 tokens (bytes / 4). Split the file as its message says; do not bypass it with `--no-verify`.
+
 `cargo run -p crumble --locked` launches `Crumble.app` through `scripts/macos-runner.sh`; see the README for signing.
 
 ## Docs
 
-- A logic change updates the sections of `docs/architecture/native.md` that describe it, including the Ownership table.
+- A logic change updates the pages in `docs/architecture/` that describe it, including the Ownership table in `native.md`.
 - A new domain term goes into `CONTEXT.md`. "Settings" means only the Settings page.
 - A new crate goes into the Crates list above.
