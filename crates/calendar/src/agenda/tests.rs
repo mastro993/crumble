@@ -1,6 +1,6 @@
 use super::{
-    QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, skip_failed_read, span_events,
-    time_label,
+    QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, skip_failed_read,
+    span_events, time_label,
 };
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
 use crumble_eventkit::{Event, When};
