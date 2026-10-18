@@ -121,6 +121,8 @@ impl NativeView {
     fn render_resize_control(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         div()
             .id("sidebar-resize-control")
+            // The handle's grab band spans this element's height.
+            .h_full()
             .tab_index(0)
             .aria_label("Resize sidebar")
             .on_key_down(cx.listener(|view, event: &gpui_kit::KeyDownEvent, _, cx| {
