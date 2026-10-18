@@ -43,6 +43,7 @@ use route::{History, Route};
 use settings_models::ModelSettings;
 use settings_page::WeekdaySelect;
 use sidebar_reorder::RowReorder;
+use std::time::Instant;
 use suggestions::Suggestions;
 
 /// GPUI owner of the application shell and navigation.
@@ -53,8 +54,11 @@ pub struct NativeView {
     /// Width of the second-level sidebar, such as the Agenda list.
     sidebar_width: f32,
     sidebar_collapsed: bool,
-    /// Sidebar toggle count; zero renders without motion, so launch does not animate.
+    /// Sidebar toggle count, keying each slide.
     sidebar_motion: u64,
+    /// When the sidebar was last toggled; it slides only until the slide's length has passed,
+    /// so launch does not animate and a page that mounts it again does not replay the slide.
+    sidebar_toggled: Option<Instant>,
     /// Collapsed sidebar still mounted for its closing motion.
     sidebar_closing: bool,
     /// The Calendars popover beside the rail.
@@ -122,6 +126,7 @@ impl NativeView {
             sidebar_width: sidebar::DEFAULT_WIDTH,
             sidebar_collapsed: false,
             sidebar_motion: 0,
+            sidebar_toggled: None,
             sidebar_closing: false,
             calendars_popover: CalendarsPopover::default(),
             store,

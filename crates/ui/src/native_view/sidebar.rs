@@ -1,6 +1,7 @@
 //! The second-level sidebar, such as the Agenda list: its open/close motion and resizing.
 
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use super::NativeView;
 use gpui_kit::component::{ActiveTheme, h_flex};
@@ -26,6 +27,11 @@ fn clamp_sidebar_width(width: f32) -> f32 {
     width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
 }
 
+/// Whether a toggle at `toggled` is still sliding at `now`.
+fn sliding(toggled: Option<Instant>, now: Instant) -> bool {
+    toggled.is_some_and(|toggled| now.saturating_duration_since(toggled) < SIDEBAR_MOTION)
+}
+
 /// Width of the sidebar still on screen after `delta` of the transition toward `collapsed`.
 pub(super) fn visible_width(width: f32, collapsed: bool, delta: f32) -> f32 {
     width * if collapsed { 1.0 - delta } else { delta }
@@ -39,6 +45,7 @@ impl NativeView {
         }
         self.sidebar_collapsed = !self.sidebar_collapsed;
         self.sidebar_motion += 1;
+        self.sidebar_toggled = Some(Instant::now());
         // A closing sidebar stays mounted until its slide-out finishes.
         self.sidebar_closing = self.sidebar_collapsed && !cx.reduce_motion();
         if self.sidebar_closing {
@@ -57,14 +64,14 @@ impl NativeView {
         cx.notify();
     }
 
-    /// Sizes `element` along the current sidebar transition; static until the first toggle.
+    /// Sizes `element` along the current sidebar transition; static once it has finished.
     pub(super) fn sidebar_motion_width(
         &self,
         element: impl Styled + IntoElement + 'static,
         name: &'static str,
         width_at: impl Fn(f32) -> f32 + 'static,
     ) -> AnyElement {
-        if self.sidebar_motion == 0 {
+        if !sliding(self.sidebar_toggled, Instant::now()) {
             return element.w(px(width_at(1.0))).into_any_element();
         }
         element
@@ -168,7 +175,8 @@ impl NativeView {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_width;
+    use super::{SIDEBAR_MOTION, sliding, visible_width};
+    use std::time::Instant;
 
     #[test]
     fn visible_width_runs_toward_the_target_state() {
@@ -176,5 +184,14 @@ mod tests {
         assert_eq!(visible_width(300.0, false, 1.0), 300.0);
         assert_eq!(visible_width(300.0, true, 0.0), 300.0);
         assert_eq!(visible_width(300.0, true, 1.0), 0.0);
+    }
+
+    #[test]
+    fn only_a_recent_toggle_slides() {
+        let toggled = Instant::now();
+        assert!(!sliding(None, toggled), "launch");
+        assert!(sliding(Some(toggled), toggled));
+        // A page mounting the sidebar after the slide shows it still.
+        assert!(!sliding(Some(toggled), toggled + SIDEBAR_MOTION));
     }
 }
