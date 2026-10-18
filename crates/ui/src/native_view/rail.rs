@@ -18,6 +18,9 @@ use gpui_kit::{
 const ICON_OPACITY: f32 = 0.65;
 /// Strength of the ink over the rail while a button is pressed, a step past the hover fill.
 const PRESS_OPACITY: f32 = 0.15;
+/// Strength of the secondary ink in the separator above the Calendars button; the border
+/// color barely shows on the rail.
+const SEPARATOR_OPACITY: f32 = 0.3;
 
 impl NativeView {
     /// The rail runs from below the header to the window's bottom, on the sidebar color.
@@ -49,7 +52,7 @@ impl NativeView {
                     div()
                         .w(px(BUTTON_SIZE - GAP))
                         .h(hairline)
-                        .bg(cx.theme().sidebar_border),
+                        .bg(cx.theme().muted_foreground.opacity(SEPARATOR_OPACITY)),
                 )
                 .child(self.render_calendars_button(window, cx))
             })
