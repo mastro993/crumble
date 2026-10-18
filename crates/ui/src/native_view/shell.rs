@@ -31,6 +31,9 @@ const CONTROLS_LEFT_MACOS: f32 = 93.0;
 const CONTROL_SIZE: f32 = 24.0;
 const CONTROL_GAP: f32 = 4.0;
 const HEADER_GAP: f32 = 8.0;
+/// Space between the panel and the window's trailing and bottom edges, so the panel's corners
+/// sit concentric inside the window's.
+const PANEL_INSET: f32 = 4.0;
 
 /// macOS draws the traffic lights over app content, so the chrome reserves their row.
 fn reserves_traffic_lights(window: &Window) -> bool {
@@ -70,12 +73,14 @@ impl NativeView {
             .flex()
             .flex_1()
             .min_w_0()
-            .h_full()
+            // Stretched by the row rather than `h_full`, which would push the bottom inset
+            // past the window.
             .overflow_hidden()
-            .rounded_tl(px(SURFACE_RADIUS))
+            .mr(px(PANEL_INSET))
+            .mb(px(PANEL_INSET))
+            .rounded(px(SURFACE_RADIUS))
             .shadow(crumble_theme::panel_shadow())
-            .border_t(hairline)
-            .border_l(hairline)
+            .border(hairline)
             .border_color(edge)
             .bg(background)
             .child(
@@ -85,8 +90,8 @@ impl NativeView {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
-                    // The Agenda list and the Settings sections run from the panel's edge to the
-                    // window's bottom.
+                    // The Agenda list and the Settings sections run from the panel's leading edge
+                    // to its bottom.
                     .when(!self.route.fills_panel(), |content| {
                         content.p(px(CONTENT_PADDING)).pb_6()
                     })
