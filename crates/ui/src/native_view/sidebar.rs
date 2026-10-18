@@ -53,8 +53,8 @@ pub(super) fn column(window: &Window, cx: &App) -> Div {
     let hairline = px(1.0 / window.scale_factor());
     div()
         .size_full()
-        // Over the panel's rounded corner, which does not clip its children.
-        .rounded_tl(px(SURFACE_RADIUS))
+        // Over the panel's rounded corners, which do not clip its children.
+        .rounded_l(px(SURFACE_RADIUS))
         .bg(surface(cx))
         .border_r(hairline)
         .border_color(cx.theme().border)
