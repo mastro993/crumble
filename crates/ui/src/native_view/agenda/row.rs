@@ -1,5 +1,6 @@
 //! One row of the Agenda list: a day header, the Now line, an Event, a Quick note, or the end.
 
+use super::super::keyboard::focusable;
 use super::super::sidebar_row::hover_fill;
 use chrono::NaiveDate;
 use crumble_calendar::agenda::{Row, day_label, time_label};
@@ -50,33 +51,32 @@ pub(super) fn render_row(
         div()
             .px(px(CONTENT_PADDING - ROW_PADDING))
             .child(
-                h_flex()
-                    .id(ElementId::Name(id.into()))
-                    .test_support()
-                    .tab_index(0)
-                    .aria_label(title.clone())
-                    .cursor_pointer()
-                    .px(px(ROW_PADDING))
-                    .py_1p5()
-                    .gap_3()
-                    .items_stretch()
-                    .rounded(px(RADIUS))
-                    .when(selected, |row| row.bg(theme.sidebar_accent))
-                    .when(!selected, |row| row.hover(move |style| style.bg(hover)))
-                    .on_click(move |_, window, cx| select(&row, window, cx))
-                    .child(div().flex_shrink_0().w(px(3.0)).rounded_full().bg(color))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_sm().truncate().child(title))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(time),
-                            ),
-                    ),
+                focusable(
+                    h_flex().id(ElementId::Name(id.into())).test_support(),
+                    title.clone(),
+                )
+                .cursor_pointer()
+                .px(px(ROW_PADDING))
+                .py_1p5()
+                .gap_3()
+                .items_stretch()
+                .rounded(px(RADIUS))
+                .when(selected, |row| row.bg(theme.sidebar_accent))
+                .when(!selected, |row| row.hover(move |style| style.bg(hover)))
+                .on_click(move |_, window, cx| select(&row, window, cx))
+                .child(div().flex_shrink_0().w(px(3.0)).rounded_full().bg(color))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().text_sm().truncate().child(title))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(time),
+                        ),
+                ),
             )
             .into_any_element()
     };

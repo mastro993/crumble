@@ -46,12 +46,7 @@ mod tests {
         ];
         for tz in ZONES {
             for year in 2010..=2024 {
-                let days = if NaiveDate::from_yo_opt(year, 366).is_some() {
-                    366
-                } else {
-                    365
-                };
-                for ordinal in 1..=days {
+                for ordinal in 1..=366 {
                     let Some(date) = NaiveDate::from_yo_opt(year, ordinal) else {
                         continue;
                     };

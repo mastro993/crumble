@@ -161,7 +161,10 @@ fn meeting_service(word: &str) -> Option<&'static str> {
     let host = url_host(word)?.to_ascii_lowercase();
     MEETING_HOSTS
         .iter()
-        .find(|(known, _)| host == *known || host.ends_with(&format!(".{known}")))
+        .find(|(known, _)| {
+            host.strip_suffix(known)
+                .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+        })
         .map(|&(_, service)| service)
 }
 

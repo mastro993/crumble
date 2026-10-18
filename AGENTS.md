@@ -65,7 +65,7 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 
 `scripts/check-crate-boundaries.py` and `.github/workflows/ci.yml` fail a change that:
 
-- Adds `gpui` or `gpui-pre` outside `crumble`, `ui`, `theme`, and `sync`, or `gpui-kit` to `sync` or any domain crate.
+- Adds `gpui` or `gpui-pre` outside `crumble`, `ui`, `theme`, and `sync`, or `gpui-kit` to `sync` or any domain crate, directly or through one of those crates.
 - Adds Diesel outside `db`, `store`, and `notes`.
 - Adds objc2 crates outside `eventkit`, `audio`, and `notify`.
 - Pins a crate version in a member `Cargo.toml` instead of `[workspace.dependencies]`.

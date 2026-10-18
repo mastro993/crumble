@@ -89,7 +89,7 @@ impl AgendaEvents {
             today,
             calendar_ids,
         );
-        if let Some((span, older)) = agenda::skip_failed_read(wanted, self.failed.as_ref()) {
+        if let Some((span, older)) = wanted.filter(|wanted| self.failed.as_ref() != Some(wanted)) {
             self.stale = false;
             self.read(span, older, cx);
         }

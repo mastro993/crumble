@@ -1,9 +1,9 @@
 //! Keyboard reachability for custom clickable elements that are not a GPUI Kit `Button`.
 
-use gpui_kit::{InteractiveElement, SharedString, StatefulInteractiveElement};
+use gpui_kit::{SharedString, StatefulInteractiveElement};
 
 /// Tab reaches `element`; Enter and Space then run its click handler, as they do on a Button.
-pub(crate) fn focusable<E: InteractiveElement + StatefulInteractiveElement>(
+pub(crate) fn focusable<E: StatefulInteractiveElement>(
     element: E,
     label: impl Into<SharedString>,
 ) -> E {

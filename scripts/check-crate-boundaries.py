@@ -9,8 +9,12 @@ Run from the workspace root. No cargo build is required.
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.exit(f"needs Python 3.11+ for tomllib; this is {sys.version.split()[0]}")
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,9 +45,13 @@ def is_objc(dep: str) -> bool:
 
 
 def forbidden(package: str, dep: str) -> bool:
+    # A GPUI user brings GPUI with it, so depending on one counts as depending on GPUI.
+    # ponytail: only GPUI is followed through workspace crates; `crumble-ui` reaches Diesel and
+    # objc2 through `crumble-store` and `crumble-eventkit` by design. Use `cargo metadata` if a
+    # transitive Diesel or objc2 rule is ever wanted.
     return (
-        (dep in GPUI and package not in GPUI_USERS)
-        or (dep in GPUI_KIT and package not in GPUI_KIT_USERS)
+        (dep in GPUI | GPUI_USERS and package not in GPUI_USERS)
+        or (dep in GPUI_KIT | GPUI_KIT_USERS and package not in GPUI_KIT_USERS)
         or (dep in DIESEL and package not in DIESEL_USERS)
         or (is_objc(dep) and package not in OBJC_USERS)
     )
