@@ -73,6 +73,7 @@ impl NativeView {
             .h_full()
             .overflow_hidden()
             .rounded_tl(px(SURFACE_RADIUS))
+            .shadow(crumble_theme::panel_shadow())
             .border_t(hairline)
             .border_l(hairline)
             .border_color(edge)

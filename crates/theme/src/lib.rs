@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
-use gpui_kit::{App, SharedString, Window};
+use gpui_kit::{App, BoxShadow, SharedString, Window, hsla, px};
 
 /// Height of the window header row.
 pub const HEADER_HEIGHT: f32 = 42.0;
@@ -18,6 +18,19 @@ pub const CONTENT_PADDING: f32 = 24.0;
 /// Corner radius of large content surfaces such as the Calendar grids, one tier softer than
 /// the theme's `radius_lg` controls they sit beside.
 pub const SURFACE_RADIUS: f32 = 12.0;
+
+/// The page panel's shadow over the header and rail: a soft wide blur and a tighter one
+/// beneath it, so the panel reads as raised above the chrome.
+pub fn panel_shadow() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(1.), hsla(0., 0., 0., 0.04))
+            .blur_radius(px(8.))
+            .spread_radius(px(0.)),
+        BoxShadow::new(px(0.), px(0.), hsla(0., 0., 0., 0.03))
+            .blur_radius(px(2.))
+            .spread_radius(px(0.)),
+    ]
+}
 
 /// Sidebar metrics in points.
 pub mod sidebar {
