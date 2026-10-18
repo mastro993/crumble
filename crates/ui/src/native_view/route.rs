@@ -3,7 +3,7 @@
 use crumble_eventkit::Event;
 use std::rc::Rc;
 
-/// A sidebar destination, or an Event's page.
+/// A rail destination, or an Event's page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Route {
     Home,
@@ -27,8 +27,13 @@ impl Route {
         }
     }
 
-    /// The sidebar row that stays selected: an Event's page belongs to the Calendar.
-    pub(super) fn sidebar_row(&self) -> Route {
+    /// Whether the page has a second-level sidebar, which the sidebar toggle shows and hides.
+    pub(super) fn has_sidebar(&self) -> bool {
+        *self == Route::Agenda
+    }
+
+    /// The rail button that stays selected: an Event's page belongs to the Calendar.
+    pub(super) fn rail_route(&self) -> Route {
         match self {
             Route::Event(_) => Route::Calendar,
             route => route.clone(),

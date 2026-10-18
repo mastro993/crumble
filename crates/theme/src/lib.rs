@@ -6,7 +6,7 @@ use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
 use gpui_kit::{App, SharedString, Window};
 
 /// Height of the window header row.
-pub const HEADER_HEIGHT: f32 = 50.0;
+pub const HEADER_HEIGHT: f32 = 42.0;
 
 /// Top-left of the 14 pt macOS traffic lights, vertically centred in the header row.
 pub const TRAFFIC_LIGHTS_ORIGIN: (f32, f32) = (16.0, (HEADER_HEIGHT - 14.0) / 2.0);
@@ -49,6 +49,24 @@ pub mod sidebar {
     pub const CHECK_SIZE: f32 = 14.0;
     /// Corner radius of an Account's checkbox.
     pub const CHECK_RADIUS: f32 = 4.0;
+}
+
+/// Rail metrics in points: the icon column always on the window's leading edge.
+pub mod rail {
+    /// Width of the rail.
+    pub const WIDTH: f32 = 52.0;
+    /// Side of a rail button, centred in the rail.
+    pub const BUTTON_SIZE: f32 = 36.0;
+    /// Corner radius of a rail button's fill.
+    pub const RADIUS: f32 = 10.0;
+    /// Rail button icon size.
+    pub const ICON_SIZE: f32 = 20.0;
+    /// Space between rail buttons, and above the first and below the last.
+    pub const GAP: f32 = 8.0;
+    /// Selected icon color in light mode, RGBA: the palette's brown at 80%.
+    pub const SELECTED_INK_LIGHT: u32 = 0x3e2b13cc;
+    /// Selected icon color in dark mode, RGBA: the palette's sand at 80%.
+    pub const SELECTED_INK_DARK: u32 = 0xf5ece0cc;
 }
 
 /// Context menu metrics in points. Rows reuse the [`sidebar`] row height, padding, and icon

@@ -66,11 +66,11 @@ Said of an Account whose Events Crumble leaves out of its pages while it stays l
 _Avoid_: muted, unchecked, toggled off
 
 **Alias**:
-A name the user gives an Account in Crumble. The sidebar shows only the Alias; Settings shows the Alias followed by the Account's own name in brackets. It is kept across restarts and changes nothing in macOS.
+A name the user gives an Account in Crumble. The Calendars section shows only the Alias; Settings shows the Alias followed by the Account's own name in brackets. It is kept across restarts and changes nothing in macOS.
 _Avoid_: nickname, display name, rename
 
 **Calendars section**:
-The sidebar section that lists every Account that is not Disabled. Its title says "Calendars" even though each row is an Account.
+The list of every Account that is not Disabled, in a popover beside the rail's Calendars button. Its title says "Calendars" even though each row is an Account.
 
 **Settings page**:
 The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, and picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. Written "Settings" when nothing else could be meant.
@@ -83,7 +83,7 @@ The page that lists every Event that has started and every Quick note, newest fi
 _Avoid_: history, timeline, feed
 
 **Agenda list**:
-The scrolling column of the Agenda page that holds its Events, between the sidebar and the page's content. Scrolling down reaches further into the past.
+The scrolling column of the Agenda page that holds its Events, between the rail and the page's content, shown and hidden by the sidebar toggle. Scrolling down reaches further into the past.
 _Avoid_: secondary sidebar, feed
 
 **In progress**:

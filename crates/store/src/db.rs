@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Weekday;
 use chrono::{SecondsFormat, Utc};
 use crumble_calendar::CalendarView;
-use crumble_db::schema::{accounts, app_state, calendars, folded_sections, remote_audio_consents};
+use crumble_db::schema::{accounts, app_state, calendars, remote_audio_consents};
 use diesel::prelude::*;
 use diesel::upsert::excluded;
 
-use crate::{AccountColor, SidebarSection};
+use crate::AccountColor;
 
 /// Everything the database holds, as the app reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,7 +21,6 @@ pub(crate) struct State {
     /// Kept while their Account is Disabled.
     pub(crate) disabled_calendars: BTreeSet<String>,
     pub(crate) hidden_accounts: BTreeSet<String>,
-    pub(crate) folded_sections: BTreeSet<SidebarSection>,
     /// Account identifiers in the order the user dragged them into; Accounts not listed follow,
     /// in EventKit's name order.
     pub(crate) account_order: Vec<String>,
@@ -62,7 +61,6 @@ impl Default for State {
             disabled_accounts: BTreeSet::new(),
             disabled_calendars: BTreeSet::new(),
             hidden_accounts: BTreeSet::new(),
-            folded_sections: BTreeSet::new(),
             account_order: Vec::new(),
             account_colors: BTreeMap::new(),
             account_aliases: BTreeMap::new(),
@@ -168,12 +166,6 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
         .load::<String>(connection)?
         .into_iter()
         .collect();
-    state.folded_sections = folded_sections::table
-        .select(folded_sections::section)
-        .load::<String>(connection)?
-        .iter()
-        .filter_map(|section| decode_section(section))
-        .collect();
     Ok(state)
 }
 
@@ -276,22 +268,6 @@ pub(crate) fn write_calendar(
     Ok(())
 }
 
-pub(crate) fn write_folded(
-    connection: &mut SqliteConnection,
-    state: &State,
-    section: SidebarSection,
-) -> QueryResult<()> {
-    let encoded = encode_section(section);
-    if state.folded_sections.contains(&section) {
-        diesel::insert_or_ignore_into(folded_sections::table)
-            .values(folded_sections::section.eq(encoded))
-            .execute(connection)?;
-    } else {
-        diesel::delete(folded_sections::table.find(encoded)).execute(connection)?;
-    }
-    Ok(())
-}
-
 fn encode_weekday(day: Weekday) -> i32 {
     day.num_days_from_monday() as i32
 }
@@ -337,22 +313,11 @@ fn decode_color(color: &str) -> Option<AccountColor> {
     }
 }
 
-fn encode_section(section: SidebarSection) -> &'static str {
-    match section {
-        SidebarSection::Calendars => "calendars",
-    }
-}
-
-fn decode_section(section: &str) -> Option<SidebarSection> {
-    (section == "calendars").then_some(SidebarSection::Calendars)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountColor, CalendarView, SidebarSection, Weekday, decode_calendar_view, decode_color,
-        decode_section, decode_weekday, encode_calendar_view, encode_color, encode_section,
-        encode_weekday,
+        AccountColor, CalendarView, Weekday, decode_calendar_view, decode_color, decode_weekday,
+        encode_calendar_view, encode_color, encode_weekday,
     };
 
     #[test]
@@ -371,8 +336,6 @@ mod tests {
         }
         assert_eq!(encode_color(AccountColor::Red), "red");
         assert_eq!(encode_color(AccountColor::Custom(0x0000ff)), "#0000ff");
-        let section = SidebarSection::Calendars;
-        assert_eq!(decode_section(encode_section(section)), Some(section));
     }
 
     #[test]
@@ -391,6 +354,5 @@ mod tests {
         ] {
             assert_eq!(decode_color(color), None, "{color}");
         }
-        assert_eq!(decode_section("agenda"), None);
     }
 }

@@ -1,29 +1,24 @@
-//! Sidebar, back/forward controls, resizing, and its open/close motion.
+//! The second-level sidebar, such as the Agenda list: its open/close motion and resizing.
 
 use std::{rc::Rc, time::Duration};
 
-use super::controls::{Inactive, app_icon, button};
-use super::sidebar_row::{activate, row};
-use super::{NativeView, Route};
-use crumble_theme::sidebar::{INSET, ROW_GAP, SECTION_GAP};
-use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
+use super::NativeView;
+use gpui_kit::component::h_flex;
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, AppContext, Axis, Context, Div, ElementId, EmptyView,
-    InteractiveElement, IntoElement, ParentElement, Stateful, StatefulInteractiveElement, Styled,
-    Window, div, prelude::FluentBuilder, px,
+    Animation, AnimationExt, AnyElement, AppContext, Axis, Context, DragMoveEvent, ElementId,
+    EmptyView, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
+    div, prelude::FluentBuilder, px,
 };
 
-pub(super) const DEFAULT_WIDTH: f32 = 232.0;
-const SIDEBAR_MIN_WIDTH: f32 = 192.0;
-const SIDEBAR_MAX_WIDTH: f32 = 400.0;
+pub(super) const DEFAULT_WIDTH: f32 = 320.0;
+const SIDEBAR_MIN_WIDTH: f32 = 240.0;
+const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 const SIDEBAR_MOTION: Duration = Duration::from_millis(220);
-/// Small ghost button size for the back and forward controls.
-const CONTROL_SIZE: f32 = 24.0;
 
 /// Drag payload; the resize handle hands it to GPUI wrapped in an `Rc`.
-pub(super) struct SidebarDrag(pub(super) gpui_kit::EntityId);
+struct SidebarDrag(pub(super) gpui_kit::EntityId);
 
-pub(super) fn clamp_sidebar_width(width: f32) -> f32 {
+fn clamp_sidebar_width(width: f32) -> f32 {
     width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
 }
 
@@ -33,7 +28,11 @@ pub(super) fn visible_width(width: f32, collapsed: bool, delta: f32) -> f32 {
 }
 
 impl NativeView {
+    /// Shows or hides the second-level sidebar; does nothing on a page without one.
     pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        if !self.route.has_sidebar() {
+            return;
+        }
         self.sidebar_collapsed = !self.sidebar_collapsed;
         self.sidebar_motion += 1;
         // A closing sidebar stays mounted until its slide-out finishes.
@@ -74,13 +73,9 @@ impl NativeView {
             .into_any_element()
     }
 
-    /// The frame expands or shrinks while the full-width sidebar inside stays pinned to its
-    /// trailing edge, so the content slides in and out instead of reflowing.
-    pub(super) fn render_sidebar_frame(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// The frame expands or shrinks while `sidebar` inside stays pinned to its trailing edge at
+    /// full width, so the content slides in and out instead of reflowing.
+    pub(super) fn render_sidebar_frame(&self, sidebar: impl IntoElement) -> AnyElement {
         let (width, collapsed) = (self.sidebar_width, self.sidebar_collapsed);
         let frame = div()
             .id("sidebar-frame")
@@ -89,128 +84,41 @@ impl NativeView {
             .justify_end()
             .h_full()
             .overflow_hidden()
-            .child(self.render_sidebar(window, cx));
+            .child(div().flex_shrink_0().w(px(width)).h_full().child(sidebar));
         self.sidebar_motion_width(frame, "sidebar-motion", move |delta| {
             visible_width(width, collapsed, delta)
         })
     }
 
-    fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (background, foreground, border) = (
-            theme.sidebar,
-            theme.sidebar_foreground,
-            theme.sidebar_border,
-        );
-        // One device pixel: a hairline on Retina instead of 1pt's two pixels.
-        let hairline = px(1.0 / window.scale_factor());
-        let sections = self.render_calendars_section(window, cx);
-        let (above, below) = match sections {
-            Some(_) => super::sidebar_scroll::scrolled_edges(&self.sidebar_scroll),
-            None => (false, false),
-        };
-        // The dividers show only while sections are scrolled out of view behind them.
-        let divider = |shown: bool| {
-            if shown {
-                border
-            } else {
-                gpui_kit::transparent_black()
-            }
-        };
-        div()
-            .id("sidebar")
-            .relative()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .w(px(self.sidebar_width))
-            .h_full()
-            .pt(px(crumble_theme::HEADER_HEIGHT))
-            .px(px(INSET))
-            .pb(px(INSET))
-            .bg(background)
-            .text_color(foreground)
-            .border_r(hairline)
-            .border_color(border)
-            .on_hover(cx.listener(|view, hovered: &bool, _, cx| view.hover_sidebar(*hovered, cx)))
-            .child(self.render_history_controls(cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(ROW_GAP))
-                    .pb(px(SECTION_GAP / 2.0))
-                    .border_b(hairline)
-                    .border_color(divider(above))
-                    .child(self.nav_row(Route::Home, "home", cx))
-                    .child(self.nav_row(Route::Agenda, "agenda", cx))
-                    .child(self.nav_row(Route::Calendar, "calendar", cx))
-                    .child(self.nav_row(Route::Chat, "chat", cx)),
-            )
-            .map(|sidebar| match sections {
-                Some(sections) => sidebar.child(self.render_sections(sections, cx)),
-                None => sidebar.child(div().flex_1()),
-            })
-            .child(
-                div()
-                    .pt(px(SECTION_GAP / 2.0))
-                    .border_t(hairline)
-                    .border_color(divider(below))
-                    .child(self.nav_row(Route::Settings, "settings", cx)),
-            )
-    }
-
-    fn nav_row(&self, route: Route, icon: &str, cx: &mut Context<Self>) -> Stateful<Div> {
-        let label = route.title();
-        activate(
-            row(
-                format!("nav-{}", label.to_lowercase()),
-                app_icon(icon),
-                label,
-                self.route.sidebar_row() == route,
-                cx,
-            ),
-            label,
-            cx,
-            move |view, _, cx| view.navigate(route.clone(), cx),
-        )
-    }
-
-    /// Back and forward, right-aligned in the sidebar's header row.
-    fn render_history_controls(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let control = |id: &'static str, icon: &str, label: &'static str, enabled: bool| {
-            button(id)
-                .ghost()
-                .small()
-                .icon(app_icon(icon).size_4())
-                .accessibility_label(label)
-                .inactive(!enabled)
-        };
+    /// The second-level sidebar, `sidebar`, sliding open and shut, then its resize handle while
+    /// open. Dragging the handle measures from the leading edge of this element's parent.
+    pub(super) fn render_sidebar(
+        &self,
+        sidebar: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let collapsed = self.sidebar_collapsed;
+        let shown = !collapsed || self.sidebar_closing;
         h_flex()
-            .absolute()
-            .top(px((crumble_theme::HEADER_HEIGHT - CONTROL_SIZE) / 2.0))
-            .right(px(INSET))
-            .child(
-                control(
-                    "go-back",
-                    "chevron-left",
-                    "Back",
-                    self.history.can_go_back(),
-                )
-                .on_click(cx.listener(|view, _, _, cx| view.go_back(cx))),
+            .h_full()
+            .flex_shrink_0()
+            .on_drag_move(
+                cx.listener(|view, event: &DragMoveEvent<Rc<SidebarDrag>>, _, cx| {
+                    if event.drag(cx).0 != cx.entity_id() {
+                        return;
+                    }
+                    view.sidebar_width = clamp_sidebar_width(f32::from(
+                        event.event.position.x - event.bounds.left(),
+                    ));
+                    cx.notify();
+                }),
             )
-            .child(
-                control(
-                    "go-forward",
-                    "chevron-right",
-                    "Forward",
-                    self.history.can_go_forward(),
-                )
-                .on_click(cx.listener(|view, _, _, cx| view.go_forward(cx))),
-            )
+            .when(shown, |row| row.child(self.render_sidebar_frame(sidebar)))
+            .when(!collapsed, |row| row.child(self.render_resize_control(cx)))
+            .into_any_element()
     }
 
-    pub(super) fn render_resize_control(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_resize_control(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         div()
             .id("sidebar-resize-control")
             .tab_index(0)

@@ -35,12 +35,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    folded_sections (section) {
-        section -> Text,
-    }
-}
-
-diesel::table! {
     notes (id) {
         id -> Text,
         title -> Nullable<Text>,
@@ -91,7 +85,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     accounts,
     app_state,
     calendars,
-    folded_sections,
     notes,
     remote_audio_consents,
     transcript_segments,

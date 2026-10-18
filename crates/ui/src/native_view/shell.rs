@@ -1,32 +1,35 @@
-//! Application chrome: sidebar, borderless header, and fixed sidebar toggle.
+//! Application chrome: the borderless header with back, forward, and the sidebar toggle pinned
+//! beside the traffic lights, the rail, and the panel the page sits in.
 
-use std::rc::Rc;
-
-use super::controls::button;
-use super::sidebar::{SidebarDrag, clamp_sidebar_width, visible_width};
+use super::controls::{Inactive, app_icon, button};
 use super::{NativeView, Route};
-use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT};
-use gpui_kit::component::{Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex};
+use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT, SURFACE_RADIUS};
+use gpui_kit::component::{
+    ActiveTheme, Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex,
+};
 use gpui_kit::{
-    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 gpui_kit::actions!(
     crumble,
     [
-        /// Shows or hides the sidebar.
+        /// Shows or hides the page's second-level sidebar, such as the Agenda list.
         ToggleSidebar,
-        /// Returns to the previous sidebar route.
+        /// Returns to the previous route.
         GoBack,
         /// Reopens the route left by going back.
         GoForward
     ]
 );
 
-/// Toggle offset beside the traffic lights: its glyph sits one light-spacing past the green light.
-const TOGGLE_LEFT_MACOS: f32 = 93.0;
-const TOGGLE_SIZE: f32 = 24.0;
+/// Controls offset beside the traffic lights: the first glyph sits one light-spacing past the
+/// green light.
+const CONTROLS_LEFT_MACOS: f32 = 93.0;
+/// Small ghost button size of each header control.
+const CONTROL_SIZE: f32 = 24.0;
+const CONTROL_GAP: f32 = 4.0;
 const HEADER_GAP: f32 = 8.0;
 
 /// macOS draws the traffic lights over app content, so the chrome reserves their row.
@@ -34,122 +37,127 @@ fn reserves_traffic_lights(window: &Window) -> bool {
     cfg!(target_os = "macos") && !window.is_fullscreen()
 }
 
-/// The sidebar toggle stays at this offset whether the sidebar is open or closed.
-fn toggle_left(window: &Window) -> f32 {
+/// Where the header controls start.
+fn controls_left(window: &Window) -> f32 {
     if reserves_traffic_lights(window) {
-        TOGGLE_LEFT_MACOS
+        CONTROLS_LEFT_MACOS
     } else {
         HEADER_GAP
     }
 }
 
-/// Leading header space that keeps header content clear of the fixed toggle, and otherwise
-/// lines it up with the page's leading edge.
-fn header_inset(toggle_left: f32, sidebar_visible: f32) -> f32 {
-    (toggle_left + TOGGLE_SIZE + HEADER_GAP - sidebar_visible).max(CONTENT_PADDING)
+/// Leading header space that keeps the page's toolbar clear of `controls` header controls
+/// starting at `left`.
+fn header_inset(left: f32, controls: usize) -> f32 {
+    let controls = controls as f32;
+    left + controls * CONTROL_SIZE + (controls - 1.0).max(0.0) * CONTROL_GAP + HEADER_GAP
 }
 
 impl NativeView {
     pub(super) fn render_shell(
         &self,
         page: AnyElement,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let collapsed = self.sidebar_collapsed;
+        let theme = cx.theme();
+        // One device pixel: a hairline on Retina instead of 1pt's two pixels.
+        let hairline = px(1.0 / window.scale_factor());
+        let (edge, background) = (theme.sidebar_border, theme.background);
+        let panel = div()
+            .id("main-panel")
+            .relative()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_hidden()
+            .rounded_tl(px(SURFACE_RADIUS))
+            .border_t(hairline)
+            .border_l(hairline)
+            .border_color(edge)
+            .bg(background)
+            .child(
+                div()
+                    .id("main-content")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    // The Agenda list runs from the panel's edge to the window's bottom.
+                    .when(self.route != Route::Agenda, |content| {
+                        content.p(px(CONTENT_PADDING)).pb_6()
+                    })
+                    .child(page),
+            );
         div()
             .id("app-shell")
             .relative()
             .size_full()
             .flex()
-            .on_drag_move(
-                cx.listener(|view, event: &DragMoveEvent<Rc<SidebarDrag>>, _, cx| {
-                    if event.drag(cx).0 != cx.entity_id() {
-                        return;
-                    }
-                    view.sidebar_width = clamp_sidebar_width(f32::from(
-                        event.event.position.x - event.bounds.left(),
-                    ));
-                    cx.notify();
-                }),
-            )
-            .when(!collapsed || self.sidebar_closing, |shell| {
-                shell.child(self.render_sidebar_frame(window, cx))
-            })
-            .when(!collapsed, |shell| {
-                shell.child(self.render_resize_control(cx))
-            })
+            .flex_col()
+            .child(self.render_header(window, cx))
             .child(
                 div()
-                    .id("main-column")
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
                     .flex()
-                    .flex_col()
-                    .when(self.route == Route::Agenda, |column| {
-                        column.child(Self::render_agenda_backdrop(window, cx))
-                    })
-                    .child(self.render_header(window, cx))
-                    .child(
-                        div()
-                            .id("main-content")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            // The Agenda list runs from the sidebar's edge to the window's bottom.
-                            .when(self.route != Route::Agenda, |content| {
-                                content.px(px(CONTENT_PADDING)).pb_6()
-                            })
-                            .child(page),
-                    ),
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_rail(window, cx))
+                    .child(panel),
             )
-            .child(self.render_sidebar_toggle(window, cx))
+            .child(self.render_header_controls(window, cx))
             .into_any_element()
     }
 
-    /// Pinned beside the traffic lights, above both the sidebar and the header.
-    fn render_sidebar_toggle(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Back, forward, then the sidebar toggle on a page with a second-level sidebar, pinned
+    /// beside the traffic lights above the header.
+    fn render_header_controls(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let control = |id: &'static str, icon: Icon, label: &'static str| {
+            button(id)
+                .ghost()
+                .small()
+                .icon(icon.size_4())
+                .accessibility_label(label)
+        };
         let collapsed = self.sidebar_collapsed;
-        div()
+        h_flex()
             .absolute()
-            .top(px((HEADER_HEIGHT - TOGGLE_SIZE) / 2.0))
-            .left(px(toggle_left(window)))
+            .top(px((HEADER_HEIGHT - CONTROL_SIZE) / 2.0))
+            .left(px(controls_left(window)))
+            .gap(px(CONTROL_GAP))
             .child(
-                // Kit's SidebarToggleButton exposes no styling, so the hand cursor needs a plain button.
-                button("collapse")
-                    .ghost()
-                    .small()
-                    .icon(
-                        Icon::new(if collapsed {
-                            IconName::PanelLeftOpen
-                        } else {
-                            IconName::PanelLeftClose
-                        })
-                        .size_4(),
-                    )
-                    .accessibility_label(if collapsed {
-                        "Show sidebar"
-                    } else {
-                        "Hide sidebar"
-                    })
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_sidebar(cx))),
+                control("go-back", app_icon("chevron-left"), "Back")
+                    .inactive(!self.history.can_go_back())
+                    .on_click(cx.listener(|view, _, _, cx| view.go_back(cx))),
             )
+            .child(
+                control("go-forward", app_icon("chevron-right"), "Forward")
+                    .inactive(!self.history.can_go_forward())
+                    .on_click(cx.listener(|view, _, _, cx| view.go_forward(cx))),
+            )
+            .when(self.route.has_sidebar(), |controls| {
+                let (icon, label) = if collapsed {
+                    (IconName::PanelLeftOpen, "Show sidebar")
+                } else {
+                    (IconName::PanelLeftClose, "Hide sidebar")
+                };
+                // Kit's SidebarToggleButton exposes no styling, so the hand cursor needs a plain
+                // button.
+                controls.child(
+                    control("collapse", Icon::new(icon), label)
+                        .on_click(cx.listener(|view, _, _, cx| view.toggle_sidebar(cx))),
+                )
+            })
     }
 
     /// Borderless, transparent header; the Agenda, Calendar, and Event pages put their toolbars
-    /// here. The Recording pill sits at its trailing end on every page while a Recording runs.
+    /// here, clear of the header controls. The Recording pill sits at its trailing end on every
+    /// page while a Recording runs.
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let (width, collapsed, left) = (
-            self.sidebar_width,
-            self.sidebar_collapsed,
-            toggle_left(window),
-        );
-        let inset =
-            self.sidebar_motion_width(div().flex_shrink_0(), "header-inset", move |delta| {
-                header_inset(left, visible_width(width, collapsed, delta))
-            });
+        let controls = if self.route.has_sidebar() { 3 } else { 2 };
+        let inset = div()
+            .flex_shrink_0()
+            .w(px(header_inset(controls_left(window), controls)));
         let toolbar = match &self.route {
             Route::Agenda => Some(self.render_agenda_toolbar(cx).into_any_element()),
             Route::Calendar => Some(self.render_calendar_toolbar(cx).into_any_element()),
@@ -185,12 +193,12 @@ impl NativeView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CONTENT_PADDING, header_inset};
+    use super::header_inset;
 
     #[test]
-    fn header_clears_the_toggle_then_lines_up_with_the_page() {
-        assert_eq!(header_inset(93.0, 0.0), 125.0);
-        assert_eq!(header_inset(93.0, 60.0), 65.0);
-        assert_eq!(header_inset(93.0, 232.0), CONTENT_PADDING);
+    fn header_clears_every_control() {
+        assert_eq!(header_inset(93.0, 2), 93.0 + 24.0 + 4.0 + 24.0 + 8.0);
+        assert_eq!(header_inset(93.0, 3), 93.0 + 3.0 * 24.0 + 2.0 * 4.0 + 8.0);
+        assert_eq!(header_inset(8.0, 0), 16.0);
     }
 }
