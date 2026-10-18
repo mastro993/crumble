@@ -49,7 +49,9 @@ impl NativeView {
     /// Whether the popover should be open now.
     fn calendars_wanted(&mut self, window: &Window, cx: &App) -> bool {
         let over = self.calendars_popover.pointer_over(window);
-        let held = self.menu.is_some() || self.renaming.is_some() || cx.has_active_drag();
+        // Only an Account row's drag holds it; resizing the page's sidebar is a drag too.
+        let dragging = self.account_reorder.is_dragging() && cx.has_active_drag();
+        let held = self.menu.is_some() || self.renaming.is_some() || dragging;
         let popover = &mut self.calendars_popover;
         if !over {
             popover.dismissed = false;

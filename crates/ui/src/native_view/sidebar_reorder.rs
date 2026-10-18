@@ -158,6 +158,12 @@ impl<Id: Clone + Eq + Hash> RowReorder<Id> {
         !self.shifts.is_empty() && self.progress(now) < 1.0
     }
 
+    /// Whether a row is being dragged; it can outlast a drag GPUI ended elsewhere until
+    /// [`Self::finish`].
+    pub(super) fn is_dragging(&self) -> bool {
+        self.dragging.is_some()
+    }
+
     /// Follows the floating row, moving the other rows aside when it crosses a slot. Returns
     /// whether the drop slot changed.
     pub(super) fn drag(&mut self, stored: &[Id], id: &Id, top: f32, animate: bool) -> bool {
@@ -291,7 +297,9 @@ mod tests {
         let mut reorder = RowReorder::default();
         let stored = ids(&["a", "b", "c"]);
         let c = "c".to_owned();
+        assert!(!reorder.is_dragging());
         assert!(reorder.drag(&stored, &c, 0.0, false));
+        assert!(reorder.is_dragging());
         assert_eq!(reorder.displayed(&stored, true).0, ids(&["c", "a", "b"]));
         assert_eq!(reorder.displayed(&stored, true).1, Some(c.clone()));
         assert_eq!(
@@ -299,6 +307,7 @@ mod tests {
             Some(ids(&["c", "a", "b"]))
         );
         assert_eq!(reorder.displayed(&stored, false), (stored.clone(), None));
+        assert!(!reorder.is_dragging());
 
         // A drag GPUI ended elsewhere saves nothing.
         assert!(reorder.drag(&stored, &c, 0.0, false));
