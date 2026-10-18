@@ -1,4 +1,5 @@
-//! The sidebar's Calendars section: one row per Account, or the step that grants access.
+//! The Calendars section the Calendars popover shows: one row per Account, or the step that
+//! grants access.
 
 mod account_row;
 #[cfg(test)]
@@ -11,7 +12,7 @@ use super::controls::app_icon;
 use super::route::Route;
 use super::sidebar_reorder::{RowDrag, grab_cursor};
 use super::sidebar_row::{activate, row};
-use crumble_store::{AccountColor, CalendarsSection, SidebarSection, calendars_section};
+use crumble_store::{AccountColor, CalendarsSection, calendars_section};
 use crumble_theme::sidebar::{DETAIL_SIZE, ROW_GAP, ROW_PADDING};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
@@ -39,7 +40,7 @@ enum AccountAction {
 }
 
 impl NativeView {
-    /// The section title, which folds the rows, and the rows; `None` without EventKit.
+    /// The section's rows; `None` without EventKit.
     pub(super) fn render_calendars_section(
         &self,
         window: &Window,
@@ -128,40 +129,29 @@ impl NativeView {
                     .collect()
             }
         };
-        let items = rows.len().max(1);
         Some(
             div()
+                .id("sidebar-calendars")
                 .flex()
                 .flex_col()
-                .child(self.section_header(SidebarSection::Calendars, "Calendars", cx))
-                .children(
-                    self.section_rows(
-                        SidebarSection::Calendars,
-                        items,
-                        div()
-                            .id("sidebar-calendars")
-                            .flex()
-                            .flex_col()
-                            .gap(px(ROW_GAP))
-                            // Drag moves are measured from the first row's slot.
-                            .on_drag_move(cx.listener(
-                                |view, event: &DragMoveEvent<RowDrag<String>>, window, cx| {
-                                    let drag = event.drag(cx);
-                                    let top = drag.top(event.event.position, event.bounds);
-                                    view.drag_account(drag.id.clone(), top, window, cx)
-                                },
-                            ))
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
-                            )
-                            .on_mouse_up_out(
-                                MouseButton::Left,
-                                cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
-                            )
-                            .children(rows),
-                    ),
+                .gap(px(ROW_GAP))
+                // Drag moves are measured from the first row's slot.
+                .on_drag_move(cx.listener(
+                    |view, event: &DragMoveEvent<RowDrag<String>>, window, cx| {
+                        let drag = event.drag(cx);
+                        let top = drag.top(event.event.position, event.bounds);
+                        view.drag_account(drag.id.clone(), top, window, cx)
+                    },
+                ))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
                 )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|view, _, _, cx| view.finish_account_drag(cx)),
+                )
+                .children(rows)
                 .into_any_element(),
         )
     }

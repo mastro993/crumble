@@ -13,7 +13,7 @@ use super::super::sidebar_row::{activate, hover_fill, row_with};
 use super::{AccountAction, Placement};
 use crumble_eventkit::Account;
 use crumble_store::AccountColor;
-use crumble_theme::sidebar::{ICON_GAP, INSET, ROW_HEIGHT, ROW_PADDING};
+use crumble_theme::sidebar::{ICON_GAP, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{Sizable, h_flex};
 use gpui_kit::{
@@ -87,7 +87,7 @@ impl NativeView {
                 color,
                 checked: !hidden,
                 label,
-                width: self.sidebar_width - 2.0 * INSET,
+                width: super::super::calendars_popover::ROW_WIDTH,
                 grab: Cell::new(0.0),
             },
             |drag, offset, _, cx| {

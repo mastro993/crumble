@@ -25,13 +25,6 @@ pub struct Store {
     connection: Option<SqliteConnection>,
 }
 
-/// A foldable sidebar section.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SidebarSection {
-    /// The Calendars section, listing Accounts.
-    Calendars,
-}
-
 impl Store {
     /// Opens the app's database and reads it. When it cannot be opened or read, the app runs on
     /// the defaults in an in-memory database and leaves the file alone.
@@ -215,19 +208,6 @@ impl Store {
         if self.state.audio_consents.insert(consent.clone()) {
             self.write(|connection, _| db::write_audio_consent(connection, &consent));
         }
-    }
-
-    /// Whether `section`'s rows are folded away.
-    pub fn is_folded(&self, section: SidebarSection) -> bool {
-        self.state.folded_sections.contains(&section)
-    }
-
-    /// Folds `section`'s rows away, or unfolds them.
-    pub fn toggle_folded(&mut self, section: SidebarSection) {
-        if !self.state.folded_sections.remove(&section) {
-            self.state.folded_sections.insert(section);
-        }
-        self.write(|connection, state| db::write_folded(connection, state, section));
     }
 }
 

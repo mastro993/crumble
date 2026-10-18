@@ -8,7 +8,11 @@ pub struct Assets;
 const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/agenda.svg",
-        include_bytes!("../../../assets/hugeicons/CalendarCheckOut01Icon.svg"),
+        include_bytes!("../../../assets/hugeicons/NotebookTabsIcon.svg"),
+    ),
+    (
+        "icons/agenda-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/NotebookTabsIcon.svg"),
     ),
     (
         "icons/arrow-down.svg",
@@ -23,8 +27,24 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/Calendar03Icon.svg"),
     ),
     (
+        "icons/calendar-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/Calendar03Icon.svg"),
+    ),
+    (
+        "icons/calendars.svg",
+        include_bytes!("../../../assets/hugeicons/CalendarsIcon.svg"),
+    ),
+    (
+        "icons/calendars-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/CalendarsIcon.svg"),
+    ),
+    (
         "icons/chat.svg",
         include_bytes!("../../../assets/hugeicons/BubbleChatIcon.svg"),
+    ),
+    (
+        "icons/chat-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/BubbleChatIcon.svg"),
     ),
     (
         "icons/check.svg",
@@ -65,6 +85,10 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/home.svg",
         include_bytes!("../../../assets/hugeicons/Home01Icon.svg"),
+    ),
+    (
+        "icons/home-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/Home01Icon.svg"),
     ),
     (
         "icons/mic.svg",
@@ -117,6 +141,10 @@ const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/settings.svg",
         include_bytes!("../../../assets/hugeicons/Settings01Icon.svg"),
+    ),
+    (
+        "icons/settings-selected.svg",
+        include_bytes!("../../../assets/hugeicons/solid/Settings01Icon.svg"),
     ),
     (
         "icons/stop.svg",

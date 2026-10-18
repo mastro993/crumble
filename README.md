@@ -56,4 +56,4 @@ rm /tmp/crumble-scratch.sqlite3
 
 `migration run` rewrites `src/schema.rs`; commit it with the migration.
 
-Icons in `assets/hugeicons` are from [Hugeicons](https://hugeicons.com/) under the MIT license.
+Icons in `assets/hugeicons` are from [Hugeicons](https://hugeicons.com/): the Stroke Rounded ones under the MIT license, and the Solid Rounded ones in `assets/hugeicons/solid`, which the rail shows for the selected page, from Hugeicons Pro.

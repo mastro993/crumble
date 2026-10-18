@@ -10,7 +10,7 @@ use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
 use crumble_eventkit::Access;
 use crumble_notes::{Note, Notes};
-use crumble_theme::CONTENT_PADDING;
+use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
@@ -21,8 +21,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// Width of the Agenda list.
-const LIST_WIDTH: f32 = 320.0;
 /// The list reads further back until it holds this many rows, enough to fill a tall window.
 const MIN_ROWS: usize = 40;
 /// Height of the fade that rows scroll away under at the list's top.
@@ -147,24 +145,8 @@ impl NativeView {
             )
     }
 
-    /// The Agenda column's surface from the window's top to its bottom, behind the header and
-    /// the list.
-    pub(in super::super) fn render_agenda_backdrop(window: &Window, cx: &App) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left_0()
-            .w(px(LIST_WIDTH))
-            .bg(surface(cx))
-            // One device pixel, matching the sidebar's hairline.
-            .border_r(px(1.0 / window.scale_factor()))
-            .border_color(theme.border)
-    }
-
-    /// The Agenda list beside an empty content area, with a button back to the top once the
-    /// list is scrolled.
+    /// The Agenda list, the page's second-level sidebar, beside an empty content area, with a
+    /// button back to the top once the list is scrolled.
     pub(in super::super) fn render_agenda(
         &self,
         window: &Window,
@@ -172,7 +154,16 @@ impl NativeView {
     ) -> AnyElement {
         let theme = cx.theme();
         let sync = self.calendar_sync.read(cx);
-        let column = div().relative().flex_shrink_0().w(px(LIST_WIDTH)).h_full();
+        // One device pixel, matching the panel's hairline.
+        let hairline = px(1.0 / window.scale_factor());
+        let column = div()
+            .relative()
+            .size_full()
+            // Over the panel's rounded corner, which does not clip its children.
+            .rounded_tl(px(SURFACE_RADIUS))
+            .bg(surface(cx))
+            .border_r(hairline)
+            .border_color(theme.border);
         let column = if sync.access() == Access::Granted {
             let colors: Rc<HashMap<String, Hsla>> = Rc::new(
                 sync.calendars()
@@ -217,8 +208,8 @@ impl NativeView {
                         .absolute()
                         .top_0()
                         .left_0()
-                        // Clear of the backdrop's hairline.
-                        .right(px(1.0 / window.scale_factor()))
+                        // Clear of the column's hairline.
+                        .right(hairline)
                         .h(self.agenda.scroll_offset().min(px(TOP_FADE)))
                         .bg(linear_gradient(
                             180.0,
@@ -258,7 +249,7 @@ impl NativeView {
                     .p(px(CONTENT_PADDING))
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("Connect your calendars from the sidebar to see past Events."),
+                    .child("Connect calendars from the Calendars button in the sidebar to see past Events."),
             )
         };
         let content = self.agenda.selected.is_some().then(|| {
@@ -274,7 +265,7 @@ impl NativeView {
         });
         h_flex()
             .size_full()
-            .child(column)
+            .child(self.render_sidebar(column, cx))
             .children(content)
             .into_any_element()
     }

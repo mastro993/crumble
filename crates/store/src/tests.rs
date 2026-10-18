@@ -1,4 +1,4 @@
-use super::{AccountColor, CalendarView, SidebarSection, Store, Weekday, account_label, db};
+use super::{AccountColor, CalendarView, Store, Weekday, account_label, db};
 use crumble_eventkit::{Account, Calendar, Provider};
 use diesel::{RunQueryDsl, sql_query};
 
@@ -32,7 +32,6 @@ fn every_change_is_written_and_read_back() {
     store.toggle_account_disabled("source-1");
     store.toggle_account_hidden("source-2");
     store.toggle_calendar_disabled("calendar-1");
-    store.toggle_folded(SidebarSection::Calendars);
     store.set_account_color("source-1", AccountColor::Pink);
     store.set_account_color("source-2", AccountColor::Custom(0x3366ff));
     store.set_account_alias("source-3", "Work", "me@example.com");
@@ -58,7 +57,6 @@ fn every_change_is_written_and_read_back() {
     store.toggle_account_disabled("source-1");
     store.toggle_account_hidden("source-2");
     store.toggle_calendar_disabled("calendar-1");
-    store.toggle_folded(SidebarSection::Calendars);
     store.set_account_alias("source-3", "", "me@example.com");
     store.set_listed_order(
         &accounts,
@@ -66,7 +64,6 @@ fn every_change_is_written_and_read_back() {
     );
     assert_eq!(store.reloaded(), store.state);
     assert!(store.state.disabled_accounts.is_empty());
-    assert!(store.state.folded_sections.is_empty());
 }
 
 #[test]
