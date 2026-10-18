@@ -4,13 +4,14 @@ use super::super::NativeView;
 use super::super::account_dot::tint;
 use super::super::controls::{app_icon, button};
 use super::super::route::Route;
+use super::super::sidebar::{column, surface};
 use super::row::{RowItem, render_row};
 use chrono::{Local, NaiveDate, Timelike, Utc};
 use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
 use crumble_eventkit::Access;
 use crumble_notes::{Note, Notes};
-use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
+use crumble_theme::CONTENT_PADDING;
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
@@ -154,16 +155,9 @@ impl NativeView {
     ) -> AnyElement {
         let theme = cx.theme();
         let sync = self.calendar_sync.read(cx);
-        // One device pixel, matching the panel's hairline.
+        // One device pixel, matching the column's hairline.
         let hairline = px(1.0 / window.scale_factor());
-        let column = div()
-            .relative()
-            .size_full()
-            // Over the panel's rounded corner, which does not clip its children.
-            .rounded_tl(px(SURFACE_RADIUS))
-            .bg(surface(cx))
-            .border_r(hairline)
-            .border_color(theme.border);
+        let column = column(window, cx).relative();
         let column = if sync.access() == Access::Granted {
             let colors: Rc<HashMap<String, Hsla>> = Rc::new(
                 sync.calendars()
@@ -249,7 +243,7 @@ impl NativeView {
                     .p(px(CONTENT_PADDING))
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("Connect calendars from the Calendars button in the sidebar to see past Events."),
+                    .child("Connect calendars from the Calendars button in the rail to see past Events."),
             )
         };
         let content = self.agenda.selected.is_some().then(|| {
@@ -290,11 +284,4 @@ fn quick_note_label(note: &Note) -> String {
         .clone()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| "Quick note".to_owned())
-}
-
-/// The Agenda column's opaque surface: half the sidebar over the page, so this second-level
-/// column sits between them.
-fn surface(cx: &App) -> Hsla {
-    let theme = cx.theme();
-    theme.background.blend(theme.sidebar.opacity(0.5))
 }

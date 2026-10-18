@@ -85,8 +85,9 @@ impl NativeView {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
-                    // The Agenda list runs from the panel's edge to the window's bottom.
-                    .when(self.route != Route::Agenda, |content| {
+                    // The Agenda list and the Settings sections run from the panel's edge to the
+                    // window's bottom.
+                    .when(!self.route.fills_panel(), |content| {
                         content.p(px(CONTENT_PADDING)).pb_6()
                     })
                     .child(page),

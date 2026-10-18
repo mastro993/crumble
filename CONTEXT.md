@@ -73,7 +73,7 @@ _Avoid_: nickname, display name, rename
 The list of every Account that is not Disabled, in a popover beside the rail's Calendars button. Its title says "Calendars" even though each row is an Account.
 
 **Settings page**:
-The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, and picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. Written "Settings" when nothing else could be meant.
+The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, turns Suggestions on or off, and picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. It is split into sections picked from a sidebar at its leading edge, grouped under Calendar (General, Calendars) and Notes (Recording, Models, Providers). Written "Settings" when nothing else could be meant.
 _Avoid_: preferences, options
 
 ### Agenda

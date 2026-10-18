@@ -42,7 +42,7 @@ use menu::OpenMenu;
 use notes::NoteDetail;
 use route::{History, Route};
 use settings_models::ModelSettings;
-use settings_page::WeekdaySelect;
+use settings_page::{SettingsSection, WeekdaySelect};
 use sidebar_reorder::RowReorder;
 use std::time::Instant;
 use suggestions::Suggestions;
@@ -52,7 +52,7 @@ pub struct NativeView {
     focus: FocusHandle,
     route: Route,
     history: History,
-    /// Width of the second-level sidebar, such as the Agenda list.
+    /// Width every second-level sidebar shares: the Agenda list and the Settings sections.
     sidebar_width: f32,
     sidebar_collapsed: bool,
     /// Sidebar toggle count, keying each slide.
@@ -69,7 +69,9 @@ pub struct NativeView {
     /// The Note the Agenda content area or the Event page shows.
     note_detail: NoteDetail,
     first_day_select: WeekdaySelect,
-    /// The fields of Settings › Models.
+    /// The Settings section on screen.
+    settings_section: SettingsSection,
+    /// The fields of Settings › Models and Providers.
     models: ModelSettings,
     calendar: CalendarPage,
     events: Entity<CalendarEvents>,
@@ -134,6 +136,7 @@ impl NativeView {
             notes,
             note_detail,
             first_day_select,
+            settings_section: SettingsSection::default(),
             models,
             calendar,
             events,
@@ -194,7 +197,7 @@ impl Render for NativeView {
         let page = match &self.route {
             Route::Agenda => self.render_agenda(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
-            Route::Settings => self.render_settings(window, cx).into_any_element(),
+            Route::Settings => self.render_settings(window, cx),
             Route::Event(_) => self.render_note_detail(cx),
             route => div().text_xl().child(route.title()).into_any_element(),
         };

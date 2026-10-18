@@ -4,7 +4,7 @@
 
 use super::super::NativeView;
 use super::super::controls::button;
-use super::super::route::Route;
+use super::super::settings_page::SettingsSection;
 use chrono::Utc;
 use crumble_notes::{NoteId, Track};
 use crumble_remote::{Provider, base_url, runs_locally};
@@ -392,7 +392,9 @@ impl NativeView {
                     .outline()
                     .small()
                     .label("Open Settings")
-                    .on_click(cx.listener(|view, _, _, cx| view.navigate(Route::Settings, cx))),
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.open_settings(SettingsSection::Models, cx)
+                    })),
             )
         };
         let id = note.id.clone();

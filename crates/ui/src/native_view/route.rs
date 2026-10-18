@@ -32,6 +32,12 @@ impl Route {
         *self == Route::Agenda
     }
 
+    /// Whether the page runs to the panel's edges, as a page with a column of its own does,
+    /// instead of sitting inside the panel's padding.
+    pub(super) fn fills_panel(&self) -> bool {
+        matches!(self, Route::Agenda | Route::Settings)
+    }
+
     /// The rail button that stays selected: an Event's page belongs to the Calendar.
     pub(super) fn rail_route(&self) -> Route {
         match self {

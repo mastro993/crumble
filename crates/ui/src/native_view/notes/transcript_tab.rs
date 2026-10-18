@@ -3,7 +3,7 @@
 
 use super::super::NativeView;
 use super::super::controls::button;
-use super::super::route::Route;
+use super::super::settings_page::SettingsSection;
 use super::recording::clock;
 use super::transcript::{Failure, Stage};
 use crumble_notes::Track;
@@ -97,7 +97,9 @@ impl NativeView {
                         .outline()
                         .small()
                         .label("Open Settings")
-                        .on_click(cx.listener(|view, _, _, cx| view.navigate(Route::Settings, cx))),
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.open_settings(SettingsSection::Providers, cx)
+                        })),
                     muted,
                 );
             }

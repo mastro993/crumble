@@ -1,4 +1,5 @@
-//! Drawing the Models section: its selects and fields, each Provider's key row, and Test.
+//! Drawing the Models section, its selects, and the Providers section: each remote Provider's
+//! fields, key row, and Test.
 
 use super::super::NativeView;
 use super::super::controls::{Inactive, button};
@@ -11,14 +12,13 @@ use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, h_flex, v_flex};
 use gpui_kit::{Context, Div, IntoElement, ParentElement, Styled, Window, div, px};
 
 impl NativeView {
-    /// The Models section: the Summary Model, the Transcription Model and its language, then
-    /// Claude's and the OpenAI-compatible server's settings.
-    pub(in super::super) fn render_model_settings(
+    /// Follows Apple Intelligence being turned on or off while Crumble runs: Apple's row of the
+    /// Summary Model select, and the backfill once its Model can run.
+    pub(in super::super) fn notice_apple_availability(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        // Apple Intelligence can be turned on or off while Crumble runs.
+    ) {
         let apple = apple_availability();
         if apple != self.models.apple {
             self.models.apple = apple;
@@ -36,10 +36,13 @@ impl NativeView {
                 });
             }
         }
+    }
+
+    /// The Models section: the Summary Model, the Transcription Model, and its language.
+    pub(in super::super) fn render_model_settings(&self, cx: &Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         v_flex()
             .gap_4()
-            .child(super::super::settings_page::group_title("Models", cx))
             .child(
                 v_flex()
                     .gap_1()
@@ -52,7 +55,8 @@ impl NativeView {
                             .accessibility_label("Summary Model"),
                     ))
                     .children(
-                        apple
+                        self.models
+                            .apple
                             .reason()
                             .map(|reason| note(format!("Apple isn't available: {reason}"), muted)),
                     )
@@ -83,6 +87,12 @@ impl NativeView {
                     .menu_width(px(FIELD_WIDTH))
                     .accessibility_label("Language"),
             ))
+    }
+
+    /// The Providers section: Claude's and the OpenAI-compatible server's settings.
+    pub(in super::super) fn render_provider_settings(&self, cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .gap_4()
             .child(subtitle("Claude"))
             .child(self.key_row(Provider::Claude, cx))
             .child(row("Model", Input::new(&self.models.claude_model).small()))

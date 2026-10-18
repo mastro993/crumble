@@ -15,7 +15,7 @@ Transcript and Model are defined in [CONTEXT.md](../../CONTEXT.md); the design i
   - Waiting behind another job: "Waiting to transcribe…".
   - Downloading the model: "Downloading the speech model for English (United States)… 42%" with a progress bar.
   - Transcribing: "Transcribing… 42%" with a progress bar.
-  - Not transcribed yet: a finished Recording no job took, as one older than a remote Transcription Model, or one the user did not agree to send. "Not transcribed yet" with "Transcribe with <Provider>", which transcribes that Note alone, after consent; or, while the picked server has no address or Transcription Model, "Not transcribed yet. Add the server's address and Model in Settings." with Open Settings.
+  - Not transcribed yet: a finished Recording no job took, as one older than a remote Transcription Model, or one the user did not agree to send. "Not transcribed yet" with "Transcribe with <Provider>", which transcribes that Note alone, after consent; or, while the picked server has no address or Transcription Model, "Not transcribed yet. Add the server's address and Model in Settings." with Open Settings, which opens Settings on Providers.
   - Failed: "Couldn't download the speech model." or "Couldn't transcribe this recording." for Apple's Model, a remote Model's error as a sentence, such as "Couldn't reach http://whisper.lan:8000/v1. Check that the server is running.", or "Couldn't save the Transcript.", with Try again; the error is logged, and never holds a key.
   - The locale cannot be transcribed: "Transcription isn't available for <language> on this Mac.", with no other language tried.
   - Done: "Transcribed by Apple, on this Mac", or "Transcribed by <Provider> · <model>" for a remote one, in small muted text, then one line per segment: its start as `m:ss`, a link that seeks the player there; "You" for the microphone or "Others" for the Mac's sound; and the text. A Transcript with no segments says "No speech was heard."
@@ -31,6 +31,6 @@ Summary, Model and Provider are defined in [CONTEXT.md](../../CONTEXT.md); the d
   - Waiting behind another job: "Waiting to summarize…".
   - Summarizing: "Summarizing… 40%" with a progress bar, or "Summarizing…" with a moving bar until the Model reports progress. Remote Models report only when done.
   - Not summarized yet: a Transcript with speech that no job took, as one older than a remote Summary Model. "Not summarized yet" with "Summarize with <Provider>", which queues that Note alone.
-  - No Summary Model: "No Summary Model picked. Choose one in Settings." with Open Settings.
+  - No Summary Model: "No Summary Model picked. Choose one in Settings." with Open Settings, which opens Settings on Models.
   - Failed: the error as a sentence, such as "Claude didn't accept the API key. Check it in Settings.", with Try again; the Summary the Note already had stays below it. The error is logged, and never holds a key.
   - Done: the Summary rendered as Markdown with GPUI Kit's `TextView`, selectable, then "Summarized by <Provider> · <Model>" in small muted text.
