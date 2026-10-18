@@ -27,3 +27,6 @@ rustc-ice-*.txt
 .env
 .idea/
 .vscode/
+
+# Python bytecode from scripts/
+__pycache__/

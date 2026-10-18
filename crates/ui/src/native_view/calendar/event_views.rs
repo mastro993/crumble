@@ -5,6 +5,7 @@ use super::NativeView;
 use super::event_details;
 use super::grids::HOUR_HEIGHT;
 use crate::native_view::card::hover_card;
+use crate::native_view::keyboard::focusable;
 use chrono::NaiveDate;
 use crumble_calendar::events::{columns, day_order, minutes_on, on_day};
 use crumble_eventkit::{Calendar, Event, When};
@@ -104,12 +105,7 @@ impl RenderOnce for EventChip {
         } else {
             self.shown.event.title.clone().into()
         };
-        let chip = div()
-            .id(self.id.clone())
-            .test_support()
-            // Focusable, so Tab reaches it and Enter or Space opens it as a click does.
-            .tab_index(0)
-            .aria_label(title.clone())
+        let chip = focusable(div().id(self.id.clone()).test_support(), title.clone())
             .cursor_pointer()
             .overflow_hidden()
             .text_xs()

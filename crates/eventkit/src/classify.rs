@@ -138,16 +138,33 @@ pub(crate) fn join_link<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -
         })
 }
 
-fn meeting_service(word: &str) -> Option<&'static str> {
+/// The host of an `https://` URL: the authority after any `userinfo@`, without a numeric port.
+/// Splitting on `:` before `@` would treat `https://zoom.us:443@evil.example/j/1` as Zoom.
+/// Browsers end the authority at a `\` too, so `https://evil.example\@zoom.us` is not Zoom.
+fn url_host(word: &str) -> Option<&str> {
     let rest = word.strip_prefix("https://")?;
-    let host = rest
-        .split(['/', '?', '#', ':'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    let hostport = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match hostport.rsplit_once(':') {
+        Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => host,
+        _ => hostport,
+    };
+    (!host.is_empty()).then_some(host)
+}
+
+fn meeting_service(word: &str) -> Option<&'static str> {
+    let host = url_host(word)?.to_ascii_lowercase();
     MEETING_HOSTS
         .iter()
-        .find(|(known, _)| host == *known || host.ends_with(&format!(".{known}")))
+        .find(|(known, _)| {
+            host.strip_suffix(known)
+                .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+        })
         .map(|&(_, service)| service)
 }
 

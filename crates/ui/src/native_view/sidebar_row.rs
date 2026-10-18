@@ -1,5 +1,6 @@
 //! The sidebar row: icon, truncated label, and a selection fill.
 
+use super::keyboard::focusable;
 use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, LABEL_SIZE, RADIUS, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::component::{ActiveTheme, Icon};
 use gpui_kit::{
@@ -79,9 +80,7 @@ pub(super) fn activate<V: 'static>(
     cx: &Context<V>,
     action: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
 ) -> Stateful<Div> {
-    row.tab_index(0)
-        .aria_label(label)
-        .on_click(cx.listener(move |view, _, window, cx| action(view, window, cx)))
+    focusable(row, label).on_click(cx.listener(move |view, _, window, cx| action(view, window, cx)))
 }
 
 #[cfg(test)]
