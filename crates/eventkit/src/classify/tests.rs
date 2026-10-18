@@ -104,6 +104,8 @@ fn join_link_ignores_unknown_hosts_and_lookalikes() {
         join_url([Some("https://zoom.us:443@evil.example/j/1")]),
         None
     );
+    // Browsers read a backslash as the end of the host, as they do a slash.
+    assert_eq!(join_url([Some("https://evil.example\\@zoom.us/j/1")]), None);
     assert_eq!(
         join_url([Some("https://zoom.us:443/j/1")]),
         Some("https://zoom.us:443/j/1".to_owned())

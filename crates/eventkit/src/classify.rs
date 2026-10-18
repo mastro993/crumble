@@ -140,9 +140,10 @@ pub(crate) fn join_link<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -
 
 /// The host of an `https://` URL: the authority after any `userinfo@`, without a numeric port.
 /// Splitting on `:` before `@` would treat `https://zoom.us:443@evil.example/j/1` as Zoom.
+/// Browsers end the authority at a `\` too, so `https://evil.example\@zoom.us` is not Zoom.
 fn url_host(word: &str) -> Option<&str> {
     let rest = word.strip_prefix("https://")?;
-    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
     if authority.is_empty() {
         return None;
     }

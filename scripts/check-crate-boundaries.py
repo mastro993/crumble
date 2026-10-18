@@ -113,13 +113,23 @@ def check_lints(path: Path, data: dict) -> list[str]:
     return []
 
 
-def check_forbidden_deps(path: Path, data: dict) -> list[str]:
+def package_name(key: str, spec: object, workspace_deps: dict) -> str:
+    """The crate a dependency entry pulls in, through `package =` renames here or in the root."""
+    if isinstance(spec, dict) and spec.get("workspace") is True:
+        spec = workspace_deps.get(key, {})
+    if isinstance(spec, dict) and isinstance(spec.get("package"), str):
+        return spec["package"]
+    return key
+
+
+def check_forbidden_deps(path: Path, data: dict, workspace_deps: dict) -> list[str]:
     name = data.get("package", {}).get("name")
     errors: list[str] = []
     for table, deps in walk_dep_tables(data):
-        for dep in deps:
+        for key, spec in deps.items():
+            dep = package_name(key, spec, workspace_deps)
             if forbidden(name, dep):
-                errors.append(f"{path}: {name} must not depend on {dep} ({table})")
+                errors.append(f"{path}: {name} must not depend on {dep} as {key} ({table})")
     return errors
 
 
@@ -140,11 +150,13 @@ def main() -> int:
     if not manifests:
         print("no crate manifests found", file=sys.stderr)
         return 1
+    root = tomllib.loads((ROOT / "Cargo.toml").read_text())
+    workspace_deps = root.get("workspace", {}).get("dependencies", {})
     for path in manifests:
         data = tomllib.loads(path.read_text())
         errors.extend(check_workspace_versions(path.relative_to(ROOT), data))
         errors.extend(check_lints(path.relative_to(ROOT), data))
-        errors.extend(check_forbidden_deps(path.relative_to(ROOT), data))
+        errors.extend(check_forbidden_deps(path.relative_to(ROOT), data, workspace_deps))
         errors.extend(check_forbidden_src(path.relative_to(ROOT), data))
     if errors:
         print("crate boundary check failed:", file=sys.stderr)
