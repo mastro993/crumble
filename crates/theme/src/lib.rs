@@ -76,10 +76,10 @@ pub mod rail {
     pub const ICON_SIZE: f32 = 20.0;
     /// Space between rail buttons, and above the first and below the last.
     pub const GAP: f32 = 8.0;
-    /// Selected icon color in light mode, RGBA: the palette's brown at 80%.
-    pub const SELECTED_INK_LIGHT: u32 = 0x3e2b13cc;
-    /// Selected icon color in dark mode, RGBA: the palette's sand at 80%.
-    pub const SELECTED_INK_DARK: u32 = 0xf5ece0cc;
+    /// Selected icon color in light mode, RGBA: the palette's espresso at 80%.
+    pub const SELECTED_INK_LIGHT: u32 = 0x1f150acc;
+    /// Selected icon color in dark mode, RGBA: the palette's cream at 80%.
+    pub const SELECTED_INK_DARK: u32 = 0xfaf5efcc;
 }
 
 /// Context menu metrics in points. Rows reuse the [`sidebar`] row height, padding, and icon
