@@ -3,7 +3,6 @@
 //! Note beside the list.
 
 mod row;
-mod skeleton;
 mod view;
 
 use super::NativeView;
@@ -50,7 +49,7 @@ pub(super) struct AgendaPage {
     scrolling_up: Rc<Cell<Option<(Instant, Pixels)>>>,
     /// Whether the minute tick that keeps the rows current is running.
     ticking: bool,
-    /// When the first read finished and the list replaced its placeholder rows.
+    /// When the first read finished and the list began to show.
     revealed: Option<Instant>,
 }
 

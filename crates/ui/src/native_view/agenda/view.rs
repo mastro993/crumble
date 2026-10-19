@@ -6,7 +6,6 @@ use super::super::controls::{app_icon, button};
 use super::super::route::Route;
 use super::super::sidebar::{column, surface};
 use super::row::{RowItem, render_row};
-use super::skeleton::agenda_skeleton;
 use chrono::{Local, NaiveDate, Timelike, Utc};
 use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
@@ -27,7 +26,7 @@ use std::time::{Duration, Instant};
 const MIN_ROWS: usize = 40;
 /// Height of the fade that rows scroll away under at the list's top.
 const TOP_FADE: f32 = 32.0;
-/// How long the list takes to fade in over its placeholder rows once first read.
+/// How long the list takes to fade in once first read.
 const REVEAL: Duration = Duration::from_millis(280);
 /// How far below its place the list starts its fade in.
 const REVEAL_RISE: f32 = 8.0;
@@ -168,7 +167,8 @@ impl NativeView {
         let column = column(window, cx).relative();
         let pending = self.agenda.events.read(cx).first_read_pending();
         let column = if sync.access() == Access::Granted && pending {
-            column.child(agenda_skeleton())
+            // Empty until the first read, so the rows enter together instead of popping in.
+            column
         } else if sync.access() == Access::Granted {
             let colors: Rc<HashMap<String, Hsla>> = Rc::new(
                 sync.calendars()
@@ -199,7 +199,7 @@ impl NativeView {
                 render_row(row, item, &colors, select, cx)
             })
             .size_full();
-            // The list rises into place as it fades in over the placeholder rows it replaces.
+            // The list rises into place as it fades in.
             let revealing = !cx.reduce_motion()
                 && self
                     .agenda

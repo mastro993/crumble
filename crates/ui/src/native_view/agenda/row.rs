@@ -27,7 +27,7 @@ const BAR: f32 = 3.0;
 const CURRENT_TINT: f32 = 0.04;
 const CURRENT_FILL: f32 = 0.08;
 /// Space between an Event's card and the column's edges.
-pub(super) const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
+const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
 /// Where a row sits in the Agenda list: `alone` says it holds nothing else; `now` is the time
 /// the Event marking now shows its progress at.
