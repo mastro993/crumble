@@ -128,6 +128,7 @@ impl NativeView {
                 base_url(self.store.openai_base_url()).is_ok()
                     && !self.store.openai_model().is_empty()
             }
+            Provider::Local => false,
         }
     }
 
@@ -296,6 +297,7 @@ impl NativeView {
                 api_key: key()?,
                 model: self.store.openai_model().to_owned(),
             }),
+            Provider::Local => return Err("Local Models don't summarize.".to_owned()),
         })
     }
 
@@ -393,7 +395,7 @@ impl NativeView {
                     .small()
                     .label("Open Settings")
                     .on_click(cx.listener(|view, _, _, cx| {
-                        view.open_settings(SettingsSection::Models, cx)
+                        view.open_settings(SettingsSection::Summary, cx)
                     })),
             )
         };

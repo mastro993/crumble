@@ -6,14 +6,14 @@ use super::super::NativeView;
 use crumble_notes::NoteId;
 use crumble_remote::{Provider, base_url, host, runs_locally};
 use crumble_store::secrets;
-use crumble_transcribe::{Apple, OpenAiCompatible, Transcriber};
+use crumble_transcribe::{Apple, Local, OpenAiCompatible, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::{Context, Window};
 
-/// The Providers that transcribe, in the order Settings and the Note actions menu list them.
-pub(in super::super) const TRANSCRIBERS: [Provider; 2] =
-    [Provider::Apple, Provider::OpenAiCompatible];
+/// The Providers that transcribe, in the order the Note actions menu lists them.
+pub(in super::super) const TRANSCRIBERS: [Provider; 3] =
+    [Provider::Apple, Provider::Local, Provider::OpenAiCompatible];
 
 /// What the user agrees to before audio goes to a remote Model.
 pub(super) struct Consent {
@@ -36,12 +36,14 @@ impl NativeView {
             .map_or_else(crumble_transcribe::current_locale, str::to_owned)
     }
 
-    /// Whether `provider` can transcribe with what Settings holds: Apple always offers to, and
-    /// the OpenAI-compatible server needs an address requests can go to and a Transcription
-    /// Model, as its Transcriber checks before it uploads.
+    /// Whether `provider` can transcribe with what Settings holds: Apple always offers to, a
+    /// Local Model once picked and downloaded, and the OpenAI-compatible server needs an
+    /// address requests can go to and a Transcription Model, as its Transcriber checks before
+    /// it uploads.
     pub(in super::super) fn can_transcribe(&self, provider: Provider) -> bool {
         match provider {
             Provider::Apple => true,
+            Provider::Local => self.picked_local_model().is_some(),
             Provider::Claude => false,
             Provider::OpenAiCompatible => {
                 base_url(self.store.openai_base_url()).is_ok()
@@ -69,12 +71,12 @@ impl NativeView {
         (!agreed).then_some(consent)
     }
 
-    /// Asks whether to send the Note `id`'s Recording to `consent`'s Model. Send remembers the
-    /// answer and transcribes; Don't send leaves the Recording untranscribed, with its
-    /// Transcript tab offering to transcribe it.
+    /// Asks whether to send the Recordings of the Notes `ids` to `consent`'s Model. Send
+    /// remembers the answer and transcribes them; Don't send leaves them untranscribed, with
+    /// their Transcript tabs offering to transcribe them.
     pub(super) fn ask_consent(
         &mut self,
-        id: NoteId,
+        ids: Vec<NoteId>,
         consent: Consent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -85,13 +87,23 @@ impl NativeView {
             model,
             host,
         } = consent;
+        let (title, these) = match ids.len() {
+            1 => (
+                format!("Send this Recording to {}?", provider.name()),
+                "this Recording".to_owned(),
+            ),
+            count => (
+                format!("Send {count} Recordings to {}?", provider.name()),
+                format!("these {count} Recordings"),
+            ),
+        };
         window.open_alert_dialog(cx, move |alert, _, _| {
-            let (view, id, model, host) = (view.clone(), id.clone(), model.clone(), host.clone());
+            let (view, ids, model, host) = (view.clone(), ids.clone(), model.clone(), host.clone());
             alert
-                .title(format!("Send this Recording to {}?", provider.name()))
+                .title(title.clone())
                 .description(format!(
-                    "Crumble will upload the audio of this Recording to {host} to make its \
-                     Transcript. You'll only be asked once for {model} on {host}."
+                    "Crumble will upload the audio of {these} to {host} to make their \
+                     Transcripts. You'll only be asked once for {model} on {host}."
                 ))
                 .show_cancel(true)
                 .cancel_text("Don't send")
@@ -100,7 +112,9 @@ impl NativeView {
                 .on_ok(move |_, _, cx| {
                     let _ = view.update(cx, |view, cx| {
                         view.store.add_audio_consent(provider.id(), &model, &host);
-                        view.queue_transcription(id.clone(), provider, cx);
+                        for id in &ids {
+                            view.queue_transcription(id.clone(), provider, cx);
+                        }
                     });
                     true
                 })
@@ -123,7 +137,26 @@ impl NativeView {
                 })?,
                 model: self.store.transcription_model().to_owned(),
             }),
+            Provider::Local => {
+                let (library, downloaded) = self
+                    .local_model_on_disk()
+                    .ok_or_else(|| format!("{} isn't downloaded.", self.local_model_name()))?;
+                Box::new(Local {
+                    model: library.path(&downloaded.model),
+                    vad: library.vad(),
+                    name: downloaded.model.name,
+                })
+            }
             Provider::Claude => return Err("Claude can't transcribe Recordings.".to_owned()),
         })
+    }
+
+    /// What `provider` is called where the user picks it to transcribe: the picked Local
+    /// Model's name for a Local Model.
+    pub(in super::super) fn transcriber_name(&self, provider: Provider) -> String {
+        match provider {
+            Provider::Local => self.local_model_name(),
+            _ => provider.name().to_owned(),
+        }
     }
 }

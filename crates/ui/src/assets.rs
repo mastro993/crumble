@@ -7,6 +7,34 @@ pub struct Assets;
 
 const ICONS: &[(&str, &[u8])] = &[
     (
+        "icons/audio-wave.svg",
+        include_bytes!("../../../assets/hugeicons/AudioWave01Icon.svg"),
+    ),
+    (
+        "icons/chip.svg",
+        include_bytes!("../../../assets/hugeicons/CpuIcon.svg"),
+    ),
+    (
+        "icons/download.svg",
+        include_bytes!("../../../assets/hugeicons/Download04Icon.svg"),
+    ),
+    (
+        "icons/globe.svg",
+        include_bytes!("../../../assets/hugeicons/Globe02Icon.svg"),
+    ),
+    (
+        "icons/hard-drive.svg",
+        include_bytes!("../../../assets/hugeicons/HardDriveIcon.svg"),
+    ),
+    (
+        "icons/search.svg",
+        include_bytes!("../../../assets/hugeicons/Search01Icon.svg"),
+    ),
+    (
+        "icons/voice.svg",
+        include_bytes!("../../../assets/hugeicons/VoiceIcon.svg"),
+    ),
+    (
         "icons/agenda.svg",
         include_bytes!("../../../assets/hugeicons/NotebookTabsIcon.svg"),
     ),

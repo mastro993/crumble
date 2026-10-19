@@ -1,9 +1,14 @@
-//! The Models section's fields, made with the stored choices, and what each change to them
-//! keeps through `Store` and starts again.
+//! The Transcription, Summary and Providers sections' fields, made with the stored choices, and
+//! what each change to them keeps through `Store` and starts again. Picking a Transcription
+//! Model or Language transcribes nothing on its own (ADR 0010).
 
 use super::super::NativeView;
 use super::super::notes::TRANSCRIBERS;
-use super::{LanguageItem, ModelSettings, ProviderItem, index_of, language_items, provider_items};
+use super::{
+    LanguageItem, ModelSettings, Transcriber, TranscriberItem, index_of, language_items,
+    languages_for, picked_transcriber, provider_items, transcriber_items,
+};
+use crumble_local_models::Downloaded;
 use crumble_remote::Provider;
 use crumble_store::{Store, secrets};
 use crumble_summarize::{Availability, apple_availability};
@@ -13,46 +18,36 @@ use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::{AppContext, Context, Entity, Subscription, Window};
 use std::collections::HashMap;
 
-/// Makes the section's fields with the stored choices, and reads which keys are saved.
+/// Makes the sections' fields with the stored choices and the `downloaded` Local Models, and
+/// reads which keys are saved.
 pub(in super::super) fn model_settings(
     store: &Store,
+    downloaded: &[Downloaded],
     window: &mut Window,
     cx: &mut Context<NativeView>,
 ) -> ModelSettings {
     let apple = apple_availability();
     let selected = index_of(
-        &Provider::ALL,
+        &Provider::SUMMARIZERS,
         store
             .summary_provider(apple == Availability::Available)
             .and_then(Provider::from_id),
     );
     let provider = cx.new(|cx| SelectState::new(provider_items(apple), selected, window, cx));
-    let transcribers = TRANSCRIBERS
-        .into_iter()
-        .map(|provider| ProviderItem {
-            provider,
-            disabled: false,
-        })
-        .collect();
-    let selected = index_of(
-        &TRANSCRIBERS,
-        Provider::from_id(store.transcription_provider()),
-    );
+    let transcribers = transcriber_items(downloaded);
+    let picked = picked_transcriber(store);
+    let selected = (transcribers.iter())
+        .position(|item| item.transcriber == picked)
+        .map(IndexPath::new);
     let transcription = cx.new(|cx| SelectState::new(transcribers, selected, window, cx));
-    let mut languages = language_items();
-    let stored = store.transcription_locale();
-    let selected = (languages.iter())
-        .position(|item| item.locale.as_deref() == stored)
-        .unwrap_or_else(|| {
-            // A locale SpeechAnalyzer no longer lists still applies, so it shows as picked.
-            let locale = stored.unwrap_or_default().to_owned();
-            let name = crumble_transcribe::language_name(&locale).into();
-            languages.push(LanguageItem {
-                locale: Some(locale),
-                name,
-            });
-            languages.len() - 1
-        });
+    let apple_languages = language_items();
+    let local = match &picked {
+        Transcriber::Local(slug) => (downloaded.iter())
+            .find(|downloaded| &downloaded.model.slug == slug)
+            .map(|downloaded| &downloaded.model),
+        Transcriber::Provider(_) => None,
+    };
+    let (languages, selected) = languages_for(store, local, &apple_languages);
     let language = cx.new(|cx| {
         SelectState::new(languages, Some(IndexPath::new(selected)), window, cx).searchable(true)
     });
@@ -103,14 +98,25 @@ pub(in super::super) fn model_settings(
         cx.subscribe_in(
             &transcription,
             window,
-            |view, _, event: &SelectEvent<Vec<ProviderItem>>, _, cx| {
-                let SelectEvent::Confirm(Some(provider)) = event else {
+            |view, _, event: &SelectEvent<Vec<TranscriberItem>>, window, cx| {
+                let SelectEvent::Confirm(Some(transcriber)) = event else {
                     return;
                 };
                 // What the previous Transcription Model failed at is the new one's to try.
                 view.forget_transcription_failures(view.transcription_provider());
-                view.store.set_transcription_provider(provider.id());
-                view.transcribe_untranscribed(cx);
+                match transcriber {
+                    Transcriber::Provider(provider) => {
+                        view.store.set_transcription_provider(provider.id());
+                    }
+                    Transcriber::Local(slug) => {
+                        view.store.set_transcription_provider(Provider::Local.id());
+                        view.store.set_local_model(Some(slug));
+                    }
+                }
+                // Its languages may differ; the select runs inside its own update, so defer.
+                cx.defer_in(window, |view, window, cx| {
+                    view.refresh_transcription_selects(window, cx);
+                });
                 cx.notify();
             },
         ),
@@ -124,28 +130,19 @@ pub(in super::super) fn model_settings(
                     TRANSCRIBERS
                         .into_iter()
                         .for_each(|provider| view.forget_transcription_failures(provider));
-                    view.transcribe_untranscribed(cx);
                     cx.notify();
                 }
             },
         ),
         // Not a Summary setting, so Summary checks and failures stay.
-        cx.subscribe_in(
-            &transcription_model,
-            window,
-            |view, input, event, _, cx| match event {
-                InputEvent::Change => {
-                    let value = input.read(cx).value();
-                    view.store.set_transcription_model(&value);
-                    view.forget_transcription_failures(Provider::OpenAiCompatible);
-                    cx.notify();
-                }
-                InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                    view.transcribe_untranscribed(cx);
-                }
-                InputEvent::Focus => {}
-            },
-        ),
+        cx.subscribe_in(&transcription_model, window, |view, input, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                let value = input.read(cx).value();
+                view.store.set_transcription_model(&value);
+                view.forget_transcription_failures(Provider::OpenAiCompatible);
+                cx.notify();
+            }
+        }),
         saved_on_change(
             &claude_model,
             Provider::Claude,
@@ -161,10 +158,10 @@ pub(in super::super) fn model_settings(
             |store, value| store.set_openai_base_url(value),
         ),
         // The server's address serves Transcripts too.
-        cx.subscribe_in(&openai_url, window, |view, _, event, _, cx| match event {
-            InputEvent::Change => view.forget_transcription_failures(Provider::OpenAiCompatible),
-            InputEvent::PressEnter { .. } | InputEvent::Blur => view.transcribe_untranscribed(cx),
-            InputEvent::Focus => {}
+        cx.subscribe_in(&openai_url, window, |view, _, event, _, _| {
+            if matches!(event, InputEvent::Change) {
+                view.forget_transcription_failures(Provider::OpenAiCompatible);
+            }
         }),
         saved_on_change(
             &openai_model,
@@ -199,6 +196,7 @@ pub(in super::super) fn model_settings(
         apple,
         transcription,
         language,
+        apple_languages,
         claude_key,
         claude_model,
         openai_url,

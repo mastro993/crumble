@@ -8,9 +8,13 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+crumble-audio.workspace = true
 crumble-remote.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+transcribe-cpp.workspace = true
 
 # Calling the Swift bridge's C functions is `unsafe`, so this crate cannot take the workspace's
 # `forbid` (see docs/adr/0006-on-device-transcription-via-swift-bridge.md). The other lints match

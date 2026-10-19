@@ -1,6 +1,7 @@
 //! Settings page: choices kept across restarts through `Store`, in sections picked from a
-//! sidebar at the panel's leading edge. Its Calendars section is in `calendars`, and its Models
-//! and Providers sections in `settings_models`.
+//! sidebar at the panel's leading edge. Its Calendars section is in `calendars`, its
+//! Transcription, Summary and Providers sections in `settings_models`, and its Local Models
+//! section in `local_models`.
 
 mod calendars;
 
@@ -58,7 +59,9 @@ pub(super) enum SettingsSection {
     General,
     Calendars,
     Recording,
-    Models,
+    Transcription,
+    LocalModels,
+    Summary,
     Providers,
 }
 
@@ -66,7 +69,16 @@ impl SettingsSection {
     /// The sidebar's groups, each a label over its sections.
     const GROUPS: [(&'static str, &'static [Self]); 2] = [
         ("Calendar", &[Self::General, Self::Calendars]),
-        ("Notes", &[Self::Recording, Self::Models, Self::Providers]),
+        (
+            "Notes",
+            &[
+                Self::Recording,
+                Self::Transcription,
+                Self::LocalModels,
+                Self::Summary,
+                Self::Providers,
+            ],
+        ),
     ];
 
     fn title(self) -> &'static str {
@@ -74,7 +86,9 @@ impl SettingsSection {
             Self::General => "General",
             Self::Calendars => "Calendars",
             Self::Recording => "Recording",
-            Self::Models => "Models",
+            Self::Transcription => "Transcription",
+            Self::LocalModels => "Local Models",
+            Self::Summary => "Summary",
             Self::Providers => "Providers",
         }
     }
@@ -84,7 +98,9 @@ impl SettingsSection {
             Self::General => "settings",
             Self::Calendars => "calendars",
             Self::Recording => "mic",
-            Self::Models => "ai-brain",
+            Self::Transcription => "voice",
+            Self::LocalModels => "chip",
+            Self::Summary => "ai-brain",
             Self::Providers => "key",
         }
     }
@@ -126,6 +142,7 @@ impl NativeView {
     /// Opens Settings on `section`.
     pub(super) fn open_settings(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         self.settings_section = section;
+        self.local_models.reread = true;
         self.navigate(Route::Settings, cx);
     }
 
@@ -137,12 +154,16 @@ impl NativeView {
     ) -> AnyElement {
         // Apple's Model can start or stop being able to run while any section shows.
         self.notice_apple_availability(window, cx);
+        // Downloads, or Finder, may have changed the models folder.
+        self.reread_local_models(window, cx);
         let section = self.settings_section;
         let content = match section {
             SettingsSection::General => self.render_general_settings(),
             SettingsSection::Calendars => self.render_calendar_settings(cx),
             SettingsSection::Recording => self.render_suggestion_settings(cx),
-            SettingsSection::Models => self.render_model_settings(cx),
+            SettingsSection::Transcription => self.render_transcription_settings(cx),
+            SettingsSection::LocalModels => self.render_local_model_settings(window, cx),
+            SettingsSection::Summary => self.render_summary_settings(cx),
             SettingsSection::Providers => self.render_provider_settings(cx),
         };
         // Every row keeps the selected row's ink; only the fill marks the section on screen.
@@ -189,6 +210,7 @@ impl NativeView {
                     cx,
                     move |view, _, cx| {
                         view.settings_section = each;
+                        view.local_models.reread = true;
                         cx.notify();
                     },
                 ));

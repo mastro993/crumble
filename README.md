@@ -4,7 +4,7 @@ Native desktop app built with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https:
 
 ## Run
 
-Install Rust 1.96 through `rustup`, and Xcode with the macOS 26 SDK (Xcode 27 / Swift 6.4 is what the repository builds with). `crumble-transcribe` and `crumble-summarize` compile their Swift bridges with `xcrun swiftc` during the build ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)); if `xcrun` points at an older toolchain, select Xcode with `sudo xcode-select -s /Applications/Xcode.app`. Then:
+Install Rust 1.96 through `rustup`, and Xcode with the macOS 26 SDK (Xcode 27 / Swift 6.4 is what the repository builds with). `crumble-transcribe` and `crumble-summarize` compile their Swift bridges with `xcrun swiftc` during the build ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)); if `xcrun` points at an older toolchain, select Xcode with `sudo xcode-select -s /Applications/Xcode.app`. `crumble-transcribe` also builds transcribe.cpp's C++ for Local Models, which needs CMake (`brew install cmake`) ([ADR 0010](docs/adr/0010-local-models-through-transcribe-cpp-and-handys-list.md)). Then:
 
 ```sh
 cargo run -p crumble --locked

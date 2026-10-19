@@ -16,7 +16,8 @@ Crumble is a macOS desktop calendar app built with GPUI and GPUI Kit that reads 
 - `crates/store` (`crumble-store`): state kept across restarts, and Account rules: order, color, Alias, label, Disabled and Hidden filtering. No GPUI.
 - `crates/notes` (`crumble-notes`): Notes and Quick notes, how a Note finds its Event, and the folder each Recording lives in. No GPUI.
 - `crates/audio` (`crumble-audio`): Recordings: microphone and process-tap capture into AAC files, echo removal from the microphone, and playback. No GPUI.
-- `crates/transcribe` (`crumble-transcribe`): Transcripts from the `Transcriber` trait: Apple's SpeechAnalyzer on the Mac through a Swift bridge, and OpenAI-compatible servers. No GPUI.
+- `crates/transcribe` (`crumble-transcribe`): Transcripts from the `Transcriber` trait: Apple's SpeechAnalyzer on the Mac through a Swift bridge, Local Models through transcribe.cpp in a worker process, and OpenAI-compatible servers. No GPUI.
+- `crates/local-models` (`crumble-local-models`): Local Models: Handy's model list copied in `handy/`, the models folder, and downloads from Hugging Face. No GPUI, no C++.
 - `crates/summarize` (`crumble-summarize`): Summaries from the `Summarizer` trait: Apple's on-device Foundation Models through a Swift bridge, the Claude API, and OpenAI-compatible servers. No GPUI.
 - `crates/remote` (`crumble-remote`): what Summaries and Transcripts share about Models: `Provider`, `runs_locally`, and the HTTP helpers. No GPUI.
 - `crates/notify` (`crumble-notify`): Suggestions: macOS notifications with a Record button through `UNUserNotificationCenter`, and the clicks on them. No GPUI.
@@ -41,7 +42,8 @@ Split on one question: does this code need GPUI?
 - Swift lives only in `crates/<crate>/swift/`, called through that crate's `src/ffi.rs` ([ADR 0006](docs/adr/0006-on-device-transcription-via-swift-bridge.md)).
 - API keys go only through the Keychain module, `crumble_store::secrets`; keep them out of SQLite, logs, errors and UI text ([ADR 0007](docs/adr/0007-summaries-and-model-providers.md)).
 - Crumble records only after the user's click. A Suggestion offers a Recording and starts one only from its Record button ([ADR 0009](docs/adr/0009-suggestions-through-user-notifications.md)).
-- Audio leaves the Mac only through the consent check, `consent_needed` in `crates/ui/src/native_view/notes/consent.rs` ([ADR 0008](docs/adr/0008-remote-transcription-and-audio-consent.md)). Older Recordings and Transcripts go to a Model without a click only when `crumble_remote::runs_locally` says it is on the Mac.
+- Audio leaves the Mac only through the consent check, `consent_needed` in `crates/ui/src/native_view/notes/consent.rs` ([ADR 0008](docs/adr/0008-remote-transcription-and-audio-consent.md)). Only Stop transcribes on its own; every other Transcript is asked for ([ADR 0010](docs/adr/0010-local-models-through-transcribe-cpp-and-handys-list.md)). Older Transcripts go to a Summary Model without a click only when `crumble_remote::runs_locally` says it is on the Mac.
+- `crates/local-models/handy/catalog.json` is Handy's file, unchanged; `.github/workflows/handy-catalog.yml` syncs it. Never edit it by hand.
 
 ## New crates
 
@@ -68,6 +70,7 @@ The gpui-kit Coding Guides (`.claude/skills/gpui-kit/references/coding-guides.md
 - Adds `gpui` or `gpui-pre` outside `crumble`, `ui`, `theme`, and `sync`, or `gpui-kit` to `sync` or any domain crate, directly or through one of those crates.
 - Adds Diesel outside `db`, `store`, and `notes`.
 - Adds objc2 crates outside `eventkit`, `audio`, and `notify`.
+- Adds `transcribe-cpp` outside `transcribe` ([ADR 0010](docs/adr/0010-local-models-through-transcribe-cpp-and-handys-list.md)).
 - Pins a crate version in a member `Cargo.toml` instead of `[workspace.dependencies]`.
 - Drops `unsafe_code = "deny"` from a crate that uses `unsafe`, or `[lints] workspace = true` from any other.
 

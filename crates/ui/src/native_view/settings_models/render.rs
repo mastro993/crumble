@@ -1,11 +1,13 @@
-//! Drawing the Models section, its selects, and the Providers section: each remote Provider's
-//! fields, key row, and Test.
+//! Drawing the Transcription and Summary sections, their selects, and the Providers section:
+//! each remote Provider's fields, key row, and Test.
 
 use super::super::NativeView;
 use super::super::controls::{Inactive, button};
+use super::super::settings_page::SettingsSection;
 use super::{Check, FIELD_WIDTH, index_of, provider_items};
 use crumble_remote::Provider;
 use crumble_summarize::{Availability, apple_availability};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::select::Select;
 use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, h_flex, v_flex};
@@ -26,7 +28,7 @@ impl NativeView {
             self.models.provider.update(cx, |select, cx| {
                 select.set_items(provider_items(apple), window, cx);
                 // Apple's row may have been shown as picked only because it could run.
-                select.set_selected_index(index_of(&Provider::ALL, selected), window, cx);
+                select.set_selected_index(index_of(&Provider::SUMMARIZERS, selected), window, cx);
             });
             if apple == Availability::Available {
                 // Its failures may be only that it could not run; backfill once out of render.
@@ -38,33 +40,42 @@ impl NativeView {
         }
     }
 
-    /// The Models section: the Summary Model, the Transcription Model, and its language.
-    pub(in super::super) fn render_model_settings(&self, cx: &Context<Self>) -> Div {
+    /// The Summary section: the Summary Model, and who gets the Transcript's text.
+    pub(in super::super) fn render_summary_settings(&self, cx: &Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         v_flex()
-            .gap_4()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(row(
-                        "Summary Model",
-                        Select::new(&self.models.provider)
-                            .small()
-                            .placeholder("Choose a Model")
-                            .menu_width(px(FIELD_WIDTH))
-                            .accessibility_label("Summary Model"),
-                    ))
-                    .children(
-                        self.models
-                            .apple
-                            .reason()
-                            .map(|reason| note(format!("Apple isn't available: {reason}"), muted)),
-                    )
-                    .child(note(
-                        "Claude and remote servers receive the Transcript's text.".to_owned(),
-                        muted,
-                    )),
+            .gap_1()
+            .child(row(
+                "Summary Model",
+                Select::new(&self.models.provider)
+                    .small()
+                    .placeholder("Choose a Model")
+                    .menu_width(px(FIELD_WIDTH))
+                    .accessibility_label("Summary Model"),
+            ))
+            .children(
+                self.models
+                    .apple
+                    .reason()
+                    .map(|reason| note(format!("Apple isn't available: {reason}"), muted)),
             )
+            .child(note(
+                "Claude and remote servers receive the Transcript's text.".to_owned(),
+                muted,
+            ))
+    }
+
+    /// The Transcription section: the Transcription Model, its language, and transcribing every
+    /// Recording without a Transcript, which nothing else does on its own.
+    pub(in super::super) fn render_transcription_settings(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let untranscribed = self.untranscribed_count();
+        let provider = self.transcription_provider();
+        v_flex()
+            .gap_4()
             .child(
                 v_flex()
                     .gap_1()
@@ -75,10 +86,31 @@ impl NativeView {
                             .menu_width(px(FIELD_WIDTH))
                             .accessibility_label("Transcription Model"),
                     ))
-                    .child(note(
-                        "A remote server receives the Recording's audio.".to_owned(),
-                        muted,
-                    )),
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(
+                                note(
+                                    "Local Models keep the audio on this Mac. A remote server \
+                                     receives the Recording's audio."
+                                        .to_owned(),
+                                    muted,
+                                )
+                                .flex_1()
+                                .min_w_0(),
+                            )
+                            .child(
+                                button("transcription-get-models")
+                                    .flex_shrink_0()
+                                    .link()
+                                    .xsmall()
+                                    .label("Get more Models")
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.open_settings(SettingsSection::LocalModels, cx)
+                                    })),
+                            ),
+                    ),
             )
             .child(row(
                 "Language",
@@ -87,6 +119,39 @@ impl NativeView {
                     .menu_width(px(FIELD_WIDTH))
                     .accessibility_label("Language"),
             ))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .gap_4()
+                            .text_sm()
+                            .child(match untranscribed {
+                                0 => "Every Recording has a Transcript.".to_owned(),
+                                1 => "1 Recording has no Transcript.".to_owned(),
+                                count => format!("{count} Recordings have no Transcript."),
+                            })
+                            .child(
+                                button("transcription-transcribe-all")
+                                    .outline()
+                                    .small()
+                                    .label("Transcribe all")
+                                    .inactive(untranscribed == 0 || !self.can_transcribe(provider))
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.transcribe_untranscribed(window, cx);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(note(
+                        format!(
+                            "Recordings are transcribed when they stop. Transcribe all uses {}.",
+                            self.transcriber_name(provider)
+                        ),
+                        muted,
+                    )),
+            )
     }
 
     /// The Providers section: Claude's and the OpenAI-compatible server's settings.

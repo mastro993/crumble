@@ -33,12 +33,14 @@ pub(crate) struct State {
     /// Empty until set.
     pub(crate) openai_base_url: String,
     pub(crate) openai_model: String,
-    /// The id of the Transcription Provider: `apple` or `openai`.
+    /// The id of the Transcription Provider: `apple`, `local` or `openai`.
     pub(crate) transcription_provider: String,
     /// The Transcription Model on the OpenAI-compatible server.
     pub(crate) transcription_model: String,
     /// The locale picked for Transcripts; `None` follows the Mac's.
     pub(crate) transcription_locale: Option<String>,
+    /// The slug of the Local Model picked for Transcripts; `None` until one is.
+    pub(crate) local_model: Option<String>,
     /// Each (Provider id, Model, host) the user agreed to send Recordings' audio to.
     pub(crate) audio_consents: BTreeSet<AudioConsent>,
     /// Whether a meeting's start brings a notification that suggests recording it.
@@ -71,6 +73,7 @@ impl Default for State {
             transcription_provider: "apple".to_owned(),
             transcription_model: TRANSCRIPTION_MODEL.to_owned(),
             transcription_locale: None,
+            local_model: None,
             audio_consents: BTreeSet::new(),
             suggest_recording: true,
         }
@@ -94,13 +97,13 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
     type Row = (
         (i32, String),
         (Option<String>, String, String, String),
-        (String, String, Option<String>),
+        (String, String, Option<String>, Option<String>),
         bool,
     );
     if let Some((
         (day, view),
         (provider, claude_model, openai_base_url, openai_model),
-        (transcription_provider, transcription_model, transcription_locale),
+        (transcription_provider, transcription_model, transcription_locale, local_model),
         suggest_recording,
     )) = app_state::table
         .select((
@@ -115,6 +118,7 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
                 app_state::transcription_provider,
                 app_state::transcription_model,
                 app_state::transcription_locale,
+                app_state::local_model,
             ),
             app_state::suggest_recording,
         ))
@@ -130,6 +134,7 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
         state.transcription_provider = transcription_provider;
         state.transcription_model = transcription_model;
         state.transcription_locale = transcription_locale;
+        state.local_model = local_model;
         state.suggest_recording = suggest_recording;
     }
     state.audio_consents = remote_audio_consents::table
@@ -181,6 +186,7 @@ pub(crate) fn write_app_state(connection: &mut SqliteConnection, state: &State) 
             app_state::transcription_provider.eq(&state.transcription_provider),
             app_state::transcription_model.eq(&state.transcription_model),
             app_state::transcription_locale.eq(&state.transcription_locale),
+            app_state::local_model.eq(&state.local_model),
             app_state::suggest_recording.eq(state.suggest_recording),
         ))
         .execute(connection)?;
