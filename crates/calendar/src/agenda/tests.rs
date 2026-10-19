@@ -56,7 +56,7 @@ fn labels(rows: &[Row]) -> Vec<String> {
 }
 
 #[test]
-fn only_started_events_are_listed_newest_first() {
+fn events_up_to_the_end_of_today_are_listed_newest_first() {
     let now = at(15, 12, 0);
     let events = [
         timed("Standup", at(15, 9, 0), at(15, 9, 15)),
@@ -71,6 +71,7 @@ fn only_started_events_are_listed_newest_first() {
         labels(&rows(&events, &[], now, date(1), true)),
         [
             "15",
+            "Later today",
             "--",
             "Holiday",
             "Review",
@@ -85,9 +86,11 @@ fn only_started_events_are_listed_newest_first() {
 }
 
 #[test]
-fn in_progress_events_are_pinned_above_the_now_line() {
+fn upcoming_and_in_progress_events_sit_above_the_now_line() {
     let now = at(15, 10, 0);
     let events = [
+        timed("Lunch", at(15, 12, 30), at(15, 13, 30)),
+        timed("Retro", at(15, 16, 0), at(15, 17, 0)),
         timed("Workshop", at(15, 9, 0), at(15, 12, 0)),
         timed("Call", at(15, 9, 30), at(15, 9, 45)),
         // Started yesterday and still going: it shows under Today.
@@ -96,7 +99,16 @@ fn in_progress_events_are_pinned_above_the_now_line() {
     ];
     assert_eq!(
         labels(&rows(&events, &[], now, date(1), false)),
-        ["15", "Workshop", "Flight", "--", "Call", "14", "Dinner"]
+        [
+            "15", "Retro", "Lunch", "Workshop", "Flight", "--", "Call", "14", "Dinner"
+        ]
+    );
+
+    // An Event starting now is In progress, no longer upcoming.
+    let starting = [timed("Standup", at(15, 10, 0), at(15, 10, 15))];
+    assert_eq!(
+        labels(&rows(&starting, &[], now, date(1), false)),
+        ["15", "Standup", "--"]
     );
 
     // Only In progress Events today: the line closes Today's group.

@@ -1,4 +1,4 @@
-//! Agenda page: every Event that has started and every Quick note, newest first, in a list
+//! Agenda page: every Event up to the end of Today and every Quick note, newest first, in a list
 //! that reads further into the past as it scrolls toward its end. Selecting a row shows its
 //! Note beside the list.
 

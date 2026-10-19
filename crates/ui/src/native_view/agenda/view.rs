@@ -11,7 +11,7 @@ use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
 use crumble_eventkit::Access;
 use crumble_notes::{Note, Notes};
-use crumble_theme::CONTENT_PADDING;
+use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
@@ -179,7 +179,6 @@ impl NativeView {
                             return div().into_any_element();
                         };
                         let item = RowItem {
-                            first: index == 0,
                             alone: rows.len() == 1,
                             selected: selected == Some(index),
                             today,
@@ -204,6 +203,8 @@ impl NativeView {
                         .left_0()
                         // Clear of the column's hairline.
                         .right(hairline)
+                        // The column's rounded corner, which does not clip its children.
+                        .rounded_tl(px(SURFACE_RADIUS))
                         .h(self.agenda.scroll_offset().min(px(TOP_FADE)))
                         .bg(linear_gradient(
                             180.0,

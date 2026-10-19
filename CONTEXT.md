@@ -79,7 +79,7 @@ _Avoid_: preferences, options
 ### Agenda
 
 **Agenda page**:
-The page that lists every Event that has started and every Quick note, newest first, grouped by day.
+The page that lists every Event up to the end of Today and every Quick note, newest first, grouped by day, with a line marking now.
 _Avoid_: history, timeline, feed
 
 **Agenda list**:
@@ -135,7 +135,7 @@ _Avoid_: vendor, service, backend
 - **Weekend** stays Saturday and Sunday whatever the **First day of week** is
 - An **Account** has one or more **Calendars**; a **Calendar** has many **Events**
 - The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is neither **Disabled** nor **Hidden**, inside the visible **Period**
-- The **Agenda page** shows the same **Events** as the **Calendar page** would, but only those that have started, whatever the **Focused date**
+- The **Agenda page** shows the same **Events** as the **Calendar page** would, but only those that start by the end of Today, whatever the **Focused date**
 - Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**

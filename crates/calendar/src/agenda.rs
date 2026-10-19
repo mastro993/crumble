@@ -1,6 +1,6 @@
-//! What the Agenda list shows and in what order: every Event that has started and every Quick
-//! note, newest first, under the day they started or are listed at, with Today's In progress
-//! Events pinned above the Now line. Also which days the Agenda reads next and how a read is
+//! What the Agenda list shows and in what order: every Event up to the end of Today and every
+//! Quick note, newest first, under the day they started or are listed at, with Today's upcoming
+//! and In progress Events above the Now line. Also which days the Agenda reads next and how a read is
 //! split for EventKit.
 
 use crate::events::when_text;
@@ -129,7 +129,7 @@ pub fn span_events(
 pub enum Row {
     /// The header of a day's Events.
     Day(NaiveDate),
-    /// The line between Today's In progress Events and the rest.
+    /// The line between Today's upcoming and In progress Events and the rest.
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
@@ -158,20 +158,13 @@ fn start_day(event: &Event) -> NaiveDate {
     }
 }
 
-fn started(event: &Event, now: DateTime<Local>) -> bool {
-    match event.when {
-        When::AllDay { first, .. } => first <= now.date_naive(),
-        When::Timed { start, .. } => start <= now,
-    }
-}
-
 fn in_progress(event: &Event, now: DateTime<Local>) -> bool {
     matches!(event.when, When::Timed { start, end } if start <= now && now < end)
 }
 
-/// The rows for `events` and `quick_notes` at `now`. In progress Events sit under Today
-/// whatever day they started, then the Now line, then all-day Events, then the ended Events and
-/// the Quick notes; other days list their all-day Events first, then the rest newest first. Only
+/// The rows for `events` and `quick_notes` at `now`. Today lists its upcoming Events, then the
+/// In progress ones, whatever day they started, then the Now line, then all-day Events, then the
+/// ended Events and the Quick notes; other days list their all-day Events first, then the rest newest first. Only
 /// days from `from` on are listed, but an In progress Event shows however long ago it started.
 /// `end` adds the footer.
 pub fn rows(
@@ -186,13 +179,14 @@ pub fn rows(
     let events = events
         .iter()
         .filter(|event| {
-            started(event, now) && (start_day(event) >= from || in_progress(event, now))
+            start_day(event) <= today && (start_day(event) >= from || in_progress(event, now))
         })
         .map(|event| {
             let (day, rank) = match event.when {
-                _ if in_progress(event, now) => (today, 0),
-                When::AllDay { first, .. } => (first, 1),
-                When::Timed { start, .. } => (start.date_naive(), 2),
+                _ if in_progress(event, now) => (today, 1),
+                When::AllDay { first, .. } => (first, 2),
+                When::Timed { start, .. } if start > now => (today, 0),
+                When::Timed { start, .. } => (start.date_naive(), 3),
             };
             let start = match event.when {
                 When::AllDay { .. } => None,
@@ -205,7 +199,7 @@ pub fn rows(
         .filter(|note| note.at.date_naive() >= from)
         .map(|note| {
             let row = Row::QuickNote(note.clone());
-            (note.at.date_naive(), 2, Some(note.at), &note.label, row)
+            (note.at.date_naive(), 3, Some(note.at), &note.label, row)
         });
     let mut listed: Vec<_> = events.chain(notes).collect();
     listed.sort_by_cached_key(|(day, rank, start, title, _)| {
@@ -216,7 +210,8 @@ pub fn rows(
     let mut now_shown = false;
     for (day, rank, _, _, row) in listed {
         if current != Some(day) {
-            // Today is the newest day, so leaving it means only In progress Events were in it.
+            // Today is the newest day, so leaving it means only upcoming and In progress Events
+            // were in it.
             if current == Some(today) && !now_shown {
                 rows.push(Row::Now);
                 now_shown = true;
@@ -224,7 +219,7 @@ pub fn rows(
             rows.push(Row::Day(day));
             current = Some(day);
         }
-        if day == today && rank > 0 && !now_shown {
+        if day == today && rank > 1 && !now_shown {
             rows.push(Row::Now);
             now_shown = true;
         }

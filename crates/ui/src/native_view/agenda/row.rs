@@ -19,9 +19,8 @@ use std::rc::Rc;
 const NOW_LINE: f32 = 2.0;
 const NOW_DOT: f32 = 8.0;
 
-/// Where a row sits in the Agenda list: `first` opens it, `alone` says it holds nothing else.
+/// Where a row sits in the Agenda list: `alone` says it holds nothing else.
 pub(super) struct RowItem {
-    pub(super) first: bool,
     pub(super) alone: bool,
     pub(super) selected: bool,
     pub(super) today: NaiveDate,
@@ -40,7 +39,6 @@ pub(super) fn render_row(
 ) -> AnyElement {
     let theme = cx.theme();
     let RowItem {
-        first,
         alone,
         selected,
         today,
@@ -83,8 +81,7 @@ pub(super) fn render_row(
     let item = div().px(px(CONTENT_PADDING));
     match row {
         Row::Day(day) => item
-            // The header strip already spaces the list from the window's top.
-            .map(|item| if first { item.pt_1() } else { item.pt_4() })
+            .pt_4()
             .pb_1()
             .text_sm()
             .font_semibold()
@@ -169,7 +166,6 @@ mod tests {
                 label: "Kickoff ideas".into(),
             }));
             let item = RowItem {
-                first: true,
                 alone: true,
                 selected: false,
                 today: Local::now().date_naive(),
