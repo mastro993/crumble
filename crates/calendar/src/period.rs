@@ -61,6 +61,15 @@ impl CalendarView {
         Some((first, last_week + Days::new(7)))
     }
 
+    /// Whether the Period containing `focused` also contains `date`.
+    pub fn contains(self, focused: NaiveDate, date: NaiveDate, first_day: Weekday) -> bool {
+        match self {
+            Self::Week => week_start(focused, first_day) == week_start(date, first_day),
+            Self::Month => (focused.year(), focused.month()) == (date.year(), date.month()),
+            Self::Year => focused.year() == date.year(),
+        }
+    }
+
     /// Header title of the Period containing `focused`.
     pub fn title(self, focused: NaiveDate, first_day: Weekday) -> String {
         match self {
@@ -148,6 +157,22 @@ mod tests {
             CalendarView::Year.step(date(2028, 2, 29), true),
             date(2029, 2, 28)
         );
+    }
+
+    #[test]
+    fn a_period_contains_the_dates_it_shows() {
+        let monday = Weekday::Mon;
+        // Sunday 18 October 2026 closes a Monday-first week and opens a Sunday-first one.
+        let sunday = date(2026, 10, 18);
+        assert!(CalendarView::Week.contains(date(2026, 10, 12), sunday, monday));
+        assert!(!CalendarView::Week.contains(date(2026, 10, 19), sunday, monday));
+        assert!(CalendarView::Week.contains(date(2026, 10, 24), sunday, Weekday::Sun));
+        assert!(CalendarView::Month.contains(date(2026, 10, 1), sunday, monday));
+        // Month view draws 28 September, but that day is not in October's Period.
+        assert!(!CalendarView::Month.contains(date(2026, 10, 1), date(2026, 9, 28), monday));
+        assert!(!CalendarView::Month.contains(date(2025, 10, 18), sunday, monday));
+        assert!(CalendarView::Year.contains(date(2026, 1, 1), sunday, monday));
+        assert!(!CalendarView::Year.contains(date(2027, 1, 1), sunday, monday));
     }
 
     #[test]

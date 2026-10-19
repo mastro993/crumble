@@ -46,18 +46,22 @@ pub(super) fn surface(cx: &App) -> Hsla {
     theme.background.blend(theme.sidebar.opacity(0.5))
 }
 
-/// A second-level column filling its parent, on its surface, with a hairline on its trailing
-/// edge.
+/// A second-level column filling its parent, with a hairline on its trailing edge. The sidebar
+/// around it paints its surface; see `rounded_surface`.
 pub(super) fn column(window: &Window, cx: &App) -> Div {
     // One device pixel, matching the panel's hairline.
     let hairline = px(1.0 / window.scale_factor());
     div()
         .size_full()
-        // Over the panel's rounded corners, which do not clip its children.
-        .rounded_l(px(SURFACE_RADIUS))
-        .bg(surface(cx))
         .border_r(hairline)
         .border_color(cx.theme().border)
+}
+
+/// `sidebar` on the column surface, rounded to the panel's leading corners. The panel does not
+/// clip its children to its corners, so the sidebar's visible leading edge rounds itself: a
+/// sliding sidebar's column sits partly outside its frame, where its own corners would not show.
+fn rounded_surface(sidebar: Div, cx: &App) -> Div {
+    sidebar.rounded_l(px(SURFACE_RADIUS)).bg(surface(cx))
 }
 
 impl NativeView {
@@ -109,9 +113,9 @@ impl NativeView {
 
     /// The frame expands or shrinks while `sidebar` inside stays pinned to its trailing edge at
     /// full width, so the content slides in and out instead of reflowing.
-    pub(super) fn render_sidebar_frame(&self, sidebar: impl IntoElement) -> AnyElement {
+    pub(super) fn render_sidebar_frame(&self, sidebar: impl IntoElement, cx: &App) -> AnyElement {
         let (width, collapsed) = (self.sidebar_width, self.sidebar_collapsed);
-        let frame = div()
+        let frame = rounded_surface(div(), cx)
             .id("sidebar-frame")
             .flex()
             .flex_shrink_0()
@@ -134,7 +138,9 @@ impl NativeView {
         let collapsed = self.sidebar_collapsed;
         let shown = !collapsed || self.sidebar_closing;
         self.resizable(cx)
-            .when(shown, |row| row.child(self.render_sidebar_frame(sidebar)))
+            .when(shown, |row| {
+                row.child(self.render_sidebar_frame(sidebar, cx))
+            })
             .when(!collapsed, |row| row.child(self.render_resize_control(cx)))
             .into_any_element()
     }
@@ -148,7 +154,7 @@ impl NativeView {
     ) -> AnyElement {
         self.resizable(cx)
             .child(
-                div()
+                rounded_surface(div(), cx)
                     .flex_shrink_0()
                     .w(px(self.sidebar_width))
                     .h_full()
