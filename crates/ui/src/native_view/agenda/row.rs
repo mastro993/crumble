@@ -13,7 +13,7 @@ use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, deferred, div, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Window, deferred, div, hsla, prelude::FluentBuilder, px,
     relative,
 };
 use std::cell::Cell;
@@ -31,9 +31,12 @@ const NOW_CHIP_GAP: f32 = 8.0;
 const NOW_OPACITY: f32 = 0.5;
 /// Width of the bar in an Event's color at a row's leading edge.
 const BAR: f32 = 3.0;
-/// Strength of the selection color filling the part of the Event marking now that has passed,
-/// over the card or a selected row's fill.
-const PASSED_OPACITY: f32 = 0.5;
+/// The soft tan filling the part of the Event marking now that has passed: the accent's hue,
+/// saturated enough to read brown rather than grey, a shade below the card in lightness, and a
+/// step deeper over a selected row so it still shows. Dark mode mirrors the lightness.
+const PASSED_SATURATION: f32 = 0.45;
+const PASSED_LIGHTNESS: f32 = 0.885;
+const PASSED_SELECTED_LIGHTNESS: f32 = 0.845;
 /// Strength of the accent in the time left on that card, quieter than the title.
 const TIME_LEFT_OPACITY: f32 = 0.5;
 /// Space between an Event's card and the column's edges.
@@ -78,6 +81,17 @@ pub(super) fn render_row(
             let (row, select) = (row.clone(), select.clone());
             let hover = hover_fill(cx);
             let accent = theme.primary;
+            let lightness = if selected {
+                PASSED_SELECTED_LIGHTNESS
+            } else {
+                PASSED_LIGHTNESS
+            };
+            let lightness = if theme.mode.is_dark() {
+                1.0 - lightness
+            } else {
+                lightness
+            };
+            let passed = hsla(accent.h, PASSED_SATURATION, lightness, 1.0);
             div().px(px(CARD_INSET)).child(
                 focusable(
                     h_flex().id(ElementId::Name(id.into())).test_support(),
@@ -106,7 +120,7 @@ pub(super) fn render_row(
                             .left_0()
                             .w(relative(current.progress))
                             .rounded(px(RADIUS))
-                            .bg(theme.selection.opacity(PASSED_OPACITY)),
+                            .bg(passed),
                     )
                 })
                 .child(div().flex_shrink_0().w(px(BAR)).rounded_full().bg(color))
