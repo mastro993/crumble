@@ -1,33 +1,64 @@
-//! One row of the Agenda list: a day header, the Now line, an Event, a Quick note, or the end.
+//! One row of the Agenda list: a day header, the Now line, an Event, which shows its progress
+//! when it marks now, a Quick note, or the end.
 
 use super::super::keyboard::focusable;
+use super::super::sidebar::surface;
 use super::super::sidebar_row::hover_fill;
-use chrono::NaiveDate;
-use crumble_calendar::agenda::{Row, day_label, time_label};
+use chrono::{DateTime, Local};
+use crumble_calendar::agenda::{Row, day_label, progress, time_label, time_left};
+use crumble_eventkit::Event;
 use crumble_theme::CONTENT_PADDING;
 use crumble_theme::sidebar::{RADIUS, ROW_PADDING};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Window, deferred, div, hsla, prelude::FluentBuilder, px,
+    relative,
 };
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Thickness of the Now line, and the size of the dot that starts it.
-const NOW_LINE: f32 = 2.0;
-const NOW_DOT: f32 = 8.0;
+/// Thickness of the Now line, and the height of the strip around it the pointer hovers to show
+/// the time.
+const NOW_LINE: f32 = 1.5;
+const NOW_ROW: f32 = 16.0;
+/// Height of the chip showing the time, and its space from the column's trailing edge.
+const NOW_CHIP: f32 = 20.0;
+const NOW_CHIP_GAP: f32 = 8.0;
+/// Strength of the accent in the Now line.
+const NOW_OPACITY: f32 = 0.5;
+/// Width of the bar in an Event's color at a row's leading edge.
+const BAR: f32 = 3.0;
+/// The soft tan filling the part of the Event marking now that has passed: the accent's hue,
+/// saturated enough to read brown rather than grey, a shade below the card in lightness, and a
+/// step deeper over a selected row so it still shows. Dark mode mirrors the lightness.
+const PASSED_SATURATION: f32 = 0.45;
+const PASSED_LIGHTNESS: f32 = 0.885;
+const PASSED_SELECTED_LIGHTNESS: f32 = 0.845;
+/// Strength of the accent in the time left on that card, quieter than the title.
+const TIME_LEFT_OPACITY: f32 = 0.5;
+/// Space between an Event's card and the column's edges.
+const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
-/// Where a row sits in the Agenda list: `first` opens it, `alone` says it holds nothing else.
+/// Where a row sits in the Agenda list: `alone` says it holds nothing else; `now` is the time
+/// the Event marking now shows its progress at; `now_hovered` says the pointer is on the Now
+/// line.
 pub(super) struct RowItem {
-    pub(super) first: bool,
     pub(super) alone: bool,
     pub(super) selected: bool,
-    pub(super) today: NaiveDate,
+    pub(super) now: DateTime<Local>,
+    pub(super) now_hovered: Rc<Cell<bool>>,
 }
 
 type SelectRow = Rc<dyn Fn(&Row, &mut Window, &mut App)>;
+
+/// What the card of the Event marking now adds: how much of it has passed, and what is left.
+struct Current {
+    progress: f32,
+    left: Option<String>,
+}
 
 /// One item of the Agenda list; Events and Quick notes select on click, and on Enter or Space
 /// once Tab reaches them.
@@ -40,31 +71,59 @@ pub(super) fn render_row(
 ) -> AnyElement {
     let theme = cx.theme();
     let RowItem {
-        first,
         alone,
         selected,
-        today,
+        now,
+        now_hovered,
     } = item;
-    let selectable = |id: String, color: Hsla, title: String, time: String| {
-        let row = row.clone();
-        let hover = hover_fill(cx);
-        div()
-            .px(px(CONTENT_PADDING - ROW_PADDING))
-            .child(
+    let selectable =
+        |id: String, color: Hsla, title: String, time: String, current: Option<Current>| {
+            let (row, select) = (row.clone(), select.clone());
+            let hover = hover_fill(cx);
+            let accent = theme.primary;
+            let lightness = if selected {
+                PASSED_SELECTED_LIGHTNESS
+            } else {
+                PASSED_LIGHTNESS
+            };
+            let lightness = if theme.mode.is_dark() {
+                1.0 - lightness
+            } else {
+                lightness
+            };
+            let passed = hsla(accent.h, PASSED_SATURATION, lightness, 1.0);
+            div().px(px(CARD_INSET)).child(
                 focusable(
                     h_flex().id(ElementId::Name(id.into())).test_support(),
                     title.clone(),
                 )
+                .relative()
                 .cursor_pointer()
                 .px(px(ROW_PADDING))
                 .py_1p5()
                 .gap_3()
                 .items_stretch()
                 .rounded(px(RADIUS))
+                // The Event marking now sits on the sidebar color, a shade lighter than a
+                // selected row's fill.
+                .when(current.is_some() && !selected, |row| row.bg(theme.sidebar))
                 .when(selected, |row| row.bg(theme.sidebar_accent))
                 .when(!selected, |row| row.hover(move |style| style.bg(hover)))
                 .on_click(move |_, window, cx| select(&row, window, cx))
-                .child(div().flex_shrink_0().w(px(3.0)).rounded_full().bg(color))
+                // The part of the Event that has passed fills the card from its leading edge.
+                .when_some(current.as_ref(), |row, current| {
+                    row.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left_0()
+                            .w(relative(current.progress))
+                            .rounded(px(RADIUS))
+                            .bg(passed),
+                    )
+                })
+                .child(div().flex_shrink_0().w(px(BAR)).rounded_full().bg(color))
                 .child(
                     v_flex()
                         .flex_1()
@@ -76,59 +135,64 @@ pub(super) fn render_row(
                                 .text_color(theme.muted_foreground)
                                 .child(time),
                         ),
-                ),
+                )
+                .children(current.and_then(|current| current.left).map(|left| {
+                    div()
+                        .flex_shrink_0()
+                        .self_center()
+                        .text_xs()
+                        .font_medium()
+                        .text_color(accent.opacity(TIME_LEFT_OPACITY))
+                        .child(left)
+                })),
             )
-            .into_any_element()
+        };
+    let event_row = |event: &Event, current: Option<Current>| {
+        let color = colors
+            .get(&event.calendar_id)
+            .copied()
+            .unwrap_or(theme.muted_foreground);
+        let title = if event.title.is_empty() {
+            "(No title)".to_owned()
+        } else {
+            event.title.clone()
+        };
+        selectable(
+            format!("agenda-event-{}", event.id),
+            color,
+            title,
+            time_label(&event.when),
+            current,
+        )
     };
     let item = div().px(px(CONTENT_PADDING));
     match row {
         Row::Day(day) => item
-            // The header strip already spaces the list from the window's top.
-            .map(|item| if first { item.pt_1() } else { item.pt_4() })
+            .pt_4()
             .pb_1()
             .text_sm()
             .font_semibold()
-            .child(day_label(*day, today))
+            .child(day_label(*day, now.date_naive()))
             .into_any_element(),
-        Row::Now => h_flex()
-            .w_full()
-            .py_1()
-            // The dot hangs into the padding so the line starts level with the Events.
-            .pl(px(CONTENT_PADDING - NOW_DOT / 2.0))
-            .pr(px(CONTENT_PADDING))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .size(px(NOW_DOT))
-                    .rounded_full()
-                    .bg(theme.danger),
-            )
-            .child(div().flex_1().h(px(NOW_LINE)).bg(theme.danger))
-            .into_any_element(),
-        Row::Event(event) => {
-            let color = colors
-                .get(&event.calendar_id)
-                .copied()
-                .unwrap_or(theme.muted_foreground);
-            let title = if event.title.is_empty() {
-                "(No title)".to_owned()
-            } else {
-                event.title.clone()
-            };
-            selectable(
-                format!("agenda-event-{}", event.id),
-                color,
-                title,
-                time_label(&event.when),
-            )
-        }
+        Row::Now => now_line(now, now_hovered, cx).into_any_element(),
+        Row::Event(event) => event_row(event, None).into_any_element(),
+        Row::Current(event) => event_row(
+            event,
+            Some(Current {
+                progress: progress(event, now),
+                left: time_left(event, now),
+            }),
+        )
+        .into_any_element(),
         // No Account color: a Quick note belongs to none.
         Row::QuickNote(note) => selectable(
             format!("agenda-note-{}", note.id),
             theme.muted_foreground.opacity(0.5),
             note.label.clone(),
             note.at.format("%H:%M").to_string(),
-        ),
+            None,
+        )
+        .into_any_element(),
         Row::End => item
             .py_4()
             .text_xs()
@@ -140,6 +204,61 @@ pub(super) fn render_row(
             })
             .into_any_element(),
     }
+}
+
+/// The Now line: a thin line in the accent color across the whole column, on the seam between
+/// two rows without moving them apart. Under the pointer a chip with the current time shows
+/// past the column's trailing edge, level with the line.
+fn now_line(now: DateTime<Local>, hovered: Rc<Cell<bool>>, cx: &App) -> impl IntoElement {
+    // Mixed into the column's surface, so the line and the chip are one solid color.
+    let accent = surface(cx).blend(cx.theme().primary.opacity(NOW_OPACITY));
+    let chip = hovered.get().then(|| {
+        div()
+            .absolute()
+            .left(relative(1.0))
+            .top(px((NOW_ROW - NOW_CHIP) / 2.0))
+            .ml(px(NOW_CHIP_GAP))
+            // Drawn last and unclipped, as the chip sits outside the list.
+            .child(deferred(
+                div()
+                    .h(px(NOW_CHIP))
+                    .px_1p5()
+                    // Digits have no descenders, so the line box's centre sits below theirs.
+                    .pb(px(2.0))
+                    .flex()
+                    .items_center()
+                    .rounded_full()
+                    .bg(accent)
+                    .text_xs()
+                    .font_medium()
+                    .text_color(cx.theme().primary_foreground)
+                    .child(now.format("%H:%M").to_string()),
+            ))
+    });
+    // The row takes no height; the strip the pointer hovers spills over the rows around it.
+    div().relative().w_full().h_0().child(
+        div()
+            .id("agenda-now")
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(-NOW_ROW / 2.0))
+            .h(px(NOW_ROW))
+            .on_hover(move |over, window, _| {
+                hovered.set(*over);
+                window.refresh();
+            })
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px((NOW_ROW - NOW_LINE) / 2.0))
+                    .h(px(NOW_LINE))
+                    .bg(accent),
+            )
+            .children(chip),
+    )
 }
 
 #[cfg(test)]
@@ -169,10 +288,10 @@ mod tests {
                 label: "Kickoff ideas".into(),
             }));
             let item = RowItem {
-                first: true,
                 alone: true,
                 selected: false,
-                today: Local::now().date_naive(),
+                now: Local::now(),
+                now_hovered: Rc::default(),
             };
             let list = cx.entity().downgrade();
             let select = Rc::new(move |row: &Row, _: &mut Window, cx: &mut gpui_kit::App| {

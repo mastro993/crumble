@@ -1,4 +1,4 @@
-//! Agenda page: every Event that has started and every Quick note, newest first, in a list
+//! Agenda page: every Event up to the end of Today and every Quick note, newest first, in a list
 //! that reads further into the past as it scrolls toward its end. Selecting a row shows its
 //! Note beside the list.
 
@@ -49,6 +49,10 @@ pub(super) struct AgendaPage {
     scrolling_up: Rc<Cell<Option<(Instant, Pixels)>>>,
     /// Whether the minute tick that keeps the rows current is running.
     ticking: bool,
+    /// When the first read finished and the list began to show.
+    revealed: Option<Instant>,
+    /// Whether the pointer is on the Now line, which then shows the time beside the list.
+    now_hovered: Rc<Cell<bool>>,
 }
 
 impl AgendaPage {
@@ -79,6 +83,8 @@ impl AgendaPage {
             near_end,
             scrolling_up,
             ticking: false,
+            revealed: None,
+            now_hovered: Rc::default(),
         }
     }
 
@@ -140,7 +146,7 @@ impl AgendaPage {
     /// Selects the row of `row`, unless it is a day header or a line.
     fn select(&mut self, row: &Row) {
         self.selected = match row {
-            Row::Event(event) => Some(Selected::Event(event.clone())),
+            Row::Event(event) | Row::Current(event) => Some(Selected::Event(event.clone())),
             Row::QuickNote(listed) => self
                 .quick_notes
                 .iter()
@@ -153,7 +159,9 @@ impl AgendaPage {
     /// Whether `row` is the selected one.
     fn is_selected(&self, row: &Row) -> bool {
         match (&self.selected, row) {
-            (Some(Selected::Event(selected)), Row::Event(event)) => selected.id == event.id,
+            (Some(Selected::Event(selected)), Row::Event(event) | Row::Current(event)) => {
+                selected.id == event.id
+            }
             (Some(Selected::QuickNote(id)), Row::QuickNote(note)) => id.to_string() == note.id,
             _ => false,
         }
@@ -168,7 +176,7 @@ impl AgendaPage {
                     .rows
                     .iter()
                     .filter_map(|row| match row {
-                        Row::Event(event) => Some(event.clone()),
+                        Row::Event(event) | Row::Current(event) => Some(event.clone()),
                         _ => None,
                     })
                     .collect();

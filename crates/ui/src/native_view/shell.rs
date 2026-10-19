@@ -113,6 +113,20 @@ impl NativeView {
                     .child(panel),
             )
             .child(self.render_header_controls(window, cx))
+            .when(self.route == Route::Calendar, |shell| {
+                // Centered on the window rather than on the toolbar, which starts after the
+                // header controls. A plain div takes no clicks, so the header still drags.
+                shell.child(
+                    h_flex()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(HEADER_HEIGHT))
+                        .justify_center()
+                        .child(self.render_calendar_navigation(cx)),
+                )
+            })
             .into_any_element()
     }
 

@@ -15,7 +15,7 @@ use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, ScrollHandle,
-    Styled, Task, Window, div, point, px,
+    Styled, Task, Window, div, point, prelude::FluentBuilder, px,
 };
 use std::rc::Rc;
 use std::time::Duration;
@@ -153,48 +153,27 @@ impl NativeView {
             .on_action(cx.listener(|view, _: &NextPeriod, _, cx| view.step_period(true, cx)))
     }
 
-    /// Today, Previous, Next, the Period title, and the Calendar view switcher.
+    /// Today while another Period shows, then the Calendar view switcher at the trailing end.
+    /// The Period navigation sits centered over the whole header instead; see
+    /// `render_calendar_navigation`.
     pub(super) fn render_calendar_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let CalendarPage { view, focused, .. } = self.calendar;
-        let arrow = |id: &'static str, icon: &str, label: &'static str| {
-            button(id)
-                .ghost()
-                .small()
-                .icon(app_icon(icon).size_4())
-                .accessibility_label(label)
-        };
+        let first_day = self.store.first_day_of_week();
         h_flex()
             .flex_1()
             .min_w_0()
             .gap_2()
-            .child(
-                button("calendar-today")
-                    .outline()
-                    .small()
-                    .label("Today")
-                    .on_click(cx.listener(|view, _, _, cx| view.show_today(cx))),
-            )
-            .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .child(
-                        arrow("calendar-previous", "chevron-left", "Previous period")
-                            .on_click(cx.listener(|view, _, _, cx| view.step_period(false, cx))),
-                    )
-                    .child(
-                        arrow("calendar-next", "chevron-right", "Next period")
-                            .on_click(cx.listener(|view, _, _, cx| view.step_period(true, cx))),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_base()
-                    .font_semibold()
-                    .child(view.title(focused, self.store.first_day_of_week())),
-            )
+            .when(!view.contains(focused, today(), first_day), |toolbar| {
+                toolbar.child(
+                    button("calendar-today")
+                        .outline()
+                        .small()
+                        .label("Today")
+                        .on_click(cx.listener(|view, _, _, cx| view.show_today(cx))),
+                )
+            })
+            // Empty header space still drags and zooms the window.
+            .child(div().flex_1())
             .child(
                 TabBar::new("calendar-views")
                     .segmented()
@@ -214,6 +193,34 @@ impl NativeView {
                     .children(
                         CalendarView::ALL.map(|v| Tab::new().label(v.label()).cursor_pointer()),
                     ),
+            )
+    }
+
+    /// Previous, the Period title, and Next.
+    pub(super) fn render_calendar_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let CalendarPage { view, focused, .. } = self.calendar;
+        let arrow = |id: &'static str, icon: &str, label: &'static str| {
+            button(id)
+                .ghost()
+                .small()
+                .icon(app_icon(icon).size_4())
+                .accessibility_label(label)
+        };
+        h_flex()
+            .gap_1()
+            .child(
+                arrow("calendar-previous", "chevron-left", "Previous period")
+                    .on_click(cx.listener(|view, _, _, cx| view.step_period(false, cx))),
+            )
+            .child(
+                div()
+                    .text_base()
+                    .font_semibold()
+                    .child(view.title(focused, self.store.first_day_of_week())),
+            )
+            .child(
+                arrow("calendar-next", "chevron-right", "Next period")
+                    .on_click(cx.listener(|view, _, _, cx| view.step_period(true, cx))),
             )
     }
 
