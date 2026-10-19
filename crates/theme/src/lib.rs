@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
-use gpui_kit::{App, BoxShadow, SharedString, Window, hsla, px};
+use gpui_kit::{App, BoxShadow, Hsla, SharedString, Window, hsla, px};
 
 /// Height of the window header row.
 pub const HEADER_HEIGHT: f32 = 42.0;
@@ -78,8 +78,9 @@ pub mod rail {
     pub const GAP: f32 = 8.0;
     /// Selected icon color in light mode, RGBA: the palette's espresso at 80%.
     pub const SELECTED_INK_LIGHT: u32 = 0x1f150acc;
-    /// Selected icon color in dark mode, RGBA: the palette's cream at 80%.
-    pub const SELECTED_INK_DARK: u32 = 0xfaf5efcc;
+    /// Selected icon color in dark mode, RGBA: the palette's cream at 90%, matching the light
+    /// one's contrast.
+    pub const SELECTED_INK_DARK: u32 = 0xfaf5efe6;
 }
 
 /// Context menu metrics in points. Rows reuse the [`sidebar`] row height, padding, and icon
@@ -140,6 +141,13 @@ pub mod menu {
     }
 }
 
+/// Unselected icons and hints, a step below secondary text. Ink faded toward a dark page loses
+/// contrast faster than toward a light one, so dark mode keeps more of it to read as light mode.
+pub fn faint_foreground(theme: &Theme) -> Hsla {
+    let strength = if theme.is_dark() { 0.75 } else { 0.65 };
+    theme.muted_foreground.opacity(strength)
+}
+
 /// Applies the system font and installs the light and dark palettes, which
 /// [`follow_window`] loads.
 pub fn init(cx: &mut App) {
@@ -176,10 +184,11 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     const DARK_FILL: &str = "#2e200e";
 
     // Secondary text and icons, focus rings, and text selection are the second ink at
-    // three quarters, half, and a fifth strength, so they stay tints of the palette.
+    // three quarters, half, and a fifth strength, so they stay tints of the palette. Dark
+    // secondary ink is at nine tenths: faded toward the dark page it reads as light mode's.
     let (background, foreground, sidebar, fill, primary, [muted_text, ring, selection]) =
         if mode.is_dark() {
-            let inks = ["#f0e2d0bf", "#f0e2d080", "#f0e2d033"];
+            let inks = ["#f0e2d0e6", "#f0e2d080", "#f0e2d033"];
             (DARK_PAGE, CREAM, ESPRESSO, DARK_FILL, WHEAT, inks)
         } else {
             let inks = ["#3e2b13bf", "#3e2b1380", "#3e2b1333"];

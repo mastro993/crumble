@@ -9,9 +9,6 @@ use gpui_kit::{
     prelude::FluentBuilder, px,
 };
 
-/// Unselected icons sit a step below their label.
-const ICON_OPACITY: f32 = 0.65;
-
 /// A row whose icon uses the label color while selected.
 pub(super) fn row(
     id: impl Into<ElementId>,
@@ -24,7 +21,7 @@ pub(super) fn row(
     let icon_color = if selected {
         theme.sidebar_accent_foreground
     } else {
-        theme.muted_foreground.opacity(ICON_OPACITY)
+        crumble_theme::faint_foreground(theme)
     };
     let icon = icon
         .size(px(ICON_SIZE))

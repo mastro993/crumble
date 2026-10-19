@@ -4,6 +4,7 @@
 use super::super::keyboard::focusable;
 use super::super::sidebar::surface;
 use super::super::sidebar_row::hover_fill;
+use super::now_hover::NowHover;
 use chrono::{DateTime, Local};
 use crumble_calendar::agenda::{Row, day_label, progress, time_label, time_left};
 use crumble_eventkit::Event;
@@ -12,23 +13,30 @@ use crumble_theme::sidebar::{RADIUS, ROW_PADDING};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, deferred, div, hsla, prelude::FluentBuilder, px,
-    relative,
+    AnyElement, App, Bounds, ElementId, FontFeatures, Hsla, InteractiveElement, IntoElement,
+    ParentElement, StatefulInteractiveElement, Styled, Window, canvas, div, fill, hsla, point,
+    prelude::FluentBuilder, px, relative, size,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Instant;
 
 /// Thickness of the Now line, and the height of the strip around it the pointer hovers to show
 /// the time.
-const NOW_LINE: f32 = 1.5;
+const NOW_LINE: f32 = 2.0;
 const NOW_ROW: f32 = 16.0;
-/// Height of the chip showing the time, and its space from the column's trailing edge.
-const NOW_CHIP: f32 = 20.0;
-const NOW_CHIP_GAP: f32 = 8.0;
-/// Strength of the accent in the Now line.
+/// Space between the Now line and the rows above and below it, and between the time and the line.
+const NOW_SPACE: f32 = 3.0;
+/// How far below its place the time starts as it enters and ends as it leaves.
+const NOW_TIME_SLIDE: f32 = 4.0;
+/// Length of each of the Now line's rounded dashes, and the space between them.
+const NOW_DASH: f32 = 6.0;
+const NOW_DASH_GAP: f32 = 4.0;
+/// Strength of the accent in the time above the Now line, and in the line, which is fainter.
 const NOW_OPACITY: f32 = 0.5;
+const NOW_LINE_OPACITY: f32 = 0.3;
 /// Width of the bar in an Event's color at a row's leading edge.
 const BAR: f32 = 3.0;
 /// The soft tan filling the part of the Event marking now that has passed: the accent's hue,
@@ -43,13 +51,13 @@ const TIME_LEFT_OPACITY: f32 = 0.5;
 const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
 /// Where a row sits in the Agenda list: `alone` says it holds nothing else; `now` is the time
-/// the Event marking now shows its progress at; `now_hovered` says the pointer is on the Now
-/// line.
+/// the Event marking now shows its progress at and the Now line shows; `now_hover` says whether
+/// the pointer is on the Now line.
 pub(super) struct RowItem {
     pub(super) alone: bool,
     pub(super) selected: bool,
     pub(super) now: DateTime<Local>,
-    pub(super) now_hovered: Rc<Cell<bool>>,
+    pub(super) now_hover: Rc<Cell<NowHover>>,
 }
 
 type SelectRow = Rc<dyn Fn(&Row, &mut Window, &mut App)>;
@@ -74,7 +82,7 @@ pub(super) fn render_row(
         alone,
         selected,
         now,
-        now_hovered,
+        now_hover,
     } = item;
     let selectable =
         |id: String, color: Hsla, title: String, time: String, current: Option<Current>| {
@@ -174,7 +182,7 @@ pub(super) fn render_row(
             .font_semibold()
             .child(day_label(*day, now.date_naive()))
             .into_any_element(),
-        Row::Now => now_line(now, now_hovered, cx).into_any_element(),
+        Row::Now => now_line(now, now_hover, cx).into_any_element(),
         Row::Event(event) => event_row(event, None).into_any_element(),
         Row::Current(event) => event_row(
             event,
@@ -206,59 +214,84 @@ pub(super) fn render_row(
     }
 }
 
-/// The Now line: a thin line in the accent color across the whole column, on the seam between
-/// two rows without moving them apart. Under the pointer a chip with the current time shows
-/// past the column's trailing edge, level with the line.
-fn now_line(now: DateTime<Local>, hovered: Rc<Cell<bool>>, cx: &App) -> impl IntoElement {
-    // Mixed into the column's surface, so the line and the chip are one solid color.
-    let accent = surface(cx).blend(cx.theme().primary.opacity(NOW_OPACITY));
-    let chip = hovered.get().then(|| {
+/// The Now line: a thin dashed line in the accent color across the column's cards, between two
+/// rows with a little space on either side. Under the pointer the current time, to the second,
+/// slides up and fades in above the line's trailing end, and slides down and fades out after.
+fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl IntoElement {
+    // Mixed into the column's surface, so the time and the line are solid colors.
+    let (surface, primary) = (surface(cx), cx.theme().primary);
+    let time = surface.blend(primary.opacity(NOW_OPACITY));
+    let line = surface.blend(primary.opacity(NOW_LINE_OPACITY));
+    let height = NOW_LINE + 2.0 * NOW_SPACE;
+    let shown = if cx.reduce_motion() {
+        f32::from(u8::from(hover.get().over()))
+    } else {
+        hover.get().shown(Instant::now())
+    };
+    // Over the bottom of the row above, at the trailing end its time leaves empty.
+    let label = (shown > 0.0).then(|| {
         div()
             .absolute()
-            .left(relative(1.0))
-            .top(px((NOW_ROW - NOW_CHIP) / 2.0))
-            .ml(px(NOW_CHIP_GAP))
-            // Drawn last and unclipped, as the chip sits outside the list.
-            .child(deferred(
-                div()
-                    .h(px(NOW_CHIP))
-                    .px_1p5()
-                    // Digits have no descenders, so the line box's centre sits below theirs.
-                    .pb(px(2.0))
-                    .flex()
-                    .items_center()
-                    .rounded_full()
-                    .bg(accent)
-                    .text_xs()
-                    .font_medium()
-                    .text_color(cx.theme().primary_foreground)
-                    .child(now.format("%H:%M").to_string()),
-            ))
+            .bottom(px(height - NOW_SPACE - NOW_TIME_SLIDE * (1.0 - shown)))
+            .right(px(CARD_INSET))
+            .opacity(shown)
+            .text_xs()
+            .font_medium()
+            // Tabular figures: every digit is as wide, so the time holds still as it ticks.
+            .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+            .text_color(time)
+            .child(now.format("%H:%M:%S").to_string())
     });
-    // The row takes no height; the strip the pointer hovers spills over the rows around it.
-    div().relative().w_full().h_0().child(
-        div()
-            .id("agenda-now")
-            .absolute()
-            .left_0()
-            .right_0()
-            .top(px(-NOW_ROW / 2.0))
-            .h(px(NOW_ROW))
-            .on_hover(move |over, window, _| {
-                hovered.set(*over);
-                window.refresh();
-            })
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(px((NOW_ROW - NOW_LINE) / 2.0))
-                    .h(px(NOW_LINE))
-                    .bg(accent),
-            )
-            .children(chip),
-    )
+    // The row holds just the line and its space; the strip the pointer hovers spills over the
+    // rows around it.
+    div()
+        .relative()
+        .w_full()
+        .h(px(height))
+        .child(
+            div()
+                .id("agenda-now")
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(px((height - NOW_ROW) / 2.0))
+                .h(px(NOW_ROW))
+                .on_hover(move |over, window, _| {
+                    let mut now_hover = hover.get();
+                    now_hover.set(*over, Instant::now());
+                    hover.set(now_hover);
+                    window.refresh();
+                }),
+        )
+        .child(
+            // Inset as the Event cards are, so its ends line up with theirs.
+            div()
+                .absolute()
+                .left(px(CARD_INSET))
+                .right(px(CARD_INSET))
+                .top(px(NOW_SPACE))
+                .h(px(NOW_LINE))
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| dashes(bounds, line, window),
+                    )
+                    .size_full(),
+                ),
+        )
+        .children(label)
+}
+
+/// Paints rounded dashes of `color` along `bounds`, the last one cut short at its end.
+fn dashes(bounds: Bounds<gpui_kit::Pixels>, color: Hsla, window: &mut Window) {
+    let radius = bounds.size.height / 2.0;
+    let mut x = bounds.origin.x;
+    while x < bounds.right() {
+        let width = px(NOW_DASH).min(bounds.right() - x);
+        let dash = Bounds::new(point(x, bounds.origin.y), size(width, bounds.size.height));
+        window.paint_quad(fill(dash, color).corner_radii(radius));
+        x += px(NOW_DASH + NOW_DASH_GAP);
+    }
 }
 
 #[cfg(test)]
@@ -291,7 +324,7 @@ mod tests {
                 alone: true,
                 selected: false,
                 now: Local::now(),
-                now_hovered: Rc::default(),
+                now_hover: Rc::default(),
             };
             let list = cx.entity().downgrade();
             let select = Rc::new(move |row: &Row, _: &mut Window, cx: &mut gpui_kit::App| {

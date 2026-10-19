@@ -25,9 +25,6 @@ const PRIVACY_SETTINGS: &str =
 const INTERNET_ACCOUNTS: &str =
     "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension";
 
-/// Muted copy sits a step below its label, as in SkillBinder.
-const MUTED_OPACITY: f32 = 0.65;
-
 /// What an Account row's context menu asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AccountAction {
@@ -246,10 +243,7 @@ fn hint(
     action: impl Fn(&mut NativeView, &mut Window, &mut Context<NativeView>) + 'static,
 ) -> Stateful<Div> {
     let theme = cx.theme();
-    let (muted, hover) = (
-        theme.muted_foreground.opacity(MUTED_OPACITY),
-        theme.foreground,
-    );
+    let (muted, hover) = (crumble_theme::faint_foreground(theme), theme.foreground);
     activate(
         div()
             .id(id)

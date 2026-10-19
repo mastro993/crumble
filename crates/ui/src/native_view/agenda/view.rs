@@ -88,18 +88,22 @@ impl NativeView {
         if !agenda.ticking {
             agenda.ticking = true;
             cx.spawn(async move |this, cx| {
+                let mut minute = Local::now().minute();
                 loop {
-                    // Wakes on the minute, when Events start and end.
-                    let wait = 60 - u64::from(Local::now().second());
+                    // Wakes each second, and redraws on the minute, when Events start and end,
+                    // and each second while the Now line's time shows its seconds.
+                    let wait = 1000 - u64::from(Local::now().timestamp_subsec_millis().min(999));
                     cx.background_executor()
-                        .timer(Duration::from_secs(wait))
+                        .timer(Duration::from_millis(wait))
                         .await;
                     let shown = this.update(cx, |view, cx| {
                         let shown = view.route == Route::Agenda;
-                        if shown {
-                            cx.notify();
-                        } else {
+                        let now = Local::now().minute();
+                        if !shown {
                             view.agenda.ticking = false;
+                        } else if now != minute || view.agenda.now_hover.get().over() {
+                            minute = now;
+                            cx.notify();
                         }
                         shown
                     });
@@ -183,7 +187,10 @@ impl NativeView {
             let selected = rows.iter().position(|row| self.agenda.is_selected(row));
             let view = cx.entity().downgrade();
             let now = Local::now();
-            let now_hovered = self.agenda.now_hovered.clone();
+            let now_hover = self.agenda.now_hover.clone();
+            if !cx.reduce_motion() && now_hover.get().sliding(Instant::now()) {
+                window.request_animation_frame();
+            }
             let list = list(self.agenda.list.clone(), move |index, _, cx| {
                 let Some(row) = rows.get(index) else {
                     return div().into_any_element();
@@ -192,7 +199,7 @@ impl NativeView {
                     alone: rows.len() == 1,
                     selected: selected == Some(index),
                     now,
-                    now_hovered: now_hovered.clone(),
+                    now_hover: now_hover.clone(),
                 };
                 let view = view.clone();
                 let select = Rc::new(move |row: &Row, window: &mut Window, cx: &mut App| {

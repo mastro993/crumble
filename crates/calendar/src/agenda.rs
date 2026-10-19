@@ -1,7 +1,7 @@
 //! What the Agenda list shows and in what order: every Event up to the end of Today and every
 //! Quick note, newest first, under the day they started or are listed at, with Today's upcoming
-//! and In progress Events above the Now line. Also which days the Agenda reads next and how a read is
-//! split for EventKit.
+//! and In progress Events above the Now line, and Tomorrow's above them once Today has none
+//! left. Also which days the Agenda reads next and how a read is split for EventKit.
 
 use crate::events::when_text;
 use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate};
@@ -41,7 +41,7 @@ pub fn horizon(today: NaiveDate) -> NaiveDate {
 /// Events read cover; `stale` says EventKit reported a change; `reading` says a read is under
 /// way; `wants_more` says the list is short or scrolled near its end.
 ///
-/// The first read covers the last 30 days up to Today. After a new day, a change to the
+/// The first read covers the last 30 days up to Today, and Tomorrow. After a new day, a change to the
 /// shown Calendars, or an EventKit change, the covered days are read again. Otherwise, while no
 /// read is under way, the list reads further back when it wants more, down to the horizon.
 pub fn next_read(
@@ -52,12 +52,14 @@ pub fn next_read(
     today: NaiveDate,
     calendar_ids: Vec<String>,
 ) -> Option<(Span, bool)> {
-    let to = today.checked_add_days(Days::new(1)).unwrap_or(today);
+    let to = today.checked_add_days(Days::new(2)).unwrap_or(today);
     let horizon = horizon(today);
     match span {
         None => Some((
             Span {
-                from: to.checked_sub_days(Days::new(CHUNK_DAYS)).unwrap_or(to),
+                from: today
+                    .checked_sub_days(Days::new(CHUNK_DAYS - 1))
+                    .unwrap_or(today),
                 to,
                 calendar_ids,
             },
@@ -212,9 +214,10 @@ fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
 
 /// The rows for `events` and `quick_notes` at `now`. Today lists its upcoming Events, then the
 /// In progress ones, whatever day they started, then the Now line, or the last In progress one
-/// marking now, then all-day Events, then the ended Events and the Quick notes; other days list their all-day Events first, then the rest newest first. Only
-/// days from `from` on are listed, but an In progress Event shows however long ago it started.
-/// `end` adds the footer.
+/// marking now, then all-day Events, then the ended Events and the Quick notes; other days list
+/// their all-day Events first, then the rest newest first. Tomorrow is listed above Today while
+/// no Event is upcoming or In progress. Only days from `from` on are listed, but an In progress
+/// Event shows however long ago it started. `end` adds the footer.
 pub fn rows(
     events: &[Rc<Event>],
     quick_notes: &[Rc<QuickNote>],
@@ -223,17 +226,28 @@ pub fn rows(
     end: bool,
 ) -> Vec<Row> {
     let today = now.date_naive();
+    let today_left = events.iter().any(|event| {
+        start_day(event) <= today && matches!(event.when, When::Timed { end, .. } if end > now)
+    });
+    let last_day = if today_left {
+        Some(today)
+    } else {
+        today.succ_opt()
+    };
     // Each row with its day, its rank in the day, its start, and its title.
     let events = events
         .iter()
         .filter(|event| {
-            start_day(event) <= today && (start_day(event) >= from || in_progress(event, now))
+            Some(start_day(event)) <= last_day
+                && (start_day(event) >= from || in_progress(event, now))
         })
         .map(|event| {
             let (day, rank) = match event.when {
                 _ if in_progress(event, now) => (today, 1),
                 When::AllDay { first, .. } => (first, 2),
-                When::Timed { start, .. } if start > now => (today, 0),
+                When::Timed { start, .. } if start > now && start.date_naive() == today => {
+                    (today, 0)
+                }
                 When::Timed { start, .. } => (start.date_naive(), 3),
             };
             let start = match event.when {
@@ -282,10 +296,13 @@ pub fn rows(
     rows
 }
 
-/// A day header: `Today`, `Yesterday`, `Fri 22 Oct`, and the year outside the current one.
+/// A day header: `Tomorrow`, `Today`, `Yesterday`, `Fri 22 Oct`, and the year outside the
+/// current one.
 pub fn day_label(day: NaiveDate, today: NaiveDate) -> String {
     if day == today {
         "Today".into()
+    } else if today.succ_opt() == Some(day) {
+        "Tomorrow".into()
     } else if day.checked_add_days(Days::new(1)) == Some(today) {
         "Yesterday".into()
     } else if day.year() == today.year() {
