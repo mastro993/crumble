@@ -246,6 +246,7 @@ fn frame(
                 .justify_between()
                 .child(
                     v_flex()
+                        .flex_1()
                         .gap_1()
                         .min_w_0()
                         .child(

@@ -8,7 +8,7 @@
 mod input;
 mod render;
 
-pub(super) use render::{opening, panel};
+pub(super) use render::{opening, panel, scrolling};
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

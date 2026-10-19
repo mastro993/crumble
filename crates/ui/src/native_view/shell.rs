@@ -6,10 +6,11 @@ use super::rail::PRESS_OPACITY;
 use super::{NativeView, Route};
 use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT, SURFACE_RADIUS};
 use gpui_kit::component::button::{ButtonCustomVariant, ButtonVariants};
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, TitleBar, h_flex};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 
 gpui_kit::actions!(
@@ -69,6 +70,25 @@ impl NativeView {
         // One device pixel: a hairline on Retina instead of 1pt's two pixels.
         let hairline = px(1.0 / window.scale_factor());
         let (edge, background) = (theme.sidebar_border, theme.background);
+        let content = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            // The Agenda list and the Settings sections run from the panel's leading edge to
+            // its bottom.
+            .when(!self.route.fills_panel(), |content| {
+                content.p(px(CONTENT_PADDING)).pb_6()
+            })
+            .child(page);
+        // A page that scrolls its own parts needs the panel's full height to lay them out.
+        let content = if self.route.scrolls_itself() {
+            content.id("main-content").into_any_element()
+        } else {
+            content
+                .overflow_y_scrollbar()
+                .id("main-content")
+                .into_any_element()
+        };
         let panel = div()
             .id("main-panel")
             .relative()
@@ -85,20 +105,7 @@ impl NativeView {
             .border(hairline)
             .border_color(edge)
             .bg(background)
-            .child(
-                div()
-                    .id("main-content")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_y_scroll()
-                    // The Agenda list and the Settings sections run from the panel's leading edge
-                    // to its bottom.
-                    .when(!self.route.fills_panel(), |content| {
-                        content.p(px(CONTENT_PADDING)).pb_6()
-                    })
-                    .child(page),
-            );
+            .child(content);
         div()
             .id("app-shell")
             .relative()

@@ -15,13 +15,13 @@ use crumble_store::Store;
 use crumble_theme::CONTENT_PADDING;
 use crumble_theme::sidebar::{ICON_SIZE, INSET, LABEL_SIZE, ROW_GAP, ROW_PADDING};
 use gpui_kit::component::button::ButtonVariants;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, IndexPath, Sizable, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, AppContext, Context, Div, ElementId, Entity, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    AnyElement, AppContext, Context, Div, ElementId, Entity, FontWeight, IntoElement,
+    ParentElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
 const WEEKDAYS: [&str; 7] = [
@@ -38,8 +38,8 @@ const WEEKDAYS: [&str; 7] = [
 const NOTIFICATION_SETTINGS: &str = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.mastro993.crumble";
 
 const SELECT_WIDTH: f32 = 160.0;
-/// Widest a section's settings run.
-const CONTENT_WIDTH: f32 = 560.0;
+/// Widest a section's settings run; narrower space centers them.
+const CONTENT_WIDTH: f32 = 720.0;
 /// Height of the page's title row, in the sidebar and above the section's settings.
 const TITLE_HEIGHT: f32 = 34.0;
 const TITLE_SIZE: f32 = 18.0;
@@ -222,22 +222,24 @@ impl NativeView {
             .child(sidebar)
             .child(
                 div()
-                    .id("settings-content")
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_y_scroll()
                     // The section's title sits level with the sidebar's.
                     .pt(px(INSET))
                     .px(px(CONTENT_PADDING))
                     .pb(px(CONTENT_PADDING))
                     .child(
                         v_flex()
+                            .w_full()
                             .max_w(px(CONTENT_WIDTH))
+                            .mx_auto()
                             .gap_4()
                             .child(title(section.title()))
                             .child(content),
-                    ),
+                    )
+                    .overflow_y_scrollbar()
+                    .id("settings-content"),
             )
             .into_any_element()
     }

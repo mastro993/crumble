@@ -10,10 +10,11 @@ use crumble_theme::menu::{
 use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::base::{Align, Placement, Positioner, TestSupportExt};
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::{
-    Anchor, Animation, AnimationElement, AnimationExt, AnyElement, App, Bounds, Context,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Role, SharedString,
-    StatefulInteractiveElement, Styled, Toggled, Window, canvas, div, point,
+    Anchor, Animation, AnimationElement, AnimationExt, AnyElement, App, Bounds, Context, Div,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Role, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Toggled, Window, canvas, div, point,
     prelude::FluentBuilder, px, size,
 };
 
@@ -333,4 +334,29 @@ pub(in crate::native_view) fn panel<E: Styled>(panel: E, cx: &App) -> E {
         .bg(surface(theme))
         .text_size(px(LABEL_SIZE))
         .text_color(theme.popover_foreground)
+}
+
+/// `children` scrolling in a panel once it reaches its maximum height, under a scrollbar that
+/// `scroll` drives. The scrollbar overlays the box the children scroll in, which stays put.
+pub(in crate::native_view) fn scrolling<E: IntoElement>(
+    id: &'static str,
+    scroll: &ScrollHandle,
+    children: impl IntoIterator<Item = E>,
+) -> Div {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .children(children),
+        )
+        .vertical_scrollbar(scroll)
 }
