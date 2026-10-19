@@ -51,6 +51,8 @@ pub(super) struct AgendaPage {
     ticking: bool,
     /// When the first read finished and the list began to show.
     revealed: Option<Instant>,
+    /// Whether the pointer is on the Now line, which then shows the time beside the list.
+    now_hovered: Rc<Cell<bool>>,
 }
 
 impl AgendaPage {
@@ -82,6 +84,7 @@ impl AgendaPage {
             scrolling_up,
             ticking: false,
             revealed: None,
+            now_hovered: Rc::default(),
         }
     }
 

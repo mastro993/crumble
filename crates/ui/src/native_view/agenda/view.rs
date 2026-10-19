@@ -183,6 +183,7 @@ impl NativeView {
             let selected = rows.iter().position(|row| self.agenda.is_selected(row));
             let view = cx.entity().downgrade();
             let now = Local::now();
+            let now_hovered = self.agenda.now_hovered.clone();
             let list = list(self.agenda.list.clone(), move |index, _, cx| {
                 let Some(row) = rows.get(index) else {
                     return div().into_any_element();
@@ -191,6 +192,7 @@ impl NativeView {
                     alone: rows.len() == 1,
                     selected: selected == Some(index),
                     now,
+                    now_hovered: now_hovered.clone(),
                 };
                 let view = view.clone();
                 let select = Rc::new(move |row: &Row, window: &mut Window, cx: &mut App| {
