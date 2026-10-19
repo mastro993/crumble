@@ -3,6 +3,7 @@
 //! Note beside the list.
 
 mod row;
+mod skeleton;
 mod view;
 
 use super::NativeView;
@@ -49,6 +50,8 @@ pub(super) struct AgendaPage {
     scrolling_up: Rc<Cell<Option<(Instant, Pixels)>>>,
     /// Whether the minute tick that keeps the rows current is running.
     ticking: bool,
+    /// When the first read finished and the list replaced its placeholder rows.
+    revealed: Option<Instant>,
 }
 
 impl AgendaPage {
@@ -79,6 +82,7 @@ impl AgendaPage {
             near_end,
             scrolling_up,
             ticking: false,
+            revealed: None,
         }
     }
 
@@ -140,7 +144,7 @@ impl AgendaPage {
     /// Selects the row of `row`, unless it is a day header or a line.
     fn select(&mut self, row: &Row) {
         self.selected = match row {
-            Row::Event(event) => Some(Selected::Event(event.clone())),
+            Row::Event(event) | Row::Current(event) => Some(Selected::Event(event.clone())),
             Row::QuickNote(listed) => self
                 .quick_notes
                 .iter()
@@ -153,7 +157,9 @@ impl AgendaPage {
     /// Whether `row` is the selected one.
     fn is_selected(&self, row: &Row) -> bool {
         match (&self.selected, row) {
-            (Some(Selected::Event(selected)), Row::Event(event)) => selected.id == event.id,
+            (Some(Selected::Event(selected)), Row::Event(event) | Row::Current(event)) => {
+                selected.id == event.id
+            }
             (Some(Selected::QuickNote(id)), Row::QuickNote(note)) => id.to_string() == note.id,
             _ => false,
         }
@@ -168,7 +174,7 @@ impl AgendaPage {
                     .rows
                     .iter()
                     .filter_map(|row| match row {
-                        Row::Event(event) => Some(event.clone()),
+                        Row::Event(event) | Row::Current(event) => Some(event.clone()),
                         _ => None,
                     })
                     .collect();

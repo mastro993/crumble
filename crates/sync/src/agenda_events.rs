@@ -66,6 +66,12 @@ impl AgendaEvents {
         self.reads
     }
 
+    /// Whether nothing is read yet: no read has finished, and none has failed since the last
+    /// EventKit change.
+    pub fn first_read_pending(&self) -> bool {
+        self.reads == 0 && self.failed.is_none()
+    }
+
     /// Reads the covered days again the next time a read is asked for.
     pub fn mark_stale(&mut self) {
         self.stale = true;

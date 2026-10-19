@@ -129,10 +129,13 @@ pub fn span_events(
 pub enum Row {
     /// The header of a day's Events.
     Day(NaiveDate),
-    /// The line between Today's upcoming and In progress Events and the rest.
+    /// The Now line, between Today's upcoming and In progress Events and the rest.
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
+    /// The In progress Event just above where the Now line would fall, marking now in place of
+    /// the line by showing its `progress` and `time_left`.
+    Current(Rc<Event>),
     /// A Quick note, under the day it is listed at.
     QuickNote(Rc<QuickNote>),
     /// The footer once nothing older is left to read.
@@ -162,9 +165,54 @@ fn in_progress(event: &Event, now: DateTime<Local>) -> bool {
     matches!(event.when, When::Timed { start, end } if start <= now && now < end)
 }
 
+/// How much of a timed Event has passed at `now`, from 0 at its start to 1 at its end; 0 for an
+/// all-day Event.
+pub fn progress(event: &Event, now: DateTime<Local>) -> f32 {
+    let When::Timed { start, end } = event.when else {
+        return 0.0;
+    };
+    let length = (end - start).num_seconds();
+    if length <= 0 {
+        return 0.0;
+    }
+    ((now - start).num_seconds() as f32 / length as f32).clamp(0.0, 1.0)
+}
+
+/// What is left of a timed Event at `now`, as its row says it: `48m left`, `1h 5m left`, `2h
+/// left`, counting a started minute as whole; `None` once it has ended, and for an all-day Event.
+pub fn time_left(event: &Event, now: DateTime<Local>) -> Option<String> {
+    let When::Timed { end, .. } = event.when else {
+        return None;
+    };
+    let seconds = (end - now).num_seconds();
+    if seconds <= 0 {
+        return None;
+    }
+    let minutes = (seconds + 59) / 60;
+    Some(match (minutes / 60, minutes % 60) {
+        (0, minutes) => format!("{minutes}m left"),
+        (hours, 0) => format!("{hours}h left"),
+        (hours, minutes) => format!("{hours}h {minutes}m left"),
+    })
+}
+
+/// Ends Today's upcoming and In progress Events: the last of them marks now when it is In
+/// progress, and the Now line follows it otherwise.
+fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
+    if let Some(Row::Event(event)) = rows.last()
+        && in_progress(event, now)
+    {
+        let event = event.clone();
+        rows.pop();
+        rows.push(Row::Current(event));
+    } else {
+        rows.push(Row::Now);
+    }
+}
+
 /// The rows for `events` and `quick_notes` at `now`. Today lists its upcoming Events, then the
-/// In progress ones, whatever day they started, then the Now line, then all-day Events, then the
-/// ended Events and the Quick notes; other days list their all-day Events first, then the rest newest first. Only
+/// In progress ones, whatever day they started, then the Now line, or the last In progress one
+/// marking now, then all-day Events, then the ended Events and the Quick notes; other days list their all-day Events first, then the rest newest first. Only
 /// days from `from` on are listed, but an In progress Event shows however long ago it started.
 /// `end` adds the footer.
 pub fn rows(
@@ -213,20 +261,20 @@ pub fn rows(
             // Today is the newest day, so leaving it means only upcoming and In progress Events
             // were in it.
             if current == Some(today) && !now_shown {
-                rows.push(Row::Now);
+                close_now(&mut rows, now);
                 now_shown = true;
             }
             rows.push(Row::Day(day));
             current = Some(day);
         }
         if day == today && rank > 1 && !now_shown {
-            rows.push(Row::Now);
+            close_now(&mut rows, now);
             now_shown = true;
         }
         rows.push(row);
     }
     if current == Some(today) && !now_shown {
-        rows.push(Row::Now);
+        close_now(&mut rows, now);
     }
     if end {
         rows.push(Row::End);

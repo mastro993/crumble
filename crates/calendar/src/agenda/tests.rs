@@ -1,5 +1,6 @@
 use super::{
-    QuickNote, Row, Span, day_label, horizon, next_read, read_pieces, rows, span_events, time_label,
+    QuickNote, Row, Span, day_label, horizon, next_read, progress, read_pieces, rows, span_events,
+    time_label, time_left,
 };
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
 use crumble_eventkit::{Event, When};
@@ -42,13 +43,15 @@ fn all_day(title: &str, first: u32, last: u32) -> Rc<Event> {
     })
 }
 
-/// Rows as text: a day as its date, the Now line as `--`, an Event as its title.
+/// Rows as text: a day as its date, the Now line as `--`, an Event as its title, followed by
+/// `--` when it marks now in place of the line.
 fn labels(rows: &[Row]) -> Vec<String> {
     rows.iter()
         .map(|row| match row {
             Row::Day(day) => day.format("%d").to_string(),
             Row::Now => "--".into(),
             Row::Event(event) => event.title.clone(),
+            Row::Current(event) => format!("{} --", event.title),
             Row::QuickNote(note) => note.label.clone(),
             Row::End => "end".into(),
         })
@@ -86,7 +89,7 @@ fn events_up_to_the_end_of_today_are_listed_newest_first() {
 }
 
 #[test]
-fn upcoming_and_in_progress_events_sit_above_the_now_line() {
+fn the_last_in_progress_event_marks_now() {
     let now = at(15, 10, 0);
     let events = [
         timed("Lunch", at(15, 12, 30), at(15, 13, 30)),
@@ -100,7 +103,14 @@ fn upcoming_and_in_progress_events_sit_above_the_now_line() {
     assert_eq!(
         labels(&rows(&events, &[], now, date(1), false)),
         [
-            "15", "Retro", "Lunch", "Workshop", "Flight", "--", "Call", "14", "Dinner"
+            "15",
+            "Retro",
+            "Lunch",
+            "Workshop",
+            "Flight --",
+            "Call",
+            "14",
+            "Dinner"
         ]
     );
 
@@ -108,14 +118,14 @@ fn upcoming_and_in_progress_events_sit_above_the_now_line() {
     let starting = [timed("Standup", at(15, 10, 0), at(15, 10, 15))];
     assert_eq!(
         labels(&rows(&starting, &[], now, date(1), false)),
-        ["15", "Standup", "--"]
+        ["15", "Standup --"]
     );
 
-    // Only In progress Events today: the line closes Today's group.
+    // Only In progress Events today: the last marks now and closes Today's group.
     let only = [timed("Workshop", at(15, 9, 0), at(15, 12, 0))];
     assert_eq!(
         labels(&rows(&only, &[], now, date(1), false)),
-        ["15", "Workshop", "--"]
+        ["15", "Workshop --"]
     );
 
     // An Event ends at its end time: it is no longer In progress then.
@@ -127,11 +137,35 @@ fn upcoming_and_in_progress_events_sit_above_the_now_line() {
 }
 
 #[test]
+fn progress_runs_from_an_event_s_start_to_its_end() {
+    let meeting = timed("Meeting", at(15, 14, 15), at(15, 15, 15));
+    assert_eq!(progress(&meeting, at(15, 14, 0)), 0.0);
+    assert_eq!(progress(&meeting, at(15, 14, 30)), 0.25);
+    assert_eq!(progress(&meeting, at(15, 16, 0)), 1.0);
+    let instant = timed("Instant", at(15, 14, 15), at(15, 14, 15));
+    assert_eq!(progress(&instant, at(15, 14, 15)), 0.0);
+    assert_eq!(progress(&all_day("Holiday", 15, 15), at(15, 14, 30)), 0.0);
+}
+
+#[test]
+fn time_left_counts_started_minutes_until_the_end() {
+    let meeting = timed("Meeting", at(15, 14, 15), at(15, 16, 15));
+    let left = |hour, minute| time_left(&meeting, at(15, hour, minute));
+    assert_eq!(left(14, 30).as_deref(), Some("1h 45m left"));
+    assert_eq!(left(14, 15).as_deref(), Some("2h left"));
+    assert_eq!(left(15, 30).as_deref(), Some("45m left"));
+    let half_past = at(15, 16, 14) + chrono::Duration::seconds(30);
+    assert_eq!(time_left(&meeting, half_past).as_deref(), Some("1m left"));
+    assert_eq!(left(16, 15), None);
+    assert_eq!(time_left(&all_day("Holiday", 15, 15), at(15, 12, 0)), None);
+}
+
+#[test]
 fn days_before_the_read_ones_show_only_while_in_progress() {
     let flight = [timed("Flight", at(9, 22, 0), at(15, 11, 0))];
     assert_eq!(
         labels(&rows(&flight, &[], at(15, 10, 0), date(10), false)),
-        ["15", "Flight", "--"]
+        ["15", "Flight --"]
     );
     // Once it ends, its start day is not among those read, so it leaves the list.
     assert!(rows(&flight, &[], at(15, 12, 0), date(10), false).is_empty());
@@ -181,8 +215,7 @@ fn quick_notes_join_the_events_at_their_time() {
         labels(&rows(&events, &notes, now, date(10), false)),
         [
             "15",
-            "Workshop",
-            "--",
+            "Workshop --",
             "Holiday",
             "Review",
             "Ideas",

@@ -6,6 +6,7 @@ use super::super::controls::{app_icon, button};
 use super::super::route::Route;
 use super::super::sidebar::{column, surface};
 use super::row::{RowItem, render_row};
+use super::skeleton::agenda_skeleton;
 use chrono::{Local, NaiveDate, Timelike, Utc};
 use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
@@ -14,9 +15,9 @@ use crumble_notes::{Note, Notes};
 use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    AnyElement, App, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, linear_color_stop, linear_gradient, list,
-    prelude::FluentBuilder, px,
+    Animation, AnimationExt, AnyElement, App, Context, Hsla, InteractiveElement, IntoElement,
+    ParentElement, StatefulInteractiveElement, Styled, Window, div, ease_out_quint,
+    linear_color_stop, linear_gradient, list, prelude::FluentBuilder, px,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -26,6 +27,10 @@ use std::time::{Duration, Instant};
 const MIN_ROWS: usize = 40;
 /// Height of the fade that rows scroll away under at the list's top.
 const TOP_FADE: f32 = 32.0;
+/// How long the list takes to fade in over its placeholder rows once first read.
+const REVEAL: Duration = Duration::from_millis(280);
+/// How far below its place the list starts its fade in.
+const REVEAL_RISE: f32 = 8.0;
 
 impl NativeView {
     /// Keeps the Agenda current while it shows: reads it the first time, again after the day,
@@ -50,6 +55,9 @@ impl NativeView {
         });
 
         let loaded = agenda.events.read(cx);
+        if agenda.revealed.is_none() && !loaded.first_read_pending() {
+            agenda.revealed = Some(Instant::now());
+        }
         let now = Local::now();
         let minute = now
             .with_second(0)
@@ -158,7 +166,10 @@ impl NativeView {
         // One device pixel, matching the column's hairline.
         let hairline = px(1.0 / window.scale_factor());
         let column = column(window, cx).relative();
-        let column = if sync.access() == Access::Granted {
+        let pending = self.agenda.events.read(cx).first_read_pending();
+        let column = if sync.access() == Access::Granted && pending {
+            column.child(agenda_skeleton())
+        } else if sync.access() == Access::Granted {
             let colors: Rc<HashMap<String, Hsla>> = Rc::new(
                 sync.calendars()
                     .iter()
@@ -171,28 +182,44 @@ impl NativeView {
             let rows = self.agenda.rows.clone();
             let selected = rows.iter().position(|row| self.agenda.is_selected(row));
             let view = cx.entity().downgrade();
-            let today = today();
+            let now = Local::now();
+            let list = list(self.agenda.list.clone(), move |index, _, cx| {
+                let Some(row) = rows.get(index) else {
+                    return div().into_any_element();
+                };
+                let item = RowItem {
+                    alone: rows.len() == 1,
+                    selected: selected == Some(index),
+                    now,
+                };
+                let view = view.clone();
+                let select = Rc::new(move |row: &Row, window: &mut Window, cx: &mut App| {
+                    let _ = view.update(cx, |view, cx| view.select_agenda_row(row, window, cx));
+                });
+                render_row(row, item, &colors, select, cx)
+            })
+            .size_full();
+            // The list rises into place as it fades in over the placeholder rows it replaces.
+            let revealing = !cx.reduce_motion()
+                && self
+                    .agenda
+                    .revealed
+                    .is_some_and(|revealed| revealed.elapsed() < REVEAL);
+            let list = if revealing {
+                div()
+                    .size_full()
+                    .child(list)
+                    .with_animation(
+                        "agenda-reveal",
+                        Animation::new(REVEAL).with_easing(ease_out_quint()),
+                        |list, delta| list.opacity(delta).mt(px(REVEAL_RISE * (1.0 - delta))),
+                    )
+                    .into_any_element()
+            } else {
+                list.into_any_element()
+            };
             column
-                .child(
-                    list(self.agenda.list.clone(), move |index, _, cx| {
-                        let Some(row) = rows.get(index) else {
-                            return div().into_any_element();
-                        };
-                        let item = RowItem {
-                            alone: rows.len() == 1,
-                            selected: selected == Some(index),
-                            today,
-                        };
-                        let view = view.clone();
-                        let select =
-                            Rc::new(move |row: &Row, window: &mut Window, cx: &mut App| {
-                                let _ = view
-                                    .update(cx, |view, cx| view.select_agenda_row(row, window, cx));
-                            });
-                        render_row(row, item, &colors, select, cx)
-                    })
-                    .size_full(),
-                )
+                .child(list)
                 .child({
                     // Rows fade away under the list's top; the fade grows in over its first
                     // scrolled points so the top row isn't dimmed at rest.
