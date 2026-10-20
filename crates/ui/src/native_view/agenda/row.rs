@@ -13,9 +13,9 @@ use crumble_theme::sidebar::{RADIUS, ROW_PADDING};
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, Bounds, ElementId, FontFeatures, Hsla, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, Window, canvas, div, fill, hsla, point,
-    prelude::FluentBuilder, px, relative, size,
+    AnyElement, App, ElementId, FontFeatures, Hsla, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, Window, deferred, div, hsla, prelude::FluentBuilder, px,
+    relative,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -25,18 +25,17 @@ use std::time::Instant;
 
 /// Thickness of the Now line, and the height of the strip around it the pointer hovers to show
 /// the time.
-const NOW_LINE: f32 = 2.0;
+const NOW_LINE: f32 = 1.0;
 const NOW_ROW: f32 = 16.0;
-/// Space between the Now line and the rows above and below it, and between the time and the line.
+/// Space between the Now line and the rows above and below it.
 const NOW_SPACE: f32 = 3.0;
-/// How far below its place the time starts as it enters and ends as it leaves.
+/// Space between the column's edge and the time beside the Now line.
+const NOW_TIME_GAP: f32 = 6.0;
+/// How far left of its place the time starts as it enters, and right of it it ends as it leaves.
 const NOW_TIME_SLIDE: f32 = 4.0;
-/// Length of each of the Now line's rounded dashes, and the space between them.
-const NOW_DASH: f32 = 6.0;
-const NOW_DASH_GAP: f32 = 4.0;
-/// Strength of the accent in the time above the Now line, and in the line, which is fainter.
+/// Strength of the accent in the time beside the Now line, and in the line, which is fainter.
 const NOW_OPACITY: f32 = 0.5;
-const NOW_LINE_OPACITY: f32 = 0.3;
+const NOW_LINE_OPACITY: f32 = 0.2;
 /// Width of the bar in an Event's color at a row's leading edge.
 const BAR: f32 = 3.0;
 /// The soft tan filling the part of the Event marking now that has passed: the accent's hue,
@@ -214,33 +213,47 @@ pub(super) fn render_row(
     }
 }
 
-/// The Now line: a thin dashed line in the accent color across the column's cards, between two
-/// rows with a little space on either side. Under the pointer the current time, to the second,
-/// slides up and fades in above the line's trailing end, and slides down and fades out after.
+/// The Now line: a thin line in the accent color across the whole column, between two rows with
+/// a little space on either side. Under the pointer the current time, to the second, slides in
+/// from the left and fades in beside the line's trailing end, outside the column, and slides on
+/// to the right and fades out after.
 fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl IntoElement {
-    // Mixed into the column's surface, so the time and the line are solid colors.
-    let (surface, primary) = (surface(cx), cx.theme().primary);
-    let time = surface.blend(primary.opacity(NOW_OPACITY));
-    let line = surface.blend(primary.opacity(NOW_LINE_OPACITY));
+    let primary = cx.theme().primary;
+    // Mixed into the column's surface, so the line is a solid color.
+    let line = surface(cx).blend(primary.opacity(NOW_LINE_OPACITY));
     let height = NOW_LINE + 2.0 * NOW_SPACE;
+    let over = hover.get().over();
     let shown = if cx.reduce_motion() {
-        f32::from(u8::from(hover.get().over()))
+        f32::from(u8::from(over))
     } else {
         hover.get().shown(Instant::now())
     };
-    // Over the bottom of the row above, at the trailing end its time leaves empty.
+    // Enters from the left and leaves to the right.
+    let slide = NOW_TIME_SLIDE * (1.0 - shown) * if over { -1.0 } else { 1.0 };
+    // Beside the line's trailing end, past the column's edge.
     let label = (shown > 0.0).then(|| {
         div()
             .absolute()
-            .bottom(px(height - NOW_SPACE - NOW_TIME_SLIDE * (1.0 - shown)))
-            .right(px(CARD_INSET))
-            .opacity(shown)
-            .text_xs()
-            .font_medium()
-            // Tabular figures: every digit is as wide, so the time holds still as it ticks.
-            .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
-            .text_color(time)
-            .child(now.format("%H:%M:%S").to_string())
+            .left(relative(1.0))
+            .ml(px(NOW_TIME_GAP + slide))
+            .top(px((height - NOW_ROW) / 2.0))
+            // Drawn last and unclipped, as the time sits outside the list.
+            .child(deferred(
+                div()
+                    .h(px(NOW_ROW))
+                    // Digits have no descenders, so the line box's centre sits below theirs.
+                    .pb(px(2.0))
+                    .flex()
+                    .items_center()
+                    .opacity(shown)
+                    .text_xs()
+                    .font_medium()
+                    // Tabular figures: every digit is as wide, so the time holds still as it
+                    // ticks.
+                    .font_features(FontFeatures(Arc::new(vec![("tnum".into(), 1)])))
+                    .text_color(primary.opacity(NOW_OPACITY))
+                    .child(now.format("%H:%M:%S").to_string()),
+            ))
     });
     // The row holds just the line and its space; the strip the pointer hovers spills over the
     // rows around it.
@@ -264,34 +277,15 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
                 }),
         )
         .child(
-            // Inset as the Event cards are, so its ends line up with theirs.
             div()
                 .absolute()
-                .left(px(CARD_INSET))
-                .right(px(CARD_INSET))
+                .left_0()
+                .right_0()
                 .top(px(NOW_SPACE))
                 .h(px(NOW_LINE))
-                .child(
-                    canvas(
-                        |_, _, _| {},
-                        move |bounds, _, window, _| dashes(bounds, line, window),
-                    )
-                    .size_full(),
-                ),
+                .bg(line),
         )
         .children(label)
-}
-
-/// Paints rounded dashes of `color` along `bounds`, the last one cut short at its end.
-fn dashes(bounds: Bounds<gpui_kit::Pixels>, color: Hsla, window: &mut Window) {
-    let radius = bounds.size.height / 2.0;
-    let mut x = bounds.origin.x;
-    while x < bounds.right() {
-        let width = px(NOW_DASH).min(bounds.right() - x);
-        let dash = Bounds::new(point(x, bounds.origin.y), size(width, bounds.size.height));
-        window.paint_quad(fill(dash, color).corner_radii(radius));
-        x += px(NOW_DASH + NOW_DASH_GAP);
-    }
 }
 
 #[cfg(test)]

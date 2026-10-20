@@ -1,5 +1,5 @@
-//! The time above the Now line: whether the pointer is on the line, and how far the time has
-//! slid up and faded in as it enters, or down and out as it leaves.
+//! The time beside the Now line: whether the pointer is on the line, and how far the time has
+//! slid and faded in as it enters, or out as it leaves.
 
 use std::time::{Duration, Instant};
 
