@@ -30,14 +30,9 @@ const NOW_DOT: f32 = 8.0;
 const NOW_LABEL: f32 = 16.0;
 
 /// A step between the background and the hairlines, so the grid lines stay visible on weekends.
-/// The dark muted color is the border color, so dark mode halves it.
+/// The muted color is the border color, so it is halved.
 fn weekend_fill(cx: &App) -> Hsla {
-    let theme = cx.theme();
-    if theme.mode.is_dark() {
-        theme.muted.opacity(0.5)
-    } else {
-        theme.muted
-    }
+    cx.theme().muted.opacity(0.5)
 }
 
 /// Day number, circled in the accent color when it is today.
@@ -370,7 +365,12 @@ fn month_card(
     cx: &mut Context<NativeView>,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (muted, border, column_radius) = (theme.muted_foreground, theme.border, theme.radius);
+    let (muted, border, card, column_radius) = (
+        theme.muted_foreground,
+        theme.border,
+        theme.group_box,
+        theme.radius,
+    );
     let current = (first.year(), first.month()) == (today.year(), today.month());
     let grid_start = week_start(first, first_day);
     // Columns rather than rows, so each weekend column is one shaded, rounded strip.
@@ -434,6 +434,7 @@ fn month_card(
         .p_3()
         .border(hairline)
         .border_color(border)
+        .bg(card)
         .rounded(px(SURFACE_RADIUS))
         .child(
             div()
@@ -447,4 +448,29 @@ fn month_card(
         )
         .child(h_flex().children(columns))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::weekend_fill;
+    use gpui_kit::TestAppContext;
+    use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
+
+    #[gpui_kit::test]
+    fn weekends_shade_between_the_page_and_the_hairlines(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crumble_theme::init(cx);
+            for mode in [ThemeMode::Light, ThemeMode::Dark] {
+                Theme::change(mode, None, cx);
+                let theme = cx.theme();
+                let weekend = theme.background.blend(weekend_fill(cx)).l;
+                let (page, line) = (theme.background.l, theme.border.l);
+                assert!(
+                    page.min(line) < weekend && weekend < page.max(line),
+                    "{mode:?}: weekend {weekend}, page {page}, hairline {line}"
+                );
+            }
+        });
+    }
 }

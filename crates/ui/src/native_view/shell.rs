@@ -2,11 +2,11 @@
 //! beside the traffic lights, the rail, and the panel the page sits in.
 
 use super::controls::{Inactive, app_icon, button};
+use super::rail::PRESS_OPACITY;
 use super::{NativeView, Route};
 use crumble_theme::{CONTENT_PADDING, HEADER_HEIGHT, SURFACE_RADIUS};
-use gpui_kit::component::{
-    ActiveTheme, Icon, IconName, Sizable, TitleBar, button::ButtonVariants, h_flex,
-};
+use gpui_kit::component::button::{ButtonCustomVariant, ButtonVariants};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, TitleBar, h_flex};
 use gpui_kit::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
@@ -31,6 +31,8 @@ const CONTROLS_LEFT_MACOS: f32 = 93.0;
 const CONTROL_SIZE: f32 = 24.0;
 const CONTROL_GAP: f32 = 4.0;
 const HEADER_GAP: f32 = 8.0;
+/// Strength of the secondary ink in a header control's icon while it has nowhere to go.
+const QUIET_INK: f32 = 0.2;
 /// Space between the panel and the window's trailing and bottom edges, so the panel's corners
 /// sit concentric inside the window's.
 const PANEL_INSET: f32 = 4.0;
@@ -133,12 +135,28 @@ impl NativeView {
     /// Back, forward, then the sidebar toggle on a page with a second-level sidebar, pinned
     /// beside the traffic lights above the header.
     fn render_header_controls(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let control = |id: &'static str, icon: Icon, label: &'static str| {
+        // The rail's faint ink, or a trace of it with nowhere to go. The icons carry their own
+        // color, as GPUI Kit draws every disabled button in one fixed ink.
+        let theme = cx.theme();
+        let (ink, quiet) = (
+            crumble_theme::faint_foreground(theme),
+            theme.muted_foreground.opacity(QUIET_INK),
+        );
+        // The rail's hover and press fills: GPUI Kit draws a ghost button's dark mode hover at
+        // half strength, too faint on the shell.
+        let variant = ButtonCustomVariant::new(cx)
+            .color(gpui_kit::transparent_black())
+            .foreground(ink)
+            .hover(theme.secondary)
+            .active(theme.muted_foreground.opacity(PRESS_OPACITY));
+        let control = |id: &'static str, icon: Icon, label: &'static str, inactive: bool| {
+            let icon = icon.size_4().text_color(if inactive { quiet } else { ink });
             button(id)
-                .ghost()
+                .custom(variant)
                 .small()
-                .icon(icon.size_4())
+                .icon(icon)
                 .accessibility_label(label)
+                .inactive(inactive)
         };
         let collapsed = self.sidebar_collapsed;
         h_flex()
@@ -147,14 +165,22 @@ impl NativeView {
             .left(px(controls_left(window)))
             .gap(px(CONTROL_GAP))
             .child(
-                control("go-back", app_icon("chevron-left"), "Back")
-                    .inactive(!self.history.can_go_back())
-                    .on_click(cx.listener(|view, _, _, cx| view.go_back(cx))),
+                control(
+                    "go-back",
+                    app_icon("chevron-left"),
+                    "Back",
+                    !self.history.can_go_back(),
+                )
+                .on_click(cx.listener(|view, _, _, cx| view.go_back(cx))),
             )
             .child(
-                control("go-forward", app_icon("chevron-right"), "Forward")
-                    .inactive(!self.history.can_go_forward())
-                    .on_click(cx.listener(|view, _, _, cx| view.go_forward(cx))),
+                control(
+                    "go-forward",
+                    app_icon("chevron-right"),
+                    "Forward",
+                    !self.history.can_go_forward(),
+                )
+                .on_click(cx.listener(|view, _, _, cx| view.go_forward(cx))),
             )
             .when(self.route.has_sidebar(), |controls| {
                 let (icon, label) = if collapsed {
@@ -165,7 +191,7 @@ impl NativeView {
                 // Kit's SidebarToggleButton exposes no styling, so the hand cursor needs a plain
                 // button.
                 controls.child(
-                    control("collapse", Icon::new(icon), label)
+                    control("collapse", Icon::new(icon), label, false)
                         .on_click(cx.listener(|view, _, _, cx| view.toggle_sidebar(cx))),
                 )
             })

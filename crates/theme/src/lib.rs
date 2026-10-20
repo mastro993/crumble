@@ -76,11 +76,6 @@ pub mod rail {
     pub const ICON_SIZE: f32 = 20.0;
     /// Space between rail buttons, and above the first and below the last.
     pub const GAP: f32 = 8.0;
-    /// Selected icon color in light mode, RGBA: the palette's espresso at 80%.
-    pub const SELECTED_INK_LIGHT: u32 = 0x1f150acc;
-    /// Selected icon color in dark mode, RGBA: the palette's cream at 90%, matching the light
-    /// one's contrast.
-    pub const SELECTED_INK_DARK: u32 = 0xfaf5efe6;
 }
 
 /// Context menu metrics in points. Rows reuse the [`sidebar`] row height, padding, and icon
@@ -141,11 +136,9 @@ pub mod menu {
     }
 }
 
-/// Unselected icons and hints, a step below secondary text. Ink faded toward a dark page loses
-/// contrast faster than toward a light one, so dark mode keeps more of it to read as light mode.
+/// Unselected icons and hints, a step below secondary text.
 pub fn faint_foreground(theme: &Theme) -> Hsla {
-    let strength = if theme.is_dark() { 0.75 } else { 0.65 };
-    theme.muted_foreground.opacity(strength)
+    theme.muted_foreground.opacity(0.65)
 }
 
 /// Applies the system font and installs the light and dark palettes, which
@@ -171,37 +164,55 @@ pub fn follow_window(window: &mut Window, cx: &mut App) {
         .detach();
 }
 
-/// The warm palette: cream surfaces and brown ink. Light mode reads it as given; dark mode
-/// puts cream ink on browns, the page near black and the sidebar and fills well above it, so
-/// the sidebars read apart from the page. Colors left out are derived by gpui-kit from these.
+/// The warm palette: cream surfaces and brown ink. Light mode steps from the shell behind the
+/// rail to a lighter page, with cards a hair above it; the sidebar row fill sits a step below
+/// its column, as the rail fill does below the shell. Dark mode puts cream ink on warm
+/// charcoals, stepping up from the page through cards to the shell, with one fill above them
+/// for rows, selections and borders. Colors left out are derived by gpui-kit from these.
 fn palette(mode: ThemeMode) -> ThemeConfig {
     const CREAM: &str = "#faf5ef";
-    const SAND: &str = "#f5ece0";
-    const WHEAT: &str = "#f0e2d0";
     const ESPRESSO: &str = "#1f150a";
     const BROWN: &str = "#3e2b13";
-    const DARK_PAGE: &str = "#0a0603";
-    const DARK_SIDEBAR: &str = "#33240f";
-    const DARK_FILL: &str = "#44311b";
+    const SHELL: &str = "#f7f0e7";
+    const PAGE: &str = "#fcf8f3";
+    const CARD: &str = "#fcf9f5";
+    const FILL: &str = "#f2e5d5";
+    const ROW_FILL: &str = "#f4eadd";
+    const DARK_PAGE: &str = "#14100c";
+    const DARK_CARD: &str = "#201b15";
+    const DARK_SIDEBAR: &str = "#221c15";
+    const DARK_FILL: &str = "#3a3228";
 
-    // Secondary text and icons, focus rings, and text selection are the second ink at
-    // three quarters, half, and a fifth strength, so they stay tints of the palette. Dark
-    // secondary ink is at nine tenths: faded toward the dark page it reads as light mode's.
-    let (background, foreground, sidebar, fill, primary, [muted_text, ring, selection]) =
-        if mode.is_dark() {
-            let inks = ["#f0e2d0e6", "#f0e2d080", "#f0e2d033"];
-            (DARK_PAGE, CREAM, DARK_SIDEBAR, DARK_FILL, WHEAT, inks)
-        } else {
-            let inks = ["#3e2b13bf", "#3e2b1380", "#3e2b1333"];
-            (CREAM, ESPRESSO, SAND, WHEAT, BROWN, inks)
-        };
+    // Secondary text and icons, focus rings, and text selection are tints of the second ink,
+    // the last at a fifth strength. Light secondary text is at 84%, and its focus ring at 54%
+    // clears 3:1 on the fills. Dark secondary text is at 96.5% and its ring at half.
+    let (background, foreground, sidebar, row_fill, fill, card, primary, inks) = if mode.is_dark() {
+        let inks = ["#f0e2d0f6", "#f0e2d080", "#f0e2d033"];
+        // One fill for sidebar rows, the rail, the Agenda list and borders.
+        (
+            DARK_PAGE,
+            CREAM,
+            DARK_SIDEBAR,
+            DARK_FILL,
+            DARK_FILL,
+            DARK_CARD,
+            CREAM,
+            inks,
+        )
+    } else {
+        let inks = ["#3e2b13d6", "#3e2b138a", "#3e2b1333"];
+        (PAGE, ESPRESSO, SHELL, ROW_FILL, FILL, CARD, BROWN, inks)
+    };
+    let [muted_text, ring, selection] = inks;
     let color = |value: &str| Some(SharedString::new(value));
     // Built field by field: the struct has private fields, so `..Default::default()` is out.
     let mut colors = ThemeConfigColors::default();
     colors.background = color(background);
     colors.foreground = color(foreground);
     colors.sidebar = color(sidebar);
-    colors.sidebar_accent = color(fill);
+    colors.sidebar_accent = color(row_fill);
+    // Cards inside pages, such as the Note card and the Year view's months.
+    colors.group_box = color(card);
     colors.primary = color(primary);
     colors.primary_foreground = color(background);
     colors.secondary = color(fill);
@@ -215,5 +226,41 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
         mode,
         colors,
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::palette;
+    use gpui_kit::component::{Theme, ThemeMode};
+    use std::rc::Rc;
+
+    fn theme(mode: ThemeMode) -> Theme {
+        let mut theme = Theme::default();
+        theme.apply_config(&Rc::new(palette(mode)));
+        theme
+    }
+
+    #[test]
+    fn surfaces_keep_their_order() {
+        // GPUI Kit falls back to its own color for a value it cannot parse, which would break
+        // the order.
+        let light = theme(ThemeMode::Light);
+        let lightening = [
+            light.secondary,
+            light.sidebar_accent,
+            light.sidebar,
+            light.background,
+            light.group_box,
+        ];
+        assert!(lightening.windows(2).all(|pair| pair[0].l < pair[1].l));
+        let dark = theme(ThemeMode::Dark);
+        let lightening = [
+            dark.background,
+            dark.group_box,
+            dark.sidebar,
+            dark.secondary,
+        ];
+        assert!(lightening.windows(2).all(|pair| pair[0].l < pair[1].l));
     }
 }

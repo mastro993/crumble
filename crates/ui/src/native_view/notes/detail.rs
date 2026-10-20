@@ -21,9 +21,14 @@ const MAX_WIDTH: f32 = 720.0;
 impl NativeView {
     pub(in super::super) fn render_note_detail(&self, cx: &mut Context<Self>) -> AnyElement {
         let detail = &self.note_detail;
-        let (border, muted, danger) = {
+        let (border, card, muted, danger) = {
             let theme = cx.theme();
-            (theme.border, theme.muted_foreground, theme.danger)
+            (
+                theme.border,
+                theme.group_box,
+                theme.muted_foreground,
+                theme.danger,
+            )
         };
         let Some(subject) = &detail.subject else {
             return div().into_any_element();
@@ -131,6 +136,7 @@ impl NativeView {
                 div()
                     .border_1()
                     .border_color(border)
+                    .bg(card)
                     .rounded(px(SURFACE_RADIUS))
                     .overflow_hidden()
                     .child(body),

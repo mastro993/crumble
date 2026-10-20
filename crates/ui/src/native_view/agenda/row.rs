@@ -3,7 +3,6 @@
 
 use super::super::keyboard::focusable;
 use super::super::sidebar::surface;
-use super::super::sidebar_row::hover_fill;
 use super::now_hover::NowHover;
 use chrono::{DateTime, Local};
 use crumble_calendar::agenda::{Row, day_label, progress, time_label, time_left};
@@ -88,11 +87,14 @@ pub(super) fn render_row(
     let selectable =
         |id: String, color: Hsla, title: String, time: String, current: Option<Current>| {
             let (row, select) = (row.clone(), select.clone());
+            // The secondary fill, in light mode a step stronger than a sidebar row's: half of a
+            // sidebar row's would match the Event marking now, which sits on the sidebar color.
+            let hover = theme.secondary.opacity(0.5);
             // Solid over the Event marking now, so the Now line behind it stays hidden.
             let hover = if current.is_some() {
-                theme.sidebar.blend(hover_fill(cx))
+                theme.sidebar.blend(hover)
             } else {
-                hover_fill(cx)
+                hover
             };
             let accent = theme.primary;
             let lightness = if selected {
@@ -121,7 +123,7 @@ pub(super) fn render_row(
                 // The Event marking now sits on the sidebar color, a shade lighter than a
                 // selected row's fill.
                 .when(current.is_some() && !selected, |row| row.bg(theme.sidebar))
-                .when(selected, |row| row.bg(theme.sidebar_accent))
+                .when(selected, |row| row.bg(theme.secondary))
                 .when(!selected, |row| row.hover(move |style| style.bg(hover)))
                 .on_click(move |_, window, cx| select(&row, window, cx))
                 // The part of the Event that has passed fills the card from its leading edge.
