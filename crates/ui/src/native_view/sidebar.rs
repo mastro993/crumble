@@ -39,11 +39,13 @@ pub(super) fn visible_width(width: f32, collapsed: bool, delta: f32) -> f32 {
     width * if collapsed { 1.0 - delta } else { delta }
 }
 
-/// A second-level column's opaque surface: half the sidebar over the page, so the column sits
-/// between them.
+/// A second-level column's opaque surface: the sidebar over the page, so the column sits
+/// between them. Dark mode leans toward the page, keeping the column dark beside the light
+/// sidebar.
 pub(super) fn surface(cx: &App) -> Hsla {
     let theme = cx.theme();
-    theme.background.blend(theme.sidebar.opacity(0.5))
+    let strength = if theme.is_dark() { 0.35 } else { 0.5 };
+    theme.background.blend(theme.sidebar.opacity(strength))
 }
 
 /// A second-level column filling its parent, with a hairline on its trailing edge. The sidebar

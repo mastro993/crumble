@@ -172,16 +172,17 @@ pub fn follow_window(window: &mut Window, cx: &mut App) {
 }
 
 /// The warm palette: cream surfaces and brown ink. Light mode reads it as given; dark mode
-/// puts cream ink on browns a step darker, so the page sits below the palette's darkest
-/// brown and the sidebar on it. Colors left out are derived by gpui-kit from these.
+/// puts cream ink on browns, the page near black and the sidebar and fills well above it, so
+/// the sidebars read apart from the page. Colors left out are derived by gpui-kit from these.
 fn palette(mode: ThemeMode) -> ThemeConfig {
     const CREAM: &str = "#faf5ef";
     const SAND: &str = "#f5ece0";
     const WHEAT: &str = "#f0e2d0";
     const ESPRESSO: &str = "#1f150a";
     const BROWN: &str = "#3e2b13";
-    const DARK_PAGE: &str = "#0f0a05";
-    const DARK_FILL: &str = "#2e200e";
+    const DARK_PAGE: &str = "#0a0603";
+    const DARK_SIDEBAR: &str = "#33240f";
+    const DARK_FILL: &str = "#44311b";
 
     // Secondary text and icons, focus rings, and text selection are the second ink at
     // three quarters, half, and a fifth strength, so they stay tints of the palette. Dark
@@ -189,7 +190,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     let (background, foreground, sidebar, fill, primary, [muted_text, ring, selection]) =
         if mode.is_dark() {
             let inks = ["#f0e2d0e6", "#f0e2d080", "#f0e2d033"];
-            (DARK_PAGE, CREAM, ESPRESSO, DARK_FILL, WHEAT, inks)
+            (DARK_PAGE, CREAM, DARK_SIDEBAR, DARK_FILL, WHEAT, inks)
         } else {
             let inks = ["#3e2b13bf", "#3e2b1380", "#3e2b1333"];
             (CREAM, ESPRESSO, SAND, WHEAT, BROWN, inks)
