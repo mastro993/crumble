@@ -148,6 +148,9 @@ impl NativeView {
         // Every row keeps the selected row's ink; only the fill marks the section on screen.
         let theme = cx.theme();
         let (ink, muted) = (theme.sidebar_accent_foreground, theme.muted_foreground);
+        // The dark column sits near the page, where the sidebar's fill stands out too much; the
+        // sidebar's own color marks the section a quieter step above the column instead.
+        let selected_fill = theme.is_dark().then_some(theme.sidebar);
         let mut sidebar = column(window, cx)
             .flex()
             .flex_col()
@@ -184,7 +187,10 @@ impl NativeView {
                     )
                     .h(px(ROW_HEIGHT))
                     .rounded(px(ROW_RADIUS))
-                    .text_color(ink),
+                    .text_color(ink)
+                    .when_some(selected_fill.filter(|_| each == section), |row, fill| {
+                        row.bg(fill)
+                    }),
                     each.title(),
                     cx,
                     move |view, _, cx| {
