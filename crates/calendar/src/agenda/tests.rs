@@ -137,6 +137,42 @@ fn the_last_in_progress_event_marks_now() {
 }
 
 #[test]
+fn tomorrow_shows_on_top_once_today_has_nothing_left() {
+    let events = [
+        timed("Standup", at(15, 9, 0), at(15, 9, 15)),
+        timed("Review", at(15, 17, 0), at(15, 18, 0)),
+        timed("Breakfast", at(16, 8, 0), at(16, 9, 0)),
+        timed("Planning", at(16, 10, 0), at(16, 11, 0)),
+        all_day("Offsite", 16, 17),
+        all_day("Later", 17, 17),
+    ];
+    // An upcoming Event is left today: Tomorrow waits.
+    assert_eq!(
+        labels(&rows(&events, &[], at(15, 12, 0), date(1), false)),
+        ["15", "Review", "--", "Standup"]
+    );
+    // One In progress also keeps Today on top.
+    assert_eq!(
+        labels(&rows(&events, &[], at(15, 17, 30), date(1), false)),
+        ["15", "Review --", "Standup"]
+    );
+    // Nothing left today: Tomorrow tops the list, but not the day after.
+    assert_eq!(
+        labels(&rows(&events, &[], at(15, 18, 0), date(1), false)),
+        [
+            "16",
+            "Offsite",
+            "Planning",
+            "Breakfast",
+            "15",
+            "--",
+            "Review",
+            "Standup"
+        ]
+    );
+}
+
+#[test]
 fn progress_runs_from_an_event_s_start_to_its_end() {
     let meeting = timed("Meeting", at(15, 14, 15), at(15, 15, 15));
     assert_eq!(progress(&meeting, at(15, 14, 0)), 0.0);
@@ -236,6 +272,7 @@ fn quick_notes_join_the_events_at_their_time() {
 #[test]
 fn day_headers_name_recent_days_and_add_the_year_outside_this_one() {
     let today = date(15);
+    assert_eq!(day_label(date(16), today), "Tomorrow");
     assert_eq!(day_label(today, today), "Today");
     assert_eq!(day_label(date(14), today), "Yesterday");
     assert_eq!(day_label(date(13), today), "Tue 13 Oct");
@@ -273,11 +310,11 @@ fn days_before(day: NaiveDate, days: u64) -> NaiveDate {
 }
 
 #[test]
-fn the_first_read_covers_the_last_thirty_days_up_to_today() {
+fn the_first_read_covers_the_last_thirty_days_and_tomorrow() {
     let ids = vec!["work".to_owned()];
     assert_eq!(
         next_read(None, false, false, false, date(15), ids),
-        Some((span(date(16) - Days::new(30), date(16)), false))
+        Some((span(date(16) - Days::new(30), date(17)), false))
     );
 }
 
@@ -286,15 +323,15 @@ fn a_change_reads_the_covered_days_again_back_to_the_horizon() {
     let today = date(15);
     let horizon = horizon(today);
     let ids = || vec!["work".to_owned()];
-    let current = span(horizon, date(16));
-    let again = Some((span(horizon, date(16)), false));
+    let current = span(horizon, date(17));
+    let again = Some((span(horizon, date(17)), false));
     // EventKit changed.
     assert_eq!(
         next_read(Some(&current), true, true, false, today, ids()),
         again
     );
     // A new day: the horizon moved, so the oldest day falls out.
-    let yesterdays = span(days_before(horizon, 1), today);
+    let yesterdays = span(days_before(horizon, 1), date(16));
     assert_eq!(
         next_read(Some(&yesterdays), false, false, false, today, ids()),
         again
@@ -305,7 +342,7 @@ fn a_change_reads_the_covered_days_again_back_to_the_horizon() {
         Some((
             Span {
                 calendar_ids: vec![],
-                ..span(horizon, date(16))
+                ..span(horizon, date(17))
             },
             false
         ))
@@ -317,18 +354,18 @@ fn older_reads_stop_at_the_horizon_and_wait_for_the_one_under_way() {
     let today = date(15);
     let horizon = horizon(today);
     let ids = || vec!["work".to_owned()];
-    let recent = span(date(1), date(16));
+    let recent = span(date(1), date(17));
     assert_eq!(
         next_read(Some(&recent), false, false, true, today, ids()),
-        Some((span(days_before(date(1), 30), date(16)), true))
+        Some((span(days_before(date(1), 30), date(17)), true))
     );
     // The last chunk ends at the horizon, and nothing is read past it.
-    let near = span(horizon + Days::new(10), date(16));
+    let near = span(horizon + Days::new(10), date(17));
     assert_eq!(
         next_read(Some(&near), false, false, true, today, ids()),
-        Some((span(horizon, date(16)), true))
+        Some((span(horizon, date(17)), true))
     );
-    let done = span(horizon, date(16));
+    let done = span(horizon, date(17));
     assert_eq!(
         next_read(Some(&done), false, false, true, today, ids()),
         None

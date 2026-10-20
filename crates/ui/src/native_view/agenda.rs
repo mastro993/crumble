@@ -2,6 +2,7 @@
 //! that reads further into the past as it scrolls toward its end. Selecting a row shows its
 //! Note beside the list.
 
+mod now_hover;
 mod row;
 mod view;
 
@@ -16,6 +17,7 @@ use gpui_kit::{
     App, AppContext, Context, Entity, ListAlignment, ListOffset, ListState, Pixels, Window,
     ease_in_out, px,
 };
+use now_hover::NowHover;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -51,8 +53,8 @@ pub(super) struct AgendaPage {
     ticking: bool,
     /// When the first read finished and the list began to show.
     revealed: Option<Instant>,
-    /// Whether the pointer is on the Now line, which then shows the time beside the list.
-    now_hovered: Rc<Cell<bool>>,
+    /// Whether the pointer is on the Now line, which then shows the time above it.
+    now_hover: Rc<Cell<NowHover>>,
 }
 
 impl AgendaPage {
@@ -84,7 +86,7 @@ impl AgendaPage {
             scrolling_up,
             ticking: false,
             revealed: None,
-            now_hovered: Rc::default(),
+            now_hover: Rc::default(),
         }
     }
 

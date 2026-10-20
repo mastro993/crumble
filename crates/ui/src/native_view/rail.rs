@@ -14,8 +14,6 @@ use gpui_kit::{
     prelude::FluentBuilder, px,
 };
 
-/// Unselected icons sit a step below the selected one, as sidebar row icons do.
-const ICON_OPACITY: f32 = 0.65;
 /// Strength of the ink over the rail while a button is pressed, a step past the hover fill.
 const PRESS_OPACITY: f32 = 0.15;
 /// Strength of the secondary ink in the separator above the Calendars button; the border
@@ -93,7 +91,7 @@ pub(super) fn rail_button(
         })
         .into()
     } else {
-        theme.muted_foreground.opacity(ICON_OPACITY)
+        crumble_theme::faint_foreground(theme)
     };
     // GPUI Kit draws a custom button's resting color at a fifth of its strength, so the selected
     // fill comes through its selected state, which draws the active color as is.
