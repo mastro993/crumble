@@ -1,5 +1,5 @@
 //! One row of the Agenda list: a day header, the Now line, an Event, which shows its progress
-//! when it marks now, a Quick note, or the end.
+//! with the Now line crossing behind it when it marks now, a Quick note, or the end.
 
 use super::super::keyboard::focusable;
 use super::super::sidebar::surface;
@@ -29,6 +29,8 @@ const NOW_LINE: f32 = 1.0;
 const NOW_ROW: f32 = 16.0;
 /// Space between the Now line and the rows above and below it.
 const NOW_SPACE: f32 = 3.0;
+/// Height of the Now line's row: the line and its space.
+const NOW_HEIGHT: f32 = NOW_LINE + 2.0 * NOW_SPACE;
 /// Space between the column's edge and the time beside the Now line.
 const NOW_TIME_GAP: f32 = 6.0;
 /// How far left of its place the time starts as it enters, and right of it it ends as it leaves.
@@ -86,7 +88,12 @@ pub(super) fn render_row(
     let selectable =
         |id: String, color: Hsla, title: String, time: String, current: Option<Current>| {
             let (row, select) = (row.clone(), select.clone());
-            let hover = hover_fill(cx);
+            // Solid over the Event marking now, so the Now line behind it stays hidden.
+            let hover = if current.is_some() {
+                theme.sidebar.blend(hover_fill(cx))
+            } else {
+                hover_fill(cx)
+            };
             let accent = theme.primary;
             let lightness = if selected {
                 PASSED_SELECTED_LIGHTNESS
@@ -181,16 +188,34 @@ pub(super) fn render_row(
             .font_semibold()
             .child(day_label(*day, now.date_naive()))
             .into_any_element(),
-        Row::Now => now_line(now, now_hover, cx).into_any_element(),
+        Row::Now => now_line(now, now_hover, true, cx).into_any_element(),
+        Row::Current(event) => {
+            let progress = progress(event, now);
+            // Newer rows sit higher, so the line rises from the card's bottom edge at the
+            // Event's start to its top edge at its end, behind the card.
+            let line = div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(relative(1.0 - progress))
+                .mt(px(-NOW_HEIGHT / 2.0))
+                .child(now_line(now, now_hover.clone(), false, cx));
+            // The whole card shows the line's time under the pointer.
+            div()
+                .id("agenda-now")
+                .relative()
+                .on_hover(track_now_hover(now_hover))
+                .child(line)
+                .child(event_row(
+                    event,
+                    Some(Current {
+                        progress,
+                        left: time_left(event, now),
+                    }),
+                ))
+                .into_any_element()
+        }
         Row::Event(event) => event_row(event, None).into_any_element(),
-        Row::Current(event) => event_row(
-            event,
-            Some(Current {
-                progress: progress(event, now),
-                left: time_left(event, now),
-            }),
-        )
-        .into_any_element(),
         // No Account color: a Quick note belongs to none.
         Row::QuickNote(note) => selectable(
             format!("agenda-note-{}", note.id),
@@ -216,12 +241,17 @@ pub(super) fn render_row(
 /// The Now line: a thin line in the accent color across the whole column, between two rows with
 /// a little space on either side. Under the pointer the current time, to the second, slides in
 /// from the left and fades in beside the line's trailing end, outside the column, and slides on
-/// to the right and fades out after.
-fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl IntoElement {
+/// to the right and fades out after. `strip` adds the strip around the line the pointer hovers;
+/// behind the Event marking now, its whole card is hovered instead.
+fn now_line(
+    now: DateTime<Local>,
+    hover: Rc<Cell<NowHover>>,
+    strip: bool,
+    cx: &App,
+) -> impl IntoElement {
     let primary = cx.theme().primary;
     // Mixed into the column's surface, so the line is a solid color.
     let line = surface(cx).blend(primary.opacity(NOW_LINE_OPACITY));
-    let height = NOW_LINE + 2.0 * NOW_SPACE;
     let over = hover.get().over();
     let shown = if cx.reduce_motion() {
         f32::from(u8::from(over))
@@ -236,7 +266,7 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
             .absolute()
             .left(relative(1.0))
             .ml(px(NOW_TIME_GAP + slide))
-            .top(px((height - NOW_ROW) / 2.0))
+            .top(px((NOW_HEIGHT - NOW_ROW) / 2.0))
             // Drawn last and unclipped, as the time sits outside the list.
             .child(deferred(
                 div()
@@ -260,22 +290,19 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
     div()
         .relative()
         .w_full()
-        .h(px(height))
-        .child(
-            div()
-                .id("agenda-now")
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(px((height - NOW_ROW) / 2.0))
-                .h(px(NOW_ROW))
-                .on_hover(move |over, window, _| {
-                    let mut now_hover = hover.get();
-                    now_hover.set(*over, Instant::now());
-                    hover.set(now_hover);
-                    window.refresh();
-                }),
-        )
+        .h(px(NOW_HEIGHT))
+        .when(strip, |row| {
+            row.child(
+                div()
+                    .id("agenda-now")
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px((NOW_HEIGHT - NOW_ROW) / 2.0))
+                    .h(px(NOW_ROW))
+                    .on_hover(track_now_hover(hover)),
+            )
+        })
         .child(
             div()
                 .absolute()
@@ -286,6 +313,16 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
                 .bg(line),
         )
         .children(label)
+}
+
+/// Records the pointer coming onto or leaving what shows the Now line's time.
+fn track_now_hover(hover: Rc<Cell<NowHover>>) -> impl Fn(&bool, &mut Window, &mut App) {
+    move |over, window, _| {
+        let mut now_hover = hover.get();
+        now_hover.set(*over, Instant::now());
+        hover.set(now_hover);
+        window.refresh();
+    }
 }
 
 #[cfg(test)]

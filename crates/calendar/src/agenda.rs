@@ -135,8 +135,8 @@ pub enum Row {
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
-    /// The In progress Event just above the Now line, also marking now by showing its `progress`
-    /// and `time_left`.
+    /// The In progress Event just above where the Now line would fall, marking now in place of
+    /// the line's own row: the line crosses it, and it shows its `progress` and `time_left`.
     Current(Rc<Event>),
     /// A Quick note, under the day it is listed at.
     QuickNote(Rc<QuickNote>),
@@ -198,8 +198,8 @@ pub fn time_left(event: &Event, now: DateTime<Local>) -> Option<String> {
     })
 }
 
-/// Ends Today's upcoming and In progress Events with the Now line; the last of them, when In
-/// progress, marks now too.
+/// Ends Today's upcoming and In progress Events: the last of them marks now when it is In
+/// progress, and the Now line follows it otherwise.
 fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
     if let Some(Row::Event(event)) = rows.last()
         && in_progress(event, now)
@@ -207,13 +207,14 @@ fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
         let event = event.clone();
         rows.pop();
         rows.push(Row::Current(event));
+    } else {
+        rows.push(Row::Now);
     }
-    rows.push(Row::Now);
 }
 
 /// The rows for `events` and `quick_notes` at `now`. Today lists its upcoming Events, then the
-/// In progress ones, whatever day they started, the last of them marking now, then the Now
-/// line, then all-day Events, then the ended Events and the Quick notes; other days list
+/// In progress ones, whatever day they started, then the Now line, or the last In progress one
+/// marking now, then all-day Events, then the ended Events and the Quick notes; other days list
 /// their all-day Events first, then the rest newest first. Tomorrow is listed above Today while
 /// no Event is upcoming or In progress. Only days from `from` on are listed, but an In progress
 /// Event shows however long ago it started. `end` adds the footer.
