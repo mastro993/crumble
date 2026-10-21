@@ -7,12 +7,12 @@ use super::super::controls::{app_icon, button};
 use super::super::list_rows::splice;
 use super::super::select::{Picked, Select};
 use super::super::settings_page::form::{
-    GROUP_GAP, HEADING_GAP, PAGE_PADDING, TITLE_GAP, description, heading, search_field,
+    GROUP_GAP, HEADING_GAP, PAGE_PADDING, TITLE_GAP, heading, search_field,
 };
 use super::super::settings_page::{SettingsSection, centered, title};
-use super::card::Card;
-use super::{LanguageFilter, Row, language_filters};
-use crumble_local_models::{Filter, Model, catalog};
+use super::card::{Card, Place};
+use super::{LanguageFilter, Row, Sort, language_filters};
+use crumble_local_models::{Downloaded, Filter, Model, catalog};
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
@@ -49,10 +49,14 @@ impl NativeView {
                 let Some(row) = rows.get(index) else {
                     return div().into_any_element();
                 };
+                // The rows of a card touch; other rows sit a heading's gap apart, and the last
+                // its padding from the bottom.
+                let joined = matches!(row, Row::Apple(place) | Row::Card(_, place) if !place.last);
                 let row = centered(view.render_local_model_row(row, cx));
-                // Rows sit a heading's gap apart, and the last its padding from the bottom.
                 if index + 1 == rows.len() {
                     row.pb(px(PAGE_PADDING))
+                } else if joined {
+                    row
                 } else {
                     row.pb(px(HEADING_GAP))
                 }
@@ -70,39 +74,31 @@ impl NativeView {
             .into_any_element()
     }
 
-    /// The section's title, its description, and the search field and filters.
+    /// The section's title, then the search field and filters.
     fn render_local_model_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let models = &self.local_models;
-        let filters = v_flex()
-            .gap_4()
-            .child(description(
-                "Download Models that transcribe on this Mac. Each has its own accuracy, speed \
-                 and languages.",
-                cx,
-            ))
+        let filters = h_flex()
+            .gap_2()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(search_field(&models.search, cx)),
-                    )
-                    .child(
-                        button("local-models-streaming")
-                            .ghost()
-                            .small()
-                            .icon(app_icon("audio-wave").size_4())
-                            .selected(models.streaming)
-                            .tooltip("Only Models that can stream")
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.local_models.streaming = !view.local_models.streaming;
-                                view.local_models.filtered(cx);
-                            })),
-                    )
-                    .children(models.language.clone()),
-            );
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(search_field(&models.search, cx)),
+            )
+            .child(
+                button("local-models-streaming")
+                    .ghost()
+                    .small()
+                    .icon(app_icon("audio-wave").size_4())
+                    .selected(models.streaming)
+                    .tooltip("Only Models that can stream")
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.local_models.streaming = !view.local_models.streaming;
+                        view.local_models.filtered(cx);
+                    })),
+            )
+            .children(models.language.clone())
+            .child(models.sort.clone());
         v_flex()
             .gap(px(TITLE_GAP))
             .pt(px(PAGE_PADDING))
@@ -111,8 +107,8 @@ impl NativeView {
             .into_any_element()
     }
 
-    /// The rows the search field and filters leave: the downloaded Models with Apple's first,
-    /// then the others, Handy's recommended ones first.
+    /// The rows the search field and filters leave, each group in the picked order: the
+    /// downloaded Models with Apple's first, then the others.
     fn local_model_rows(
         &self,
         language: &Entity<Select<LanguageFilter>>,
@@ -121,24 +117,30 @@ impl NativeView {
         let models = &self.local_models;
         let query = models.search.read(cx).value().to_string();
         let code = language.read(cx).selected_value().cloned().flatten();
+        let sort = (models.sort.read(cx).selected_value().copied()).unwrap_or(Sort::Recommended);
         let filter = Filter {
             query: &query,
             streaming: models.streaming,
             language: code.as_deref(),
         };
-        let apple = self.apple_matches(&filter);
+        // `None` is Apple's built-in Model.
+        let mut downloaded: Vec<Option<Card>> = (self.apple_matches(&filter))
+            .then_some(None)
+            .into_iter()
+            .collect();
+        let mut matching: Vec<&Downloaded> = (models.downloaded.iter())
+            .filter(|downloaded| downloaded.model.matches(&filter))
+            .collect();
+        sort.apply(&mut matching, |downloaded| &downloaded.model);
+        downloaded.extend(matching.into_iter().map(|downloaded| {
+            Some(Card::Downloaded(
+                Box::new(downloaded.model.clone()),
+                downloaded.offered,
+            ))
+        }));
+        let any_downloaded = !downloaded.is_empty();
         let mut rows = vec![Row::Header, Row::Label("Downloaded")];
-        rows.extend(apple.then_some(Row::Apple));
-        rows.extend(
-            (models.downloaded.iter())
-                .filter(|downloaded| downloaded.model.matches(&filter))
-                .map(|downloaded| {
-                    Row::Card(Card::Downloaded(
-                        Box::new(downloaded.model.clone()),
-                        downloaded.offered,
-                    ))
-                }),
-        );
+        push_group(&mut rows, downloaded);
         let mut available: Vec<&'static Model> = catalog()
             .iter()
             .filter(|model| {
@@ -146,14 +148,14 @@ impl NativeView {
                     && !(models.downloaded.iter()).any(|d| d.model.slug == model.slug)
             })
             .collect();
-        // Handy's recommended Models first, in its order; the rest stay in the list's order.
-        available.sort_by_key(|model| model.recommended.unwrap_or(u32::MAX));
-        let shown = rows.len() > 2 || !available.is_empty();
+        sort.apply(&mut available, |model| model);
+        let shown = any_downloaded || !available.is_empty();
         rows.push(Row::Label("Available to download"));
-        rows.extend(
-            available
-                .into_iter()
-                .map(|model| Row::Card(Card::Available(model))),
+        push_group(
+            &mut rows,
+            (available.into_iter())
+                .map(|model| Some(Card::Available(model)))
+                .collect(),
         );
         if !shown {
             rows.push(Row::Nothing);
@@ -170,8 +172,8 @@ impl NativeView {
             Row::Label(text) => heading(*text)
                 .pt(px(GROUP_GAP - HEADING_GAP))
                 .into_any_element(),
-            Row::Apple => self.render_apple_card(cx),
-            Row::Card(card) => self.render_card(card, cx),
+            Row::Apple(place) => self.render_apple_card(*place, cx),
+            Row::Card(card, place) => self.render_card(card, *place, cx),
             Row::Nothing => div()
                 .text_sm()
                 .text_color(muted)
@@ -224,4 +226,19 @@ impl NativeView {
                 .language
                 .is_none_or(|language| self.models.apple_languages().any(|code| code == language))
     }
+}
+
+/// Adds `group`'s rows, which share one card, `None` being Apple's built-in Model.
+fn push_group(rows: &mut Vec<Row>, group: Vec<Option<Card>>) {
+    let last = group.len().saturating_sub(1);
+    rows.extend(group.into_iter().enumerate().map(|(ix, card)| {
+        let place = Place {
+            first: ix == 0,
+            last: ix == last,
+        };
+        match card {
+            None => Row::Apple(place),
+            Some(card) => Row::Card(card, place),
+        }
+    }));
 }

@@ -22,8 +22,6 @@ pub struct Model {
     pub name: String,
     /// One line about it.
     pub description: String,
-    /// The license of its weights, such as `cc-by-4.0`.
-    pub license: String,
     /// The ISO 639 codes of the languages it transcribes.
     pub languages: Vec<String>,
     /// Whether it can make a Transcript while the audio plays in, for live Transcripts later.
@@ -121,7 +119,6 @@ struct Entry {
     slug: String,
     name: String,
     description: String,
-    license: String,
     languages: Vec<String>,
     capabilities: Capabilities,
     speed_score: u8,
@@ -169,7 +166,6 @@ fn model(entry: Entry) -> Option<Model> {
         slug: entry.slug,
         name: entry.name,
         description: entry.description,
-        license: entry.license,
         languages: entry.languages,
         streaming: entry.capabilities.streaming,
         detects_language: entry.capabilities.lang_detect,

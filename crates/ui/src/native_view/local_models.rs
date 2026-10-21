@@ -1,5 +1,5 @@
 //! Settings › Local Models: Handy's list of Models Crumble can download and run on the Mac,
-//! filtered by name, streaming and language, with each one's download, Use and Delete
+//! filtered by name, streaming and language and sorted, with each one's download, Use and Delete
 //! (ADR 0010). `crumble-local-models` does the downloading and deleting off the main thread;
 //! this holds what shows. The page is drawn in `render`, each Model's card in `card`; only the
 //! rows in view are drawn, as drawing every card each frame made scrolling slow.
@@ -8,8 +8,8 @@ mod card;
 mod render;
 
 use super::NativeView;
-use super::select::{Choice, Select};
-use card::Card;
+use super::select::{Choice, Picked, Select};
+use card::{Card, Place};
 use crumble_local_models::{Downloaded, Library, Model, Outcome, catalog, find};
 use crumble_remote::Provider;
 use gpui_kit::component::WindowExt;
@@ -19,6 +19,7 @@ use gpui_kit::{
     AppContext, Context, Entity, ListAlignment, ListOffset, ListState, SharedString, Subscription,
     Task, Window, px,
 };
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -42,6 +43,7 @@ pub(super) struct LocalModels {
     streaming: bool,
     /// The language filter, made the first time the section shows.
     language: Option<Entity<Select<LanguageFilter>>>,
+    sort: Entity<Select<Sort>>,
     /// The rows the list shows, as last drawn.
     rows: Rc<Vec<Row>>,
     list: ListState,
@@ -64,13 +66,54 @@ enum Row {
     Header,
     /// A group's heading.
     Label(&'static str),
-    /// Apple's built-in Model.
-    Apple,
-    Card(Card),
+    /// Apple's built-in Model, at the top of the Downloaded card.
+    Apple(Place),
+    Card(Card, Place),
     /// The line in place of the cards when no Model matches.
     Nothing,
     /// Where the list and its scores come from.
     Credit,
+}
+
+/// The order of each group's Models.
+#[derive(Clone, Copy, PartialEq)]
+enum Sort {
+    /// Handy's recommended Models first, in its order; the rest stay in the list's order.
+    Recommended,
+    /// The most accurate first.
+    Accuracy,
+    /// The fastest first.
+    Speed,
+}
+
+impl Sort {
+    /// Puts `models` in this order; Models that tie keep theirs.
+    fn apply<T>(self, models: &mut [T], model: impl Fn(&T) -> &Model) {
+        match self {
+            Sort::Recommended => {
+                models.sort_by_key(|item| model(item).recommended.unwrap_or(u32::MAX));
+            }
+            Sort::Accuracy => models.sort_by_key(|item| Reverse(model(item).accuracy)),
+            Sort::Speed => models.sort_by_key(|item| Reverse(model(item).speed)),
+        }
+    }
+}
+
+impl Choice for Sort {
+    type Value = Sort;
+
+    fn title(&self) -> SharedString {
+        match self {
+            Sort::Recommended => "Recommended",
+            Sort::Accuracy => "Accuracy",
+            Sort::Speed => "Speed",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Sort {
+        self
+    }
 }
 
 /// What a download sends back to the main thread.
@@ -109,11 +152,25 @@ impl LocalModels {
             .map(Library::downloaded)
             .unwrap_or_default();
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search Models by name…"));
-        let subscriptions = vec![cx.subscribe_in(&search, window, |view, _, event, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                view.local_models.filtered(cx);
-            }
-        })];
+        let sort = cx.new(|cx| {
+            Select::new(
+                "Sort",
+                vec![Sort::Recommended, Sort::Accuracy, Sort::Speed],
+                Some(0),
+                cx,
+            )
+            .icon("sort")
+        });
+        let subscriptions = vec![
+            cx.subscribe_in(&search, window, |view, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    view.local_models.filtered(cx);
+                }
+            }),
+            cx.subscribe(&sort, |view, _, _: &Picked<Sort>, cx| {
+                view.local_models.filtered(cx)
+            }),
+        ];
         Self {
             library,
             downloaded,
@@ -123,6 +180,7 @@ impl LocalModels {
             search,
             streaming: false,
             language: None,
+            sort,
             rows: Rc::default(),
             // Every row is measured once, so the scrollbar spans the whole list from the start.
             list: ListState::new(0, ListAlignment::Top, px(200.0)).measure_all(),
@@ -135,7 +193,7 @@ impl LocalModels {
         &self.downloaded
     }
 
-    /// Shows the list from its top once the search field or a filter changed.
+    /// Shows the list from its top once the search field, a filter or the order changed.
     fn filtered(&self, cx: &mut Context<NativeView>) {
         self.list.scroll_to(ListOffset::default());
         cx.notify();
@@ -355,4 +413,24 @@ fn language_filters() -> Vec<LanguageFilter> {
     }];
     items.extend(languages);
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sort;
+    use crumble_local_models::{Model, catalog};
+
+    #[test]
+    fn a_sort_puts_the_best_first_and_keeps_ties_in_order() {
+        let mut models: Vec<&Model> = catalog().iter().collect();
+        Sort::Speed.apply(&mut models, |model| model);
+        assert!(models.windows(2).all(|pair| pair[0].speed >= pair[1].speed));
+        Sort::Accuracy.apply(&mut models, |model| model);
+        assert!(models.windows(2).all(|pair| {
+            pair[0].accuracy > pair[1].accuracy
+                || (pair[0].accuracy == pair[1].accuracy && pair[0].speed >= pair[1].speed)
+        }));
+        Sort::Recommended.apply(&mut models, |model| model);
+        assert!(models[0].recommended.is_some());
+    }
 }
