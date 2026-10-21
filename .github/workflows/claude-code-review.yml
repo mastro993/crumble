@@ -1,22 +1,21 @@
 name: Claude Code Review
 
+# The owner's PRs are reviewed on every push. A PR from anyone else is
+# reviewed only when the owner adds the `claude-review` label, once per label.
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+  pull_request_target:
+    types: [labeled]
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    if: |
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.author_association == 'OWNER') ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.label.name == 'claude-review' &&
+        github.event.pull_request.author_association != 'OWNER')
 
     runs-on: ubuntu-latest
     permissions:
@@ -26,6 +25,8 @@ jobs:
       id-token: write
 
     steps:
+      # Under pull_request_target this checks out the base branch. Never check
+      # out the PR head here: the job runs with the repository's secrets.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -42,4 +43,3 @@ jobs:
           claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
