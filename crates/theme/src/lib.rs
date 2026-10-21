@@ -232,7 +232,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
 #[cfg(test)]
 mod tests {
     use super::palette;
-    use gpui_kit::component::{Theme, ThemeMode};
+    use gpui_kit::component::{Theme, ThemeMode, try_parse_color};
     use std::rc::Rc;
 
     fn theme(mode: ThemeMode) -> Theme {
@@ -242,9 +242,33 @@ mod tests {
     }
 
     #[test]
+    fn every_color_parses() {
+        // GPUI Kit silently falls back to its own color for a value it cannot parse.
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            let colors = palette(mode).colors;
+            let values = [
+                colors.background,
+                colors.foreground,
+                colors.sidebar,
+                colors.sidebar_accent,
+                colors.group_box,
+                colors.primary,
+                colors.primary_foreground,
+                colors.secondary,
+                colors.muted,
+                colors.muted_foreground,
+                colors.border,
+                colors.ring,
+                colors.selection,
+            ];
+            for value in values.into_iter().flatten() {
+                assert!(try_parse_color(&value).is_ok(), "{mode:?}: {value}");
+            }
+        }
+    }
+
+    #[test]
     fn surfaces_keep_their_order() {
-        // GPUI Kit falls back to its own color for a value it cannot parse, which would break
-        // the order.
         let light = theme(ThemeMode::Light);
         let lightening = [
             light.secondary,

@@ -27,7 +27,7 @@ gpui_kit::actions!(
 /// Controls offset beside the traffic lights: the first glyph sits one light-spacing past the
 /// green light.
 const CONTROLS_LEFT_MACOS: f32 = 93.0;
-/// Small ghost button size of each header control.
+/// Small button size of each header control.
 const CONTROL_SIZE: f32 = 24.0;
 const CONTROL_GAP: f32 = 4.0;
 const HEADER_GAP: f32 = 8.0;
