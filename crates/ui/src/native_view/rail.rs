@@ -3,9 +3,7 @@
 use super::controls::{app_icon, button};
 use super::{NativeView, Route};
 use crumble_eventkit::Access;
-use crumble_theme::rail::{
-    BUTTON_SIZE, GAP, ICON_SIZE, RADIUS, SELECTED_INK_DARK, SELECTED_INK_LIGHT, WIDTH,
-};
+use crumble_theme::rail::{BUTTON_SIZE, GAP, ICON_SIZE, RADIUS, WIDTH};
 use gpui_kit::base::Placement;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::{ActiveTheme, Selectable};
@@ -15,7 +13,7 @@ use gpui_kit::{
 };
 
 /// Strength of the ink over the rail while a button is pressed, a step past the hover fill.
-const PRESS_OPACITY: f32 = 0.15;
+pub(super) const PRESS_OPACITY: f32 = 0.15;
 /// Strength of the secondary ink in the separator above the Calendars button; the border
 /// color barely shows on the rail.
 const SEPARATOR_OPACITY: f32 = 0.3;
@@ -74,8 +72,9 @@ impl NativeView {
     }
 }
 
-/// A square icon button that keeps its hover fill, and shows the solid `icon`, while `selected`. The fill is the full sidebar
-/// accent, a step stronger than a sidebar row's, so it stands out on the rail.
+/// A square icon button that keeps its hover fill, and shows the solid `icon` in the primary
+/// color, while `selected`. The fill is the secondary color, in light mode a step stronger than
+/// a sidebar row's, so it stands out on the rail.
 pub(super) fn rail_button(
     id: impl Into<gpui_kit::ElementId>,
     icon: &str,
@@ -84,18 +83,13 @@ pub(super) fn rail_button(
 ) -> Button {
     let theme = cx.theme();
     let ink = if selected {
-        gpui_kit::rgba(if theme.mode.is_dark() {
-            SELECTED_INK_DARK
-        } else {
-            SELECTED_INK_LIGHT
-        })
-        .into()
+        theme.primary
     } else {
         crumble_theme::faint_foreground(theme)
     };
     // GPUI Kit draws a custom button's resting color at a fifth of its strength, so the selected
     // fill comes through its selected state, which draws the active color as is.
-    let fill = theme.sidebar_accent;
+    let fill = theme.secondary;
     let variant = ButtonCustomVariant::new(cx)
         .color(gpui_kit::transparent_black())
         .foreground(ink)
