@@ -49,10 +49,6 @@ _Avoid_: meeting, appointment
 Said of an Account or a Calendar that Crumble leaves out entirely. It is chosen in Settings, kept across restarts, and changes nothing in macOS.
 _Avoid_: muted, removed, off
 
-**Event page**:
-The page that shows everything about one Event and its Note. Clicking an Event in the Calendar page, or selecting it in the Agenda page, opens it.
-_Avoid_: event detail view, event screen
-
 **Details card**:
 The short summary of an Event shown while the pointer rests on it.
 _Avoid_: tooltip, popover, preview
@@ -79,7 +75,7 @@ _Avoid_: preferences, options
 ### Agenda
 
 **Agenda page**:
-The page that lists every Event up to the end of Today and every Quick note, newest first, grouped by day, with a line marking now. Once Today has no Event upcoming or In progress, Tomorrow's Events top the list.
+The page that lists every Event up to the end of Today and every Quick note, newest first, grouped by day, with a line marking now. Once Today has no Event upcoming or In progress, Tomorrow's Events top the list. Selecting a row, or clicking an Event in the Calendar page, shows everything about it and its Note beside the list.
 _Avoid_: history, timeline, feed
 
 **Agenda list**:

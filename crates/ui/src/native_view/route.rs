@@ -1,9 +1,6 @@
 //! Navigable routes and the in-memory back/forward history between them.
 
-use crumble_eventkit::Event;
-use std::rc::Rc;
-
-/// A rail destination, or an Event's page.
+/// A rail destination.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Route {
     Home,
@@ -11,8 +8,6 @@ pub(super) enum Route {
     Calendar,
     Chat,
     Settings,
-    /// The Event as it was when it was opened.
-    Event(Rc<Event>),
 }
 
 impl Route {
@@ -23,7 +18,6 @@ impl Route {
             Route::Calendar => "Calendar",
             Route::Chat => "Chat",
             Route::Settings => "Settings",
-            Route::Event(_) => "Event",
         }
     }
 
@@ -36,14 +30,6 @@ impl Route {
     /// instead of sitting inside the panel's padding.
     pub(super) fn fills_panel(&self) -> bool {
         matches!(self, Route::Agenda | Route::Settings)
-    }
-
-    /// The rail button that stays selected: an Event's page belongs to the Calendar.
-    pub(super) fn rail_route(&self) -> Route {
-        match self {
-            Route::Event(_) => Route::Calendar,
-            route => route.clone(),
-        }
     }
 }
 

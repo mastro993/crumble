@@ -1,6 +1,6 @@
 //! Agenda page: every Event up to the end of Today and every Quick note, newest first, in a list
-//! that reads further into the past as it scrolls toward its end. Selecting a row shows its
-//! Note beside the list.
+//! that reads further into the past as it scrolls toward its end. Selecting a row, or clicking an
+//! Event in the Calendar page, shows its Note beside the list.
 
 mod now_hover;
 mod row;
@@ -40,6 +40,9 @@ pub(super) struct AgendaPage {
     /// The Quick notes of the days the Events cover, newest first.
     quick_notes: Vec<Note>,
     pub(super) selected: Option<Selected>,
+    /// Whether the list still has to scroll the selected row into view, after an Event was
+    /// opened from outside the list.
+    reveal: bool,
     rows: Rc<Vec<Row>>,
     /// The minute and read count `rows` were built for.
     built: Option<(DateTime<Local>, u64)>,
@@ -79,6 +82,7 @@ impl AgendaPage {
             events,
             quick_notes: Vec::new(),
             selected: None,
+            reveal: false,
             rows: Rc::default(),
             built: None,
             list,
@@ -170,7 +174,8 @@ impl AgendaPage {
     }
 
     /// Keeps the selection on the same row after the rows are built again: an Event is found
-    /// again even after it moved; a row that is gone clears it.
+    /// again even after it moved, and one with no row, as one opened from the Calendar page
+    /// outside the days read, stays as it was opened; a Quick note that is gone clears it.
     fn reselect(&mut self) {
         self.selected = match self.selected.take() {
             Some(Selected::Event(selected)) => {
@@ -183,10 +188,8 @@ impl AgendaPage {
                     })
                     .collect();
                 let id = events::latest(&events, &selected).id.clone();
-                events
-                    .into_iter()
-                    .find(|event| event.id == id)
-                    .map(|event| Selected::Event(event.clone()))
+                let event = events.into_iter().find(|event| event.id == id);
+                Some(Selected::Event(event.unwrap_or(selected)))
             }
             Some(Selected::QuickNote(id)) => self
                 .quick_note(&id)
@@ -194,6 +197,27 @@ impl AgendaPage {
                 .then_some(Selected::QuickNote(id)),
             None => None,
         };
+    }
+
+    /// Scrolls the selected row into view once, when an Event was opened from outside the
+    /// list; an Event with no row gives up.
+    fn reveal_selected(&mut self) {
+        if !std::mem::take(&mut self.reveal) {
+            return;
+        }
+        let Some(ix) = self.rows.iter().position(|row| self.is_selected(row)) else {
+            return;
+        };
+        if self.list.bounds_for_item(ix).is_some() {
+            self.list.scroll_to_reveal_item(ix);
+        } else {
+            // Revealing needs the rows above measured; a row never drawn goes near the top,
+            // under the row before it, as its day header, clear of the list's top fade.
+            self.list.scroll_to(ListOffset {
+                item_ix: ix.saturating_sub(1),
+                offset_in_item: px(0.0),
+            });
+        }
     }
 
     /// How far the list is scrolled from its top.

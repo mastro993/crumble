@@ -8,25 +8,20 @@ use chrono::Utc;
 use crumble_notes::{Note, NoteId};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::notification::Notification;
-use gpui_kit::{App, Context, Task, Window};
-use std::rc::Rc;
+use gpui_kit::{Context, Task, Window};
 
 impl NativeView {
-    /// What the current page shows the Note of: the selected Agenda row, or the opened Event.
-    fn note_subject(&self, cx: &App) -> Option<Subject> {
-        match &self.route {
-            Route::Agenda => match self.agenda.selected.as_ref()? {
-                Selected::Event(event) => Some(Subject::Event(event.clone())),
-                Selected::QuickNote(id) => self
-                    .agenda
-                    .quick_note(id)
-                    .map(|note| Subject::QuickNote(Box::new(note.clone()))),
-            },
-            Route::Event(opened) => {
-                let event = crumble_calendar::events::latest(self.events.read(cx).events(), opened);
-                Some(Subject::Event(Rc::new(event.clone())))
-            }
-            _ => None,
+    /// What the current page shows the Note of: the selected Agenda row.
+    fn note_subject(&self) -> Option<Subject> {
+        if self.route != Route::Agenda {
+            return None;
+        }
+        match self.agenda.selected.as_ref()? {
+            Selected::Event(event) => Some(Subject::Event(event.clone())),
+            Selected::QuickNote(id) => self
+                .agenda
+                .quick_note(id)
+                .map(|note| Subject::QuickNote(Box::new(note.clone()))),
         }
     }
 
@@ -37,7 +32,7 @@ impl NativeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let subject = self.note_subject(cx);
+        let subject = self.note_subject();
         match (&mut self.note_detail.subject, &subject) {
             (Some(shown), Some(subject)) if shown.same(subject) => {
                 // The same occurrence, maybe with new details, such as a new Event title.
