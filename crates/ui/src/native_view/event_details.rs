@@ -1,33 +1,31 @@
-//! An Event's details: the hover card over its chip and the header of the page clicking it
-//! opens. Both are read-only, as Crumble never changes Events; a meeting link becomes a Join
-//! button.
+//! An Event's details: the hover card over its Calendar chip, and the buttons the Agenda page's
+//! header shows for the selected Event. Both are read-only, as Crumble never changes Events; a
+//! meeting link becomes a Join button.
 
-use super::event_views::Shown;
-use crate::native_view::card::click_card;
-use crate::native_view::controls::{app_icon, button};
+use super::card::click_card;
+use super::controls::{app_icon, button};
 use crumble_calendar::events::when_text;
 use crumble_calendar::links::{one_paragraph, parse_links};
 use crumble_eventkit::{Event, Join, Participant, Response};
 use crumble_theme::sidebar::DETAIL_SIZE;
-use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_kit::component::{
     ActiveTheme, Sizable, StyledExt, button::Button, button::ButtonVariants, h_flex, v_flex,
 };
 use gpui_kit::{
-    App, ClickEvent, Div, ElementId, HighlightStyle, InteractiveElement, InteractiveText,
-    IntoElement, MouseButton, ParentElement, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, StyledText, UnderlineStyle, Window, div, prelude::FluentBuilder, px,
+    App, Div, ElementId, HighlightStyle, InteractiveElement, InteractiveText, IntoElement,
+    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText,
+    UnderlineStyle, div, prelude::FluentBuilder, px,
 };
 use std::ops::Range;
 
 const CARD_WIDTH: f32 = 320.0;
 /// Title lines the hover card shows before an ellipsis.
 const CARD_TITLE_LINES: usize = 2;
-/// Description lines the hover card shows before an ellipsis; the page's box shows them all.
+/// Description lines the hover card shows before an ellipsis; the header's box shows them all.
 const CARD_DESCRIPTION_LINES: usize = 3;
-/// Participants the hover card lists before "+N more"; the page's box lists them all.
+/// Participants the hover card lists before "+N more"; the header's box lists them all.
 const CARD_PARTICIPANTS: usize = 3;
-/// Width of the description and participants boxes on the Event page.
+/// Width of the description and participants boxes below the header.
 const BOX_WIDTH: f32 = 360.0;
 const STATUS_ICON_SIZE: f32 = 14.0;
 
@@ -143,9 +141,8 @@ fn linked_text(id: &'static str, text: &str, cx: &App) -> InteractiveText {
 
 /// The hover card's content: title, when, the start of the description, the first
 /// participants, and a Join button.
-pub(super) fn card(shown: &Shown, cx: &App) -> Div {
+pub(super) fn card(event: &Event, cx: &App) -> Div {
     let theme = cx.theme();
-    let event = &shown.event;
     let more = event.participants.len().saturating_sub(CARD_PARTICIPANTS);
     v_flex()
         .w(px(CARD_WIDTH))
@@ -204,14 +201,9 @@ pub(super) fn card(shown: &Shown, cx: &App) -> Div {
         )
 }
 
-/// The Event page's header: a breadcrumb back to the Calendar page, then a button for each of
-/// the description, the participants, and joining. The description and the participants open in
-/// boxes that close when clicked away from.
-pub(super) fn toolbar(
-    event: &Event,
-    open_calendar: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    cx: &App,
-) -> Div {
+/// A button for each of the description, the participants, and joining. The description and
+/// the participants open in boxes that close when clicked away from.
+pub(super) fn buttons(event: &Event) -> Div {
     let description = event.description.clone().map(|description| {
         click_card(
             "event-description",
@@ -257,51 +249,21 @@ pub(super) fn toolbar(
         )
     });
     h_flex()
-        .flex_1()
-        .min_w_0()
-        .gap_2()
-        .child(
-            // Presses stay with the breadcrumb, so they never drag or zoom the window.
-            div()
-                .min_w_0()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    Breadcrumb::new()
-                        .text_base()
-                        .child(
-                            BreadcrumbItem::new("Calendar")
-                                .flex_shrink_0()
-                                .on_click(open_calendar),
-                        )
-                        .child(
-                            BreadcrumbItem::new(title(event))
-                                .min_w_0()
-                                .truncate()
-                                .font_semibold(),
-                        ),
-                ),
+        .flex_shrink_0()
+        .gap_1()
+        .children(description)
+        .children(participants)
+        .children(
+            event
+                .join
+                .as_ref()
+                .map(|join| join_button("event-header-join", join).small()),
         )
-        // Empty header space still drags and zooms the window.
-        .child(div().flex_1())
-        .child(
-            h_flex()
-                .flex_shrink_0()
-                .gap_1()
-                .children(description)
-                .children(participants)
-                .children(
-                    event
-                        .join
-                        .as_ref()
-                        .map(|join| join_button("event-page-join", join).small()),
-                ),
-        )
-        .text_color(cx.theme().foreground)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::toolbar;
+    use super::buttons;
 
     use chrono::NaiveDate;
     use crumble_eventkit::{Event, Participant, Response, When};
@@ -312,18 +274,18 @@ mod tests {
         Styled, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
     };
 
-    /// Stands in for the window header holding an Event page's toolbar.
+    /// Stands in for the window header holding an Event's buttons.
     struct Header(Event);
 
     impl Render for Header {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .id("header")
                 .test_support()
                 .size_full()
                 .flex()
                 .items_start()
-                .child(toolbar(&self.0, |_, _, _| {}, cx))
+                .child(buttons(&self.0))
         }
     }
 

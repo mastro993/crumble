@@ -1,4 +1,4 @@
-//! The Note detail view's state: the Note of the selected Agenda row or of the opened Event,
+//! The Note detail view's state: the Note of the selected Agenda row or Event,
 //! and its title and Memo fields. Edits are written through `Notes`: the title on Enter or blur,
 //! the Memo once typing pauses, on blur, and before another Note shows.
 //! The Recording, its player and the header pill are in `recording`; the Transcript and the job

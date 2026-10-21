@@ -1,6 +1,5 @@
 //! Calendar page: a Week, Month, or Year view of the Period containing the Focused date.
 
-mod event_details;
 mod event_views;
 mod grids;
 
@@ -9,15 +8,14 @@ use super::account_dot::tint;
 use super::controls::{app_icon, button};
 use super::route::Route;
 use chrono::{Local, NaiveDate, Timelike};
-use crumble_calendar::{CalendarView, events, today};
-use crumble_eventkit::{Access, Event};
+use crumble_calendar::{CalendarView, today};
+use crumble_eventkit::Access;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{Sizable, StyledExt, button::ButtonVariants, h_flex};
 use gpui_kit::{
     AnyElement, App, Context, Div, InteractiveElement, IntoElement, ParentElement, ScrollHandle,
     Styled, Task, Window, div, point, prelude::FluentBuilder, px,
 };
-use std::rc::Rc;
 use std::time::Duration;
 
 gpui_kit::actions!(
@@ -129,21 +127,6 @@ impl NativeView {
         self.calendar.focused = date;
         self.refresh_events(false, cx);
         cx.notify();
-    }
-
-    /// Opens the page of `event`, recording the Calendar page for Back.
-    fn open_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        self.navigate(Route::Event(Rc::new(event)), cx);
-    }
-
-    /// The Event page's header for `event`, as EventKit last read it when it, or its calendar
-    /// item after a move, is still in the Calendar page's dates, then the Note actions.
-    pub(super) fn render_event_toolbar(&self, event: &Event, cx: &mut Context<Self>) -> AnyElement {
-        let open_calendar = cx.listener(|view, _, _, cx| view.navigate(Route::Calendar, cx));
-        let event = events::latest(self.events.read(cx).events(), event);
-        event_details::toolbar(event, open_calendar, cx)
-            .children(self.render_note_actions(cx))
-            .into_any_element()
     }
 
     /// Calendar shortcuts, registered only while the Calendar page is open.

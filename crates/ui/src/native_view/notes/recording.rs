@@ -273,7 +273,7 @@ impl NativeView {
                 self.agenda.selected = Some(Selected::QuickNote(note.id));
                 self.navigate(Route::Agenda, cx);
             }
-            Subject::Event(event) => self.navigate(Route::Event(event), cx),
+            Subject::Event(event) => self.open_event(event, cx),
         }
     }
 

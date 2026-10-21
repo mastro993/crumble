@@ -1,8 +1,8 @@
 //! How Events are drawn: a block in Week view, a line or bar in Month view. Hovering one shows
-//! its details card; clicking one opens its page.
+//! its details card; clicking one opens it in the Agenda page.
 
+use super::super::event_details;
 use super::NativeView;
-use super::event_details;
 use super::grids::HOUR_HEIGHT;
 use crate::native_view::card::hover_card;
 use crate::native_view::keyboard::focusable;
@@ -35,14 +35,14 @@ const BLOCK_GAP_Y: f32 = 4.0;
 /// Line height inside a Week view block, tighter than the theme's so two lines fit in 45 minutes.
 const BLOCK_LINE_HEIGHT: f32 = 15.0;
 
-/// Opens an Event's page when its chip is clicked.
+/// Opens an Event in the Agenda page when its chip is clicked.
 pub(super) type OpenEvent = Rc<dyn Fn(&Event, &mut App)>;
 
-/// Opens the clicked Event's page in `cx`'s view.
+/// Opens the clicked Event in `cx`'s view's Agenda page.
 pub(super) fn open_in(cx: &Context<NativeView>) -> OpenEvent {
     let view = cx.weak_entity();
     Rc::new(move |event, cx| {
-        let _ = view.update(cx, |view, cx| view.open_event(event.clone(), cx));
+        let _ = view.update(cx, |view, cx| view.open_event(Rc::new(event.clone()), cx));
     })
 }
 
@@ -168,14 +168,14 @@ impl RenderOnce for EventChip {
         hover_card(
             self.id,
             chip,
-            move |_, cx| event_details::card(&shown, cx).into_any_element(),
+            move |_, cx| event_details::card(&shown.event, cx).into_any_element(),
             window,
             cx,
         )
     }
 }
 
-/// The chip of `shown` on `date`: hovering shows its details card, clicking opens its page.
+/// The chip of `shown` on `date`: hovering shows its details card, clicking opens it in the Agenda page.
 fn event(shown: &Shown, date: NaiveDate, kind: ChipKind, open: &OpenEvent) -> EventChip {
     let event = &shown.event;
     let id = format!("event-{}-{date}", event.id);

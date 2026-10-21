@@ -62,7 +62,7 @@ impl NativeView {
         rail_button(
             format!("nav-{}", label.to_lowercase()),
             icon,
-            self.route.rail_route() == route,
+            self.route == route,
             cx,
         )
         .accessibility_label(label)

@@ -3,13 +3,15 @@
 use super::super::NativeView;
 use super::super::account_dot::tint;
 use super::super::controls::{app_icon, button};
+use super::super::event_details;
 use super::super::route::Route;
 use super::super::sidebar::{column, surface};
+use super::Selected;
 use super::row::{RowItem, render_row};
 use chrono::{Local, NaiveDate, Timelike, Utc};
 use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
-use crumble_eventkit::Access;
+use crumble_eventkit::{Access, Event};
 use crumble_notes::{Note, Notes};
 use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
@@ -84,6 +86,9 @@ impl NativeView {
             agenda.set_rows(rows);
             agenda.reselect();
         }
+        if !loaded.first_read_pending() {
+            agenda.reveal_selected();
+        }
 
         if !agenda.ticking {
             agenda.ticking = true;
@@ -123,8 +128,17 @@ impl NativeView {
         cx.notify();
     }
 
-    /// The Agenda page's header: New note, then the selected row's Note actions. Without
-    /// calendar access the list shows no rows, so New note is left out.
+    /// Opens the Agenda page on `event`, showing its Note beside the list, and records the page
+    /// left for Back.
+    pub(in super::super) fn open_event(&mut self, event: Rc<Event>, cx: &mut Context<Self>) {
+        self.agenda.selected = Some(Selected::Event(event));
+        self.agenda.reveal = true;
+        self.navigate(Route::Agenda, cx);
+    }
+
+    /// The Agenda page's header: New note, then for a selected Event its description,
+    /// participants, and Join buttons, then the selected row's Note actions. Without calendar
+    /// access the list shows no rows, so New note is left out.
     pub(in super::super) fn render_agenda_toolbar(
         &self,
         cx: &mut Context<Self>,
@@ -148,6 +162,10 @@ impl NativeView {
             })
             // Empty header space still drags and zooms the window.
             .child(div().flex_1())
+            .children(match &self.agenda.selected {
+                Some(Selected::Event(event)) => Some(event_details::buttons(event)),
+                _ => None,
+            })
             .children(
                 self.agenda
                     .selected

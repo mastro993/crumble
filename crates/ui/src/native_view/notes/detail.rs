@@ -1,4 +1,4 @@
-//! The Note detail view, shared by the Agenda content area and the Event page: the Note's title
+//! The Note detail view, the Agenda page's content area: the Note's title
 //! big at the top with when it happened below, then a card holding the tab bar, the Recording
 //! controls on its trailing side, and the tab: the Summary or the Transcript once there is one,
 //! or the Memo.

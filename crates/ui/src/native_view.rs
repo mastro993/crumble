@@ -7,6 +7,7 @@ mod calendars_section;
 mod card;
 mod controls;
 mod custom_color;
+mod event_details;
 mod keyboard;
 mod menu;
 mod notes;
@@ -66,7 +67,7 @@ pub struct NativeView {
     calendars_popover: CalendarsPopover,
     store: Store,
     notes: Notes,
-    /// The Note the Agenda content area or the Event page shows.
+    /// The Note the Agenda content area shows.
     note_detail: NoteDetail,
     first_day_select: WeekdaySelect,
     /// The Settings section on screen.
@@ -198,7 +199,6 @@ impl Render for NativeView {
             Route::Agenda => self.render_agenda(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
             Route::Settings => self.render_settings(window, cx),
-            Route::Event(_) => self.render_note_detail(cx),
             route => div().text_xl().child(route.title()).into_any_element(),
         };
         let colors = cx.theme().colors;

@@ -1,6 +1,6 @@
 //! Suggestions: a notification as a meeting starts, offering to record it. Each minute, today's
 //! Events in the shown Calendars go through `crumble_calendar::suggestions::due`; clicking a
-//! notification opens the Event's page, and its "Record" button also starts a Recording there,
+//! notification opens the Event in the Agenda page, and its "Record" button also starts a Recording there,
 //! as the empty state's Record does. Crumble never records without that click.
 
 use super::{NativeView, Route};
@@ -195,7 +195,7 @@ impl NativeView {
             }
             return;
         };
-        self.navigate(Route::Event(Rc::new(event)), cx);
+        self.open_event(Rc::new(event), cx);
         if response.action == Action::Record {
             // The click is the user starting it.
             self.maintain_note_detail(window, cx);
