@@ -1,7 +1,7 @@
 //! What the Agenda list shows and in what order: every Event up to the end of Today and every
 //! Quick note, newest first, under the day they started or are listed at, with Today's upcoming
-//! and In progress Events above the Now line, and Tomorrow's above them once Today has none
-//! left. Also which days the Agenda reads next and how a read is split for EventKit.
+//! Events above the Now line and its In progress ones just below it, and Tomorrow's above them
+//! once Today has none left. Also which days the Agenda reads next and how a read is split for EventKit.
 
 use crate::events::when_text;
 use chrono::{DateTime, Datelike, Days, Local, Months, NaiveDate};
@@ -131,12 +131,12 @@ pub fn span_events(
 pub enum Row {
     /// The header of a day's Events.
     Day(NaiveDate),
-    /// The Now line, between Today's upcoming and In progress Events and the rest.
+    /// The Now line, between Today's upcoming Events and the rest.
     Now,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
-    /// The In progress Event just above where the Now line would fall, marking now in place of
-    /// the line's own row: the line crosses it, and it shows its `progress` and `time_left`.
+    /// The last In progress Event, below the Now line, marking now: it shows its `progress` and
+    /// `time_left`.
     Current(Rc<Event>),
     /// A Quick note, under the day it is listed at.
     QuickNote(Rc<QuickNote>),
@@ -198,24 +198,26 @@ pub fn time_left(event: &Event, now: DateTime<Local>) -> Option<String> {
     })
 }
 
-/// Ends Today's upcoming and In progress Events: the last of them marks now when it is In
-/// progress, and the Now line follows it otherwise.
+/// Ends Today's upcoming and In progress Events: the Now line goes above the In progress ones,
+/// so it never crosses one, and the last of them marks now.
 fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
-    if let Some(Row::Event(event)) = rows.last()
-        && in_progress(event, now)
+    let started = rows
+        .iter()
+        .rev()
+        .take_while(|row| matches!(row, Row::Event(event) if in_progress(event, now)))
+        .count();
+    if started > 0
+        && let Some(Row::Event(event)) = rows.pop()
     {
-        let event = event.clone();
-        rows.pop();
         rows.push(Row::Current(event));
-    } else {
-        rows.push(Row::Now);
     }
+    rows.insert(rows.len() - started, Row::Now);
 }
 
 /// The rows for `events` and `quick_notes` at `now`. Today lists its upcoming Events, then the
-/// In progress ones, whatever day they started, then the Now line, or the last In progress one
-/// marking now, then all-day Events, then the ended Events and the Quick notes; other days list
-/// their all-day Events first, then the rest newest first. Tomorrow is listed above Today while
+/// Now line, then the In progress ones, whatever day they started, the last marking now, then
+/// all-day Events, then the ended Events and the Quick notes; other days list their all-day
+/// Events first, then the rest newest first. Tomorrow is listed above Today while
 /// no Event is upcoming or In progress. Only days from `from` on are listed, but an In progress
 /// Event shows however long ago it started. `end` adds the footer.
 pub fn rows(

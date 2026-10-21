@@ -44,14 +44,14 @@ fn all_day(title: &str, first: u32, last: u32) -> Rc<Event> {
 }
 
 /// Rows as text: a day as its date, the Now line as `--`, an Event as its title, followed by
-/// `--` when it marks now in place of the line.
+/// `*` when it marks now.
 fn labels(rows: &[Row]) -> Vec<String> {
     rows.iter()
         .map(|row| match row {
             Row::Day(day) => day.format("%d").to_string(),
             Row::Now => "--".into(),
             Row::Event(event) => event.title.clone(),
-            Row::Current(event) => format!("{} --", event.title),
+            Row::Current(event) => format!("{} *", event.title),
             Row::QuickNote(note) => note.label.clone(),
             Row::End => "end".into(),
         })
@@ -103,14 +103,7 @@ fn the_last_in_progress_event_marks_now() {
     assert_eq!(
         labels(&rows(&events, &[], now, date(1), false)),
         [
-            "15",
-            "Retro",
-            "Lunch",
-            "Workshop",
-            "Flight --",
-            "Call",
-            "14",
-            "Dinner"
+            "15", "Retro", "Lunch", "--", "Workshop", "Flight *", "Call", "14", "Dinner"
         ]
     );
 
@@ -118,14 +111,14 @@ fn the_last_in_progress_event_marks_now() {
     let starting = [timed("Standup", at(15, 10, 0), at(15, 10, 15))];
     assert_eq!(
         labels(&rows(&starting, &[], now, date(1), false)),
-        ["15", "Standup --"]
+        ["15", "--", "Standup *"]
     );
 
-    // Only In progress Events today: the last marks now and closes Today's group.
+    // Only In progress Events today: the Now line sits above them and the last marks now.
     let only = [timed("Workshop", at(15, 9, 0), at(15, 12, 0))];
     assert_eq!(
         labels(&rows(&only, &[], now, date(1), false)),
-        ["15", "Workshop --"]
+        ["15", "--", "Workshop *"]
     );
 
     // An Event ends at its end time: it is no longer In progress then.
@@ -154,7 +147,7 @@ fn tomorrow_shows_on_top_once_today_has_nothing_left() {
     // One In progress also keeps Today on top.
     assert_eq!(
         labels(&rows(&events, &[], at(15, 17, 30), date(1), false)),
-        ["15", "Review --", "Standup"]
+        ["15", "--", "Review *", "Standup"]
     );
     // Nothing left today: Tomorrow tops the list, but not the day after.
     assert_eq!(
@@ -201,7 +194,7 @@ fn days_before_the_read_ones_show_only_while_in_progress() {
     let flight = [timed("Flight", at(9, 22, 0), at(15, 11, 0))];
     assert_eq!(
         labels(&rows(&flight, &[], at(15, 10, 0), date(10), false)),
-        ["15", "Flight --"]
+        ["15", "--", "Flight *"]
     );
     // Once it ends, its start day is not among those read, so it leaves the list.
     assert!(rows(&flight, &[], at(15, 12, 0), date(10), false).is_empty());
@@ -251,7 +244,8 @@ fn quick_notes_join_the_events_at_their_time() {
         labels(&rows(&events, &notes, now, date(10), false)),
         [
             "15",
-            "Workshop --",
+            "--",
+            "Workshop *",
             "Holiday",
             "Review",
             "Ideas",
