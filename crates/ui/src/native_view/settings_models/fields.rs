@@ -4,19 +4,19 @@
 
 use super::super::NativeView;
 use super::super::notes::TRANSCRIBERS;
+use super::super::select::{Picked, Select};
 use super::{
-    LanguageItem, ModelSettings, Transcriber, TranscriberItem, index_of, language_items,
-    languages_for, picked_transcriber, provider_items, transcriber_items,
+    ModelSettings, Transcriber, index_of, language_items, languages_for, picked_transcriber,
+    provider_items, transcriber_items,
 };
 use crumble_local_models::Downloaded;
 use crumble_remote::Provider;
 use crumble_store::{Store, secrets};
 use crumble_summarize::{Availability, apple_availability};
-use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::{AppContext, Context, Entity, Subscription, Window};
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// Makes the sections' fields with the stored choices and the `downloaded` Local Models, and
 /// reads which keys are saved.
@@ -33,13 +33,14 @@ pub(in super::super) fn model_settings(
             .summary_provider(apple == Availability::Available)
             .and_then(Provider::from_id),
     );
-    let provider = cx.new(|cx| SelectState::new(provider_items(apple), selected, window, cx));
+    let provider = cx.new(|cx| {
+        Select::new("Summary Model", provider_items(apple), selected, cx)
+            .placeholder("Choose a Model")
+    });
     let transcribers = transcriber_items(downloaded);
     let picked = picked_transcriber(store);
-    let selected = (transcribers.iter())
-        .position(|item| item.transcriber == picked)
-        .map(IndexPath::new);
-    let transcription = cx.new(|cx| SelectState::new(transcribers, selected, window, cx));
+    let selected = (transcribers.iter()).position(|item| item.transcriber == picked);
+    let transcription = cx.new(|cx| Select::new("Transcription Model", transcribers, selected, cx));
     let apple_languages = language_items();
     let local = match &picked {
         Transcriber::Local(slug) => (downloaded.iter())
@@ -48,9 +49,7 @@ pub(in super::super) fn model_settings(
         Transcriber::Provider(_) => None,
     };
     let (languages, selected) = languages_for(store, local, &apple_languages);
-    let language = cx.new(|cx| {
-        SelectState::new(languages, Some(IndexPath::new(selected)), window, cx).searchable(true)
-    });
+    let language = cx.new(|cx| Select::new("Language", languages, Some(selected), cx).searchable());
     let field = |value: &str, placeholder: &str, window: &mut Window, cx: &mut Context<_>| {
         let (value, placeholder) = (value.to_owned(), placeholder.to_owned());
         cx.new(|cx| {
@@ -79,13 +78,9 @@ pub(in super::super) fn model_settings(
     let openai_model = field(store.openai_model(), "llama3.2", window, cx);
     let transcription_model = field(store.transcription_model(), "whisper-1", window, cx);
     let subscriptions = vec![
-        cx.subscribe_in(
+        cx.subscribe(
             &provider,
-            window,
-            |view, _, event: &SelectEvent<_>, _, cx| {
-                let SelectEvent::Confirm(Some(provider)) = event else {
-                    return;
-                };
+            |view, _, Picked(provider): &Picked<Provider>, cx| {
                 // What the previous Summary Model failed at is the new one's to try.
                 if let Some(previous) = view.summary_provider() {
                     view.forget_summary_failures(previous);
@@ -95,13 +90,9 @@ pub(in super::super) fn model_settings(
                 cx.notify();
             },
         ),
-        cx.subscribe_in(
+        cx.subscribe(
             &transcription,
-            window,
-            |view, _, event: &SelectEvent<Vec<TranscriberItem>>, window, cx| {
-                let SelectEvent::Confirm(Some(transcriber)) = event else {
-                    return;
-                };
+            |view, _, Picked(transcriber): &Picked<Transcriber>, cx| {
                 // What the previous Transcription Model failed at is the new one's to try.
                 view.forget_transcription_failures(view.transcription_provider());
                 match transcriber {
@@ -113,25 +104,20 @@ pub(in super::super) fn model_settings(
                         view.store.set_local_model(Some(slug));
                     }
                 }
-                // Its languages may differ; the select runs inside its own update, so defer.
-                cx.defer_in(window, |view, window, cx| {
-                    view.refresh_transcription_selects(window, cx);
-                });
+                // Its languages may differ.
+                view.refresh_transcription_selects(cx);
                 cx.notify();
             },
         ),
-        cx.subscribe_in(
+        cx.subscribe(
             &language,
-            window,
-            |view, _, event: &SelectEvent<Vec<LanguageItem>>, _, cx| {
-                if let SelectEvent::Confirm(Some(locale)) = event {
-                    view.store.set_transcription_locale(locale.as_deref());
-                    // A language that failed, or one Apple's Model lacked, may work now.
-                    TRANSCRIBERS
-                        .into_iter()
-                        .for_each(|provider| view.forget_transcription_failures(provider));
-                    cx.notify();
-                }
+            |view, _, Picked(locale): &Picked<Option<String>>, cx| {
+                view.store.set_transcription_locale(locale.as_deref());
+                // A language that failed, or one Apple's Model lacked, may work now.
+                TRANSCRIBERS
+                    .into_iter()
+                    .for_each(|provider| view.forget_transcription_failures(provider));
+                cx.notify();
             },
         ),
         // Not a Summary setting, so Summary checks and failures stay.
@@ -194,6 +180,7 @@ pub(in super::super) fn model_settings(
     ModelSettings {
         provider,
         apple,
+        apple_read: Instant::now(),
         transcription,
         language,
         apple_languages,

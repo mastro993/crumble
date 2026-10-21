@@ -11,28 +11,26 @@ mod render;
 pub(super) use fields::model_settings;
 
 use super::NativeView;
+use super::select::{Choice, Select};
 use crumble_local_models::{Downloaded, Model};
 use crumble_remote::Provider;
 use crumble_store::Store;
 use crumble_store::secrets;
 use crumble_summarize::{Availability, Claude, OpenAiCompatible};
-use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::select::{SelectItem, SelectState};
 use gpui_kit::{Context, Entity, SharedString, Subscription, Task, Window};
 use std::collections::{HashMap, HashSet};
-
-/// Width of each select and field.
-const FIELD_WIDTH: f32 = 240.0;
+use std::time::Instant;
 
 /// The Transcription, Summary and Providers sections' fields, and what they know of the
 /// Keychain.
 pub(super) struct ModelSettings {
-    provider: Entity<SelectState<Vec<ProviderItem>>>,
-    /// Apple's availability the select's items were made with.
+    provider: Entity<Select<ProviderItem>>,
+    /// Apple's availability the select's items were made with, and when it was last read.
     apple: Availability,
-    transcription: Entity<SelectState<Vec<TranscriberItem>>>,
-    language: Entity<SelectState<Vec<LanguageItem>>>,
+    apple_read: Instant,
+    transcription: Entity<Select<TranscriberItem>>,
+    language: Entity<Select<LanguageItem>>,
     /// SpeechAnalyzer's locales by name, read once.
     apple_languages: Vec<LanguageItem>,
     claude_key: Entity<InputState>,
@@ -79,7 +77,7 @@ struct ProviderItem {
     disabled: bool,
 }
 
-impl SelectItem for ProviderItem {
+impl Choice for ProviderItem {
     type Value = Provider;
 
     fn title(&self) -> SharedString {
@@ -88,6 +86,11 @@ impl SelectItem for ProviderItem {
 
     fn value(&self) -> &Provider {
         &self.provider
+    }
+
+    /// Apple's name already says where it runs.
+    fn description(&self) -> Option<SharedString> {
+        (self.provider != Provider::Apple).then(|| "Gets the Transcript's text".into())
     }
 
     fn disabled(&self) -> bool {
@@ -109,7 +112,7 @@ struct TranscriberItem {
     name: SharedString,
 }
 
-impl SelectItem for TranscriberItem {
+impl Choice for TranscriberItem {
     type Value = Transcriber;
 
     fn title(&self) -> SharedString {
@@ -118,6 +121,15 @@ impl SelectItem for TranscriberItem {
 
     fn value(&self) -> &Transcriber {
         &self.transcriber
+    }
+
+    /// Apple's name already says where it runs.
+    fn description(&self) -> Option<SharedString> {
+        match self.transcriber {
+            Transcriber::Provider(Provider::Apple) => None,
+            Transcriber::Provider(_) => Some("Gets the Recording's audio".into()),
+            Transcriber::Local(_) => Some("On this Mac".into()),
+        }
     }
 }
 
@@ -214,7 +226,7 @@ struct LanguageItem {
     name: SharedString,
 }
 
-impl SelectItem for LanguageItem {
+impl Choice for LanguageItem {
     type Value = Option<String>;
 
     fn title(&self) -> SharedString {
@@ -258,41 +270,27 @@ fn provider_items(apple: Availability) -> Vec<ProviderItem> {
 }
 
 /// The row of `provider` in a select listing `providers`.
-fn index_of(providers: &[Provider], provider: Option<Provider>) -> Option<IndexPath> {
+fn index_of(providers: &[Provider], provider: Option<Provider>) -> Option<usize> {
     let provider = provider?;
-    providers
-        .iter()
-        .position(|known| *known == provider)
-        .map(IndexPath::new)
+    providers.iter().position(|known| *known == provider)
 }
 
 impl NativeView {
     /// Makes the Transcription Model and Language selects show the downloaded Local Models
     /// and the picked Model's languages, as after a download, a Delete or a Use.
-    pub(super) fn refresh_transcription_selects(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn refresh_transcription_selects(&mut self, cx: &mut Context<Self>) {
         let downloaded = self.local_models.downloaded();
         let items = transcriber_items(downloaded);
         let picked = picked_transcriber(&self.store);
-        let selected = items
-            .iter()
-            .position(|item| item.transcriber == picked)
-            .map(IndexPath::new);
-        self.models.transcription.update(cx, |select, cx| {
-            select.set_items(items, window, cx);
-            select.set_selected_index(selected, window, cx);
-        });
+        let selected = items.iter().position(|item| item.transcriber == picked);
+        (self.models.transcription).update(cx, |select, cx| select.set_items(items, selected, cx));
         let local = self
             .picked_local_model()
             .map(|downloaded| &downloaded.model);
         let local = local.filter(|_| self.transcription_provider() == Provider::Local);
         let (languages, selected) = languages_for(&self.store, local, &self.models.apple_languages);
-        self.models.language.update(cx, |select, cx| {
-            select.set_items(languages, window, cx);
-            select.set_selected_index(Some(IndexPath::new(selected)), window, cx);
+        (self.models.language).update(cx, |select, cx| {
+            select.set_items(languages, Some(selected), cx)
         });
     }
 

@@ -1,20 +1,26 @@
 //! Settings › Local Models: Handy's list of Models Crumble can download and run on the Mac,
 //! filtered by name, streaming and language, with each one's download, Use and Delete
 //! (ADR 0010). `crumble-local-models` does the downloading and deleting off the main thread;
-//! this holds what shows. The page is drawn in `render`, each Model's card in `card`.
+//! this holds what shows. The page is drawn in `render`, each Model's card in `card`; only the
+//! rows in view are drawn, as drawing every card each frame made scrolling slow.
 
 mod card;
 mod render;
 
 use super::NativeView;
+use super::select::{Choice, Select};
+use card::Card;
 use crumble_local_models::{Downloaded, Library, Model, Outcome, catalog, find};
 use crumble_remote::Provider;
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::select::{SelectItem, SelectState};
-use gpui_kit::{AppContext, Context, Entity, SharedString, Subscription, Task, Window};
+use gpui_kit::{
+    AppContext, Context, Entity, ListAlignment, ListOffset, ListState, SharedString, Subscription,
+    Task, Window, px,
+};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -35,7 +41,10 @@ pub(super) struct LocalModels {
     /// Whether only Models that can stream show.
     streaming: bool,
     /// The language filter, made the first time the section shows.
-    language: Option<Entity<SelectState<Vec<LanguageFilter>>>>,
+    language: Option<Entity<Select<LanguageFilter>>>,
+    /// The rows the list shows, as last drawn.
+    rows: Rc<Vec<Row>>,
+    list: ListState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -46,6 +55,22 @@ struct Download {
     cancel: Arc<AtomicBool>,
     /// Receives the download's progress; dropping it drops its result.
     _updates: Task<()>,
+}
+
+/// A row of the section's list.
+#[derive(Clone, PartialEq)]
+enum Row {
+    /// The section's title, description, search field and filters.
+    Header,
+    /// A group's heading.
+    Label(&'static str),
+    /// Apple's built-in Model.
+    Apple,
+    Card(Card),
+    /// The line in place of the cards when no Model matches.
+    Nothing,
+    /// Where the list and its scores come from.
+    Credit,
 }
 
 /// What a download sends back to the main thread.
@@ -61,7 +86,7 @@ struct LanguageFilter {
     name: SharedString,
 }
 
-impl SelectItem for LanguageFilter {
+impl Choice for LanguageFilter {
     type Value = Option<String>;
 
     fn title(&self) -> SharedString {
@@ -84,9 +109,9 @@ impl LocalModels {
             .map(Library::downloaded)
             .unwrap_or_default();
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search Models by name…"));
-        let subscriptions = vec![cx.subscribe_in(&search, window, |_, _, event, _, cx| {
+        let subscriptions = vec![cx.subscribe_in(&search, window, |view, _, event, _, cx| {
             if matches!(event, InputEvent::Change) {
-                cx.notify();
+                view.local_models.filtered(cx);
             }
         })];
         Self {
@@ -98,6 +123,9 @@ impl LocalModels {
             search,
             streaming: false,
             language: None,
+            rows: Rc::default(),
+            // Every row is measured once, so the scrollbar spans the whole list from the start.
+            list: ListState::new(0, ListAlignment::Top, px(200.0)).measure_all(),
             _subscriptions: subscriptions,
         }
     }
@@ -105,6 +133,12 @@ impl LocalModels {
     /// The downloaded Models.
     pub(super) fn downloaded(&self) -> &[Downloaded] {
         &self.downloaded
+    }
+
+    /// Shows the list from its top once the search field or a filter changed.
+    fn filtered(&self, cx: &mut Context<NativeView>) {
+        self.list.scroll_to(ListOffset::default());
+        cx.notify();
     }
 }
 
@@ -132,7 +166,7 @@ impl NativeView {
 
     /// Reads the models folder again when asked to, and updates the Transcription section's
     /// selects when the downloaded Models changed.
-    pub(super) fn reread_local_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reread_local_models(&mut self, cx: &mut Context<Self>) {
         if !std::mem::take(&mut self.local_models.reread) {
             return;
         }
@@ -142,24 +176,24 @@ impl NativeView {
         let downloaded = library.downloaded();
         if downloaded != self.local_models.downloaded {
             self.local_models.downloaded = downloaded;
-            self.refresh_transcription_selects(window, cx);
+            self.refresh_transcription_selects(cx);
         }
     }
 
     /// Makes the Local Model `slug` the Transcription Model.
-    fn use_local_model(&mut self, slug: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn use_local_model(&mut self, slug: &str, cx: &mut Context<Self>) {
         self.forget_transcription_failures(self.transcription_provider());
         self.store.set_transcription_provider(Provider::Local.id());
         self.store.set_local_model(Some(slug));
-        self.refresh_transcription_selects(window, cx);
+        self.refresh_transcription_selects(cx);
         cx.notify();
     }
 
     /// Makes Apple's Model the Transcription Model.
-    fn use_apple_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn use_apple_model(&mut self, cx: &mut Context<Self>) {
         self.forget_transcription_failures(self.transcription_provider());
         self.store.set_transcription_provider(Provider::Apple.id());
-        self.refresh_transcription_selects(window, cx);
+        self.refresh_transcription_selects(cx);
         cx.notify();
     }
 
@@ -272,14 +306,14 @@ impl NativeView {
                 .show_cancel(true)
                 .ok_text("Delete")
                 .ok_variant(ButtonVariant::Danger)
-                .on_ok(move |_, window, cx| {
-                    let _ = view.update(cx, |view, cx| view.delete_local_model(&slug, window, cx));
+                .on_ok(move |_, _, cx| {
+                    let _ = view.update(cx, |view, cx| view.delete_local_model(&slug, cx));
                     true
                 })
         });
     }
 
-    fn delete_local_model(&mut self, slug: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn delete_local_model(&mut self, slug: &str, cx: &mut Context<Self>) {
         let Some(library) = self.local_models.library.as_ref() else {
             return;
         };
@@ -294,7 +328,7 @@ impl NativeView {
             self.store.set_local_model(None);
         }
         self.local_models.downloaded = library.downloaded();
-        self.refresh_transcription_selects(window, cx);
+        self.refresh_transcription_selects(cx);
         cx.notify();
     }
 }

@@ -2,7 +2,7 @@
 //! choosing a row.
 
 use super::{Kind, Menu, MenuItem, SUBMENU_CLOSE_DELAY, Submenu, step};
-use gpui_kit::{App, Context, KeyDownEvent, Window};
+use gpui_kit::{App, Context, Focusable, KeyDownEvent, Window};
 
 impl Menu {
     /// Chooses row `ix`, or row `sub` of its submenu: an action closes the menu and then runs,
@@ -101,8 +101,8 @@ impl Menu {
         }));
     }
 
-    /// Whether focus is in the open panel rather than on the menu itself.
-    pub(super) fn panel_focused(&self, window: &Window, cx: &App) -> bool {
+    /// Whether focus is in the open panel or the search field rather than on the menu itself.
+    pub(super) fn inner_focused(&self, window: &Window, cx: &App) -> bool {
         self.focus.contains_focused(window, cx) && !self.focus.is_focused(window)
     }
 
@@ -200,9 +200,17 @@ impl Menu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.modifiers.modified() {
+        // Keys typed into the search field are its text; its actions bring the others to `key`.
+        let searching = (self.search.as_ref())
+            .is_some_and(|search| search.read(cx).focus_handle(cx).is_focused(window));
+        if event.keystroke.modifiers.modified() || searching {
             return;
         }
+        self.key(&event.keystroke.key, window, cx);
+    }
+
+    /// Acts on `key` and stops it there, if the menu has a use for it.
+    pub(super) fn key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         let in_submenu = self
             .submenu
             .as_ref()
@@ -211,7 +219,7 @@ impl Menu {
             .submenu
             .as_ref()
             .is_some_and(|submenu| submenu.panel.is_some());
-        match (event.keystroke.key.as_str(), in_submenu) {
+        match (key, in_submenu) {
             // From the menu or from inside the panel, which lets only Escape through.
             ("left" | "escape", _) if panel_open => {
                 if let Some(submenu) = self.submenu.as_mut() {
@@ -235,6 +243,9 @@ impl Menu {
             }
             (key @ ("up" | "down"), None) => {
                 self.highlight = step(&self.items, self.highlight, key == "down");
+                if let Some(ix) = self.highlight {
+                    self.scroll.scroll_to_item(ix);
+                }
                 self.submenu = None;
                 self.closing_submenu = None;
             }

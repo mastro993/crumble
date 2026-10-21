@@ -9,11 +9,13 @@ mod controls;
 mod custom_color;
 mod event_details;
 mod keyboard;
+mod list_rows;
 mod local_models;
 mod menu;
 mod notes;
 mod rail;
 mod route;
+mod select;
 mod settings_models;
 mod settings_page;
 mod shell;
@@ -109,7 +111,7 @@ impl NativeView {
             eprintln!("Could not recover the Recordings left unfinished: {error:#}");
         }
         let note_detail = NoteDetail::new(window, cx);
-        let first_day_select = settings_page::first_day_select(&store, window, cx);
+        let first_day_select = settings_page::first_day_select(&store, cx);
         let local_models = LocalModels::new(window, cx);
         let models = settings_models::model_settings(&store, local_models.downloaded(), window, cx);
         let calendar = CalendarPage::new(store.calendar_view());

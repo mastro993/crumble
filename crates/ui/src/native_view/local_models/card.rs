@@ -3,6 +3,7 @@
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
+use super::super::settings_page::form::card;
 use crumble_local_models::{Model, size_label};
 use crumble_remote::Provider;
 use gpui_kit::component::button::ButtonVariants;
@@ -11,7 +12,8 @@ use gpui_kit::component::separator::Separator;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, ElementId, Hsla, IntoElement, ParentElement, SharedString, Styled, div, px,
+    AnyElement, Context, ElementId, Hsla, IntoElement, ParentElement, SharedString, Styled, div,
+    prelude::FluentBuilder, px,
 };
 
 /// Width of an accuracy or speed bar.
@@ -20,18 +22,19 @@ const BAR_WIDTH: f32 = 72.0;
 const PROGRESS_WIDTH: f32 = 120.0;
 
 /// A Model the section lists.
+#[derive(Clone, PartialEq)]
 pub(super) enum Card {
     /// Downloaded, and whether the list still offers it.
-    Downloaded(Model, bool),
-    Available(Model),
+    Downloaded(Box<Model>, bool),
+    Available(&'static Model),
 }
 
 impl NativeView {
     /// The card of a Local Model.
-    pub(super) fn render_card(&self, card: Card, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_card(&self, card: &Card, cx: &mut Context<Self>) -> AnyElement {
         let (model, downloaded, offered) = match card {
-            Card::Downloaded(model, offered) => (model, true, offered),
-            Card::Available(model) => (model, false, true),
+            Card::Downloaded(model, offered) => (&**model, true, *offered),
+            Card::Available(model) => (*model, false, true),
         };
         let in_use = downloaded
             && self.transcription_provider() == Provider::Local
@@ -45,8 +48,8 @@ impl NativeView {
         } else {
             None
         };
-        let facts = facts(&model);
-        let actions = self.card_actions(&model, downloaded, in_use, cx);
+        let facts = facts(model);
+        let actions = self.card_actions(model, downloaded, in_use, cx);
         frame(
             &model.slug,
             &model.name,
@@ -70,7 +73,7 @@ impl NativeView {
                 .outline()
                 .small()
                 .label("Use")
-                .on_click(cx.listener(|view, _, window, cx| view.use_apple_model(window, cx)))
+                .on_click(cx.listener(|view, _, _, cx| view.use_apple_model(cx)))
                 .into_any_element()
         };
         frame(
@@ -165,9 +168,7 @@ impl NativeView {
                     .outline()
                     .small()
                     .label("Use")
-                    .on_click(cx.listener(move |view, _, window, cx| {
-                        view.use_local_model(&slug, window, cx)
-                    }))
+                    .on_click(cx.listener(move |view, _, _, cx| view.use_local_model(&slug, cx)))
                     .into_any_element(),
             );
         }
@@ -232,13 +233,11 @@ fn frame(
     cx: &Context<NativeView>,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (muted, border, accent) = (theme.muted_foreground, theme.border, theme.primary);
-    v_flex()
+    let (muted, accent) = (theme.muted_foreground, theme.primary);
+    card(v_flex(), cx)
         .gap_3()
         .p_4()
-        .rounded_lg()
-        .border_1()
-        .border_color(if in_use { accent } else { border })
+        .when(in_use, |card| card.border_color(accent))
         .child(
             h_flex()
                 .gap_4()
@@ -274,7 +273,7 @@ fn frame(
                         .child(bar(key, "Speed", speed, muted))
                 })),
         )
-        .child(Separator::horizontal())
+        .child(Separator::horizontal().color(crumble_theme::divider(cx.theme())))
         .child(
             h_flex()
                 .gap_3()

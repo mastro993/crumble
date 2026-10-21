@@ -7,6 +7,7 @@ mod row;
 mod view;
 
 use super::NativeView;
+use super::list_rows::splice;
 use chrono::{DateTime, Local};
 use crumble_calendar::agenda::Row;
 use crumble_calendar::events;
@@ -97,21 +98,7 @@ impl AgendaPage {
     /// Replaces the rows, splicing only those that changed, so the list keeps its measured
     /// rows and its scroll position when older days are added below or Today changes above.
     fn set_rows(&mut self, rows: Vec<Row>) {
-        let old = &self.rows;
-        let kept = old.iter().zip(&rows).take_while(|(a, b)| a == b).count();
-        let tail = old[kept..]
-            .iter()
-            .rev()
-            .zip(rows[kept..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        if old.is_empty() {
-            // Splicing into an empty list would count the new rows as above the scroll top.
-            self.list.reset(rows.len());
-        } else {
-            self.list
-                .splice(kept..old.len() - tail, rows.len() - kept - tail);
-        }
+        splice(&self.list, &self.rows, &rows);
         self.rows = Rc::new(rows);
     }
 
