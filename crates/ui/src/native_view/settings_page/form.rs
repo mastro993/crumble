@@ -69,10 +69,9 @@ pub(in super::super) fn card<E: Styled>(element: E, cx: &App) -> E {
         .rounded(px(SURFACE_RADIUS))
 }
 
-/// A search field: a pill in a selected sidebar row's fill, with a search icon, a button that
-/// clears it, and the edge every control has.
+/// A search field: a pill with the fill and edge every field has, a search icon, and a button
+/// that clears it.
 pub(in super::super) fn search_field(state: &Entity<InputState>, cx: &App) -> Input {
-    let fill = cx.theme().sidebar_accent;
     Input::new(state)
         .cleanable(true)
         .prefix(
@@ -84,7 +83,6 @@ pub(in super::super) fn search_field(state: &Entity<InputState>, cx: &App) -> In
         .px_4()
         .gap_2()
         .rounded_full()
-        .bg(fill)
         .border_color(cx.theme().input)
         .text_size(px(SEARCH_TEXT_SIZE))
 }
