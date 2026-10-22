@@ -83,23 +83,23 @@ fn downloaded_models_list_in_catalog_order_then_dropped_ones() {
 fn deleting_the_last_model_deletes_the_vad_file() {
     let folder = Folder::new();
     let library = Library::at(folder.0.clone());
-    let (first, second) = (catalog()[0].clone(), catalog()[1].clone());
+    let (first, second, cancelled) = (
+        catalog()[0].clone(),
+        catalog()[1].clone(),
+        catalog()[2].clone(),
+    );
     place(&library, &first);
     place(&library, &second);
     let _ = fs::write(library.vad(), b"vad");
-    let _ = fs::write(
-        folder.0.join(format!("{}.partial", first.file.filename)),
-        b"part",
-    );
+    let partial = folder
+        .0
+        .join(format!("{}.partial", cancelled.file.filename));
+    let _ = fs::write(&partial, b"part");
 
     assert!(library.delete(&first.slug).is_ok());
     assert!(!library.path(&first).exists());
-    assert!(
-        !folder
-            .0
-            .join(format!("{}.partial", first.file.filename))
-            .exists()
-    );
+    assert!(library.delete(&cancelled.slug).is_ok());
+    assert!(!partial.exists());
     assert!(library.vad().exists());
     assert!(library.delete(&second.slug).is_ok());
     assert!(!library.vad().exists());
@@ -121,6 +121,20 @@ fn a_complete_partial_file_is_checked_and_moved_into_place() {
     );
     assert_eq!(outcome.ok(), Some(Outcome::Done));
     assert!(folder.0.join("m.gguf").exists() && !partial.exists());
+}
+
+#[test]
+fn a_file_already_in_place_is_not_fetched_again() {
+    let folder = Folder::new();
+    let _ = fs::write(folder.0.join("m.gguf"), b"all of it");
+    let outcome = fetch(
+        &file(b"all of it"),
+        &folder.0,
+        "M",
+        &mut |_, _| {},
+        &AtomicBool::new(false),
+    );
+    assert_eq!(outcome.ok(), Some(Outcome::Done));
 }
 
 #[test]

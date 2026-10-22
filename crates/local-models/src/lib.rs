@@ -154,10 +154,14 @@ impl Library {
         download::fetch(&vad_file(), &self.dir, name, &mut |_, _| {}, cancel)
     }
 
-    /// Deletes the downloaded Model `slug`, with what a cancelled download of it left, and the
-    /// VAD file once no Model is left.
+    /// Deletes the Model `slug`, downloaded or what a cancelled download of it left, and the VAD
+    /// file once no Model is left.
     pub fn delete(&self, slug: &str) -> anyhow::Result<()> {
-        if let Some(Downloaded { model, .. }) = self.get(slug) {
+        let model = self
+            .get(slug)
+            .map(|downloaded| downloaded.model)
+            .or_else(|| find(slug).cloned());
+        if let Some(model) = model {
             remove(&self.path(&model))?;
             remove(&self.dir.join(format!("{}.partial", model.file.filename)))?;
         }

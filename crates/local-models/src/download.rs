@@ -34,6 +34,10 @@ pub(crate) fn fetch(
 ) -> anyhow::Result<Outcome> {
     let target = dir.join(&file.filename);
     let partial = dir.join(format!("{}.partial", file.filename));
+    // Already in place, as when saving its Model's list entry failed after it arrived.
+    if fs::metadata(&target).is_ok_and(|meta| meta.len() == file.size) {
+        return Ok(Outcome::Done);
+    }
     fs::create_dir_all(dir).map_err(|error| saving(name, &error))?;
     let mut held = fs::metadata(&partial).map_or(0, |meta| meta.len());
     if held > file.size {
