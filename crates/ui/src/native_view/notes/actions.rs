@@ -8,6 +8,7 @@ use super::super::menu::{MenuItem, OpenMenu};
 use super::consent::TRANSCRIBERS;
 use crumble_remote::Provider;
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::component::{Sizable, WindowExt};
 use gpui_kit::{
     AnyElement, App, Context, IntoElement, ParentElement, Styled, WeakEntity, Window, canvas, div,
@@ -194,6 +195,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id) = (view.clone(), id.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title("Delete this note?")
                 .description("Its title, Memo and Recording are deleted. This can't be undone.")
                 .show_cancel(true)

@@ -11,6 +11,7 @@ use crumble_remote::{Provider, runs_locally};
 use crumble_transcribe::{ModelStatus, Segment, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::{Context, Task, Window};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -419,6 +420,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id) = (view.clone(), id.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title("Transcribe this recording again?")
                 .description("The new Transcript replaces the current one.")
                 .show_cancel(true)

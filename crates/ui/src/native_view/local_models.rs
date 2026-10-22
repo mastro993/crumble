@@ -14,6 +14,7 @@ use crumble_local_models::{Downloaded, Library, Model, Outcome, catalog, find};
 use crumble_remote::Provider;
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
     AppContext, Context, Entity, ListAlignment, ListOffset, ListState, SharedString, Subscription,
@@ -391,6 +392,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, slug) = (view.clone(), slug.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title(format!("Delete {name}?"))
                 .description(description.clone())
                 .show_cancel(true)

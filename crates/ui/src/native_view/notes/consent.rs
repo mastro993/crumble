@@ -9,6 +9,7 @@ use crumble_store::secrets;
 use crumble_transcribe::{Apple, Local, OpenAiCompatible, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::{Context, Window};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -102,6 +103,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, ids, model, host) = (view.clone(), ids.clone(), model.clone(), host.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title(title.clone())
                 .description(format!(
                     "Crumble will upload the audio of {these} to {host} to make their \
