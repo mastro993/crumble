@@ -8,6 +8,7 @@ use crumble_calendar::period::{
     is_weekend, month_weeks, week_days, week_start, weekdays, year_months,
 };
 use crumble_theme::SURFACE_RADIUS;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, StyledExt, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Context, Corners, Div, Hsla, InteractiveElement, IntoElement, ParentElement,
@@ -311,20 +312,26 @@ pub(super) fn week(
         .size_full()
         .child(
             frame(hairline, cx).child(header).children(all_day).child(
-                div().relative().flex_1().min_h_0().child(columns).child(
-                    div()
-                        .id("week-hours")
-                        .size_full()
-                        .overflow_y_scroll()
-                        .track_scroll(hours_scroll)
-                        .child(
-                            div()
-                                .relative()
-                                .children(hours)
-                                .child(blocks)
-                                .children(now_line),
-                        ),
-                ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(columns)
+                    .child(
+                        div()
+                            .id("week-hours")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(hours_scroll)
+                            .child(
+                                div()
+                                    .relative()
+                                    .children(hours)
+                                    .child(blocks)
+                                    .children(now_line),
+                            ),
+                    )
+                    .vertical_scrollbar(hours_scroll),
             ),
         )
         .into_any_element()
@@ -341,9 +348,7 @@ pub(super) fn year(
         .map(|first| month_card(first, first_day, today, hairline, cx))
         .collect();
     div()
-        .id("year-months")
         .size_full()
-        .overflow_y_scroll()
         .child(
             div()
                 .grid()
@@ -353,6 +358,8 @@ pub(super) fn year(
                 .mx_auto()
                 .children(months),
         )
+        .overflow_y_scrollbar()
+        .id("year-months")
         .into_any_element()
 }
 

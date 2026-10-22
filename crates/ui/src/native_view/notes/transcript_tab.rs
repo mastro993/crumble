@@ -86,9 +86,25 @@ impl NativeView {
             );
         }
         let Some(made) = &note.transcript else {
-            // A finished Recording no job took: one older than a remote Transcription Model, or
-            // one the user did not agree to send.
+            // A finished Recording no job took: one stopped by quitting, one the user did not
+            // agree to send, or one whose Transcript was never asked for.
             let provider = self.transcription_provider();
+            if provider == Provider::Local && !self.can_transcribe(provider) {
+                return line(
+                    format!(
+                        "Not transcribed yet. {} isn't downloaded.",
+                        self.local_model_name()
+                    ),
+                    button("transcript-local-models")
+                        .outline()
+                        .small()
+                        .label("Open Settings")
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.open_settings(SettingsSection::LocalModels, cx)
+                        })),
+                    muted,
+                );
+            }
             if !self.can_transcribe(provider) {
                 return line(
                     "Not transcribed yet. Add the server's address and Model in Settings."
@@ -109,7 +125,10 @@ impl NativeView {
                 button("transcript-start")
                     .outline()
                     .small()
-                    .label(format!("Transcribe with {}", provider.name()))
+                    .label(format!(
+                        "Transcribe with {}",
+                        self.transcriber_name(provider)
+                    ))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.transcribe(id.clone(), Some(provider), Some(window), cx)
                     })),

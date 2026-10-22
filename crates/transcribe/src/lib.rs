@@ -1,17 +1,22 @@
 //! Transcripts of Recordings, made by a Model the user picks: Apple's SpeechAnalyzer on the Mac
-//! through a small Swift bridge (ADR 0006), or a server that speaks OpenAI's audio
+//! through a small Swift bridge (ADR 0006), a Local Model Crumble downloaded, run through
+//! transcribe.cpp in a worker process (ADR 0010), or a server that speaks OpenAI's audio
 //! transcriptions (ADR 0008). Each is a [`Transcriber`]. Each track is transcribed on its own,
 //! so the track labels the speech: the microphone is the user, the Mac's sound is the others on
 //! the call. No GPUI.
 
 mod adts;
 mod apple;
+mod chunks;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(not(target_os = "macos"))]
 #[path = "unsupported.rs"]
 mod ffi;
+mod local;
 mod remote;
+#[cfg(target_os = "macos")]
+mod worker;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,7 +26,24 @@ use crumble_remote::Provider;
 
 pub use apple::Apple;
 pub use ffi::{current_locale, install_model, language_name, model_status, supported_locales};
+pub use local::Local;
 pub use remote::OpenAiCompatible;
+#[cfg(target_os = "macos")]
+pub use worker::run_if_asked;
+
+/// The locale that asks a Local Model to tell the language itself, for "Detect automatically".
+pub const DETECT: &str = "auto";
+
+#[cfg(target_os = "macos")]
+use worker::FLAG as WORKER_FLAG;
+#[cfg(not(target_os = "macos"))]
+const WORKER_FLAG: &str = "--transcription-worker";
+
+/// Never a worker on this platform, as Local Models run only on macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn run_if_asked() -> Option<std::process::ExitCode> {
+    None
+}
 
 /// A Model that turns a Recording into a Transcript.
 pub trait Transcriber {

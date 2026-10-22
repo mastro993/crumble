@@ -45,6 +45,10 @@ fn window_chrome() -> WindowOptions {
 }
 
 fn main() -> std::process::ExitCode {
+    // A Local Model's worker is this binary started again (ADR 0010); it never opens a window.
+    if let Some(code) = crumble_transcribe::run_if_asked() {
+        return code;
+    }
     if let Err(error) = run() {
         eprintln!("Could not start Crumble: {error}");
         return std::process::ExitCode::FAILURE;

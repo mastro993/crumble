@@ -14,9 +14,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-pub use macos::{Player, Recorder, mic_access, recorded_length, request_mic_access};
+pub use macos::{Player, Recorder, mic_access, read_samples, recorded_length, request_mic_access};
 #[cfg(not(target_os = "macos"))]
-pub use unsupported::{Player, Recorder, mic_access, recorded_length, request_mic_access};
+pub use unsupported::{
+    Player, Recorder, mic_access, read_samples, recorded_length, request_mic_access,
+};
 
 /// Whether Crumble may record the microphone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

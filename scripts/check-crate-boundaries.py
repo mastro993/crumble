@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail if a crate crosses the GPUI / persistence / Objective-C boundaries.
+"""Fail if a crate crosses the GPUI / persistence / Objective-C / C++ inference boundaries.
 
 The crate graph is supposed to keep domain crates free of GPUI and Diesel out of
 the UI; this check encodes that so a new dependency cannot silently undo it.
@@ -27,6 +27,10 @@ GPUI_USERS = frozenset({"crumble", "crumble-ui", "crumble-theme", "crumble-sync"
 GPUI_KIT_USERS = GPUI_USERS - {"crumble-sync"}
 DIESEL_USERS = frozenset({"crumble-db", "crumble-store", "crumble-notes"})
 OBJC_USERS = frozenset({"crumble-eventkit", "crumble-audio", "crumble-notify"})
+# transcribe.cpp builds ggml's C++ with CMake; only the crate that runs Local Models takes it
+# (ADR 0010).
+TRANSCRIBE_CPP = frozenset({"transcribe-cpp", "transcribe-cpp-sys"})
+TRANSCRIBE_CPP_USERS = frozenset({"crumble-transcribe"})
 
 # Crates that call `unsafe` under their own lint table (AGENTS.md lists the ADRs).
 UNSAFE_CRATES = frozenset(
@@ -54,6 +58,7 @@ def forbidden(package: str, dep: str) -> bool:
         or (dep in GPUI_KIT | GPUI_KIT_USERS and package not in GPUI_KIT_USERS)
         or (dep in DIESEL and package not in DIESEL_USERS)
         or (is_objc(dep) and package not in OBJC_USERS)
+        or (dep in TRANSCRIBE_CPP and package not in TRANSCRIBE_CPP_USERS)
     )
 
 
@@ -66,6 +71,8 @@ def forbidden_tokens(package: str) -> tuple[str, ...]:
         tokens.append("gpui_kit::")
     if package not in DIESEL_USERS:
         tokens += ["diesel::", "diesel_migrations", "SqliteConnection"]
+    if package not in TRANSCRIBE_CPP_USERS:
+        tokens.append("transcribe_cpp::")
     return tuple(tokens)
 
 

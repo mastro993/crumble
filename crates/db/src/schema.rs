@@ -20,10 +20,11 @@ diesel::table! {
         claude_model -> Text,
         openai_base_url -> Text,
         openai_model -> Text,
-        transcription_provider -> Text,
         transcription_model -> Text,
         transcription_locale -> Nullable<Text>,
         suggest_recording -> Bool,
+        local_model -> Nullable<Text>,
+        transcription_provider -> Text,
     }
 }
 

@@ -4,3 +4,4 @@ Cargo.lock linguist-generated
 skills-lock.json linguist-generated
 crates/db/src/schema.rs linguist-generated
 .agents/skills/** linguist-vendored
+crates/local-models/handy/** linguist-vendored

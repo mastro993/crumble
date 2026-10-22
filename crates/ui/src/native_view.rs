@@ -9,10 +9,13 @@ mod controls;
 mod custom_color;
 mod event_details;
 mod keyboard;
+mod list_rows;
+mod local_models;
 mod menu;
 mod notes;
 mod rail;
 mod route;
+mod select;
 mod settings_models;
 mod settings_page;
 mod shell;
@@ -39,6 +42,7 @@ use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Task, Window, div, prelude::FluentBuilder,
 };
+use local_models::LocalModels;
 use menu::OpenMenu;
 use notes::NoteDetail;
 use route::{History, Route};
@@ -72,8 +76,10 @@ pub struct NativeView {
     first_day_select: WeekdaySelect,
     /// The Settings section on screen.
     settings_section: SettingsSection,
-    /// The fields of Settings › Models and Providers.
+    /// The fields of Settings › Transcription, Summary and Providers.
     models: ModelSettings,
+    /// Settings › Local Models, and the downloads running.
+    local_models: LocalModels,
     calendar: CalendarPage,
     events: Entity<CalendarEvents>,
     agenda: AgendaPage,
@@ -105,8 +111,9 @@ impl NativeView {
             eprintln!("Could not recover the Recordings left unfinished: {error:#}");
         }
         let note_detail = NoteDetail::new(window, cx);
-        let first_day_select = settings_page::first_day_select(&store, window, cx);
-        let models = settings_models::model_settings(&store, window, cx);
+        let first_day_select = settings_page::first_day_select(&store, cx);
+        let local_models = LocalModels::new(window, cx);
+        let models = settings_models::model_settings(&store, local_models.downloaded(), window, cx);
         let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
         let events = cx.new(|_| CalendarEvents::default());
@@ -139,6 +146,7 @@ impl NativeView {
             first_day_select,
             settings_section: SettingsSection::default(),
             models,
+            local_models,
             calendar,
             events,
             agenda,
@@ -150,9 +158,8 @@ impl NativeView {
             suggestions,
             _minute_tick: calendar::tick_minutes(cx),
         };
-        // Recordings left without a Transcript, and Transcripts without a Summary, as when the
-        // app quit while making them.
-        view.transcribe_untranscribed(cx);
+        // Transcripts left without a Summary, as when the app quit while making them. Recordings
+        // without a Transcript wait for the user (ADR 0010).
         view.summarize_unsummarized(cx);
         view.read_notification_status(cx);
         view

@@ -43,6 +43,7 @@ fn every_change_is_written_and_read_back() {
     store.set_transcription_provider("openai");
     store.set_transcription_model(" whisper-large-v3 ");
     store.set_transcription_locale(Some("it_IT"));
+    store.set_local_model(Some("whisper-medium"));
     store.add_audio_consent("openai", "whisper-1", "API.openai.com");
     store.set_suggests_recording(false);
     assert_eq!(store.claude_model(), "claude-opus-5-5");
@@ -106,9 +107,18 @@ fn transcripts_start_on_apple_in_the_mac_s_locale() {
     assert_eq!(store.transcription_provider(), "apple");
     assert_eq!(store.transcription_model(), "whisper-1");
     assert_eq!(store.transcription_locale(), None);
+    assert_eq!(store.local_model(), None);
     store.set_transcription_locale(Some("it_IT"));
     store.set_transcription_locale(None);
     assert_eq!(store.reloaded().transcription_locale, None);
+    // A Local Model is kept as Provider `local`, which the column's CHECK once refused.
+    store.set_transcription_provider("local");
+    store.set_local_model(Some("whisper-medium"));
+    let reloaded = store.reloaded();
+    assert_eq!(reloaded.transcription_provider, "local");
+    assert_eq!(reloaded.local_model.as_deref(), Some("whisper-medium"));
+    store.set_local_model(None);
+    assert_eq!(store.reloaded().local_model, None);
 }
 
 #[test]

@@ -33,6 +33,9 @@ jobs:
       # whose updates would otherwise make pull requests miss main's cache.
       - run: rustup toolchain install && rustup toolchain uninstall stable
 
+      # transcribe.cpp builds ggml's C++ with CMake (ADR 0010); install it if the image lacks it.
+      - run: command -v cmake || brew install cmake
+
       - run: python3 scripts/check-crate-boundaries.py
 
       - run: cargo fmt --all --check
