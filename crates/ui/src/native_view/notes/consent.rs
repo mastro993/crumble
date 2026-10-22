@@ -10,6 +10,8 @@ use crumble_transcribe::{Apple, Local, OpenAiCompatible, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::{Context, Window};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// The Providers that transcribe, in the order the Note actions menu lists them.
 pub(in super::super) const TRANSCRIBERS: [Provider; 3] =
@@ -123,9 +125,11 @@ impl NativeView {
 
     /// The Transcriber for `provider`, with the Settings picks and the server's key from the
     /// Keychain; or why there is none, for the user.
+    /// `cancel` stops a Local Model's worker once set.
     pub(super) fn transcriber(
         &self,
         provider: Provider,
+        cancel: &Arc<AtomicBool>,
     ) -> Result<Box<dyn Transcriber + Send>, String> {
         Ok(match provider {
             Provider::Apple => Box::new(Apple),
@@ -145,6 +149,7 @@ impl NativeView {
                     model: library.path(&downloaded.model),
                     vad: library.vad(),
                     name: downloaded.model.name,
+                    cancel: cancel.clone(),
                 })
             }
             Provider::Claude => return Err("Claude can't transcribe Recordings.".to_owned()),

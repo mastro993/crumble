@@ -14,6 +14,8 @@ use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::{Context, Task, Window};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The Transcripts being made, for whichever Note shows.
 #[derive(Default)]
@@ -40,16 +42,17 @@ impl Transcription {
     pub(super) fn job(&self, id: &NoteId) -> Option<&Job> {
         self.running
             .as_ref()
-            .filter(|job| &job.note == id && !job.cancelled)
+            .filter(|job| &job.note == id && !job.cancel.load(Ordering::Relaxed))
     }
 }
 
 pub(super) struct Job {
     note: NoteId,
     pub(super) stage: Stage,
-    /// Whether its Note no longer wants it. A blocking call into Swift cannot be stopped, so a
-    /// cancelled job still holds the slot until it ends, and its result is dropped.
-    cancelled: bool,
+    /// Set once its Note no longer wants it, which stops a Local Model's worker. A blocking call
+    /// into Swift or a server's answer cannot be stopped, so a cancelled job still holds the slot
+    /// until it ends, and its result is dropped.
+    cancel: Arc<AtomicBool>,
     /// Receives the job's updates; dropping it drops the job's result.
     _updates: Task<()>,
 }
@@ -223,7 +226,7 @@ impl NativeView {
         transcription.queue.retain(|(queued, _)| queued != id);
         transcription.failed.remove(id);
         if let Some(job) = transcription.running.as_mut().filter(|job| &job.note == id) {
-            job.cancelled = true;
+            job.cancel.store(true, Ordering::Relaxed);
         }
     }
 
@@ -232,7 +235,8 @@ impl NativeView {
         if self.note_detail.transcription.running.is_some() {
             return;
         }
-        let Some((id, transcriber)) = self.next_transcriber() else {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let Some((id, transcriber)) = self.next_transcriber(&cancel) else {
             return;
         };
         let dir = self.notes.recording_dir(&id);
@@ -263,7 +267,7 @@ impl NativeView {
         self.note_detail.transcription.running = Some(Job {
             note: id,
             stage: Stage::Starting,
-            cancelled: false,
+            cancel,
             _updates: updates,
         });
     }
@@ -272,13 +276,16 @@ impl NativeView {
     /// its Transcript tab offers to transcribe it, when its Model is remote and the user has not
     /// agreed to send audio to it, as when its Model or host changed since they did, or when the
     /// server was local as it was queued.
-    fn next_transcriber(&mut self) -> Option<(NoteId, Box<dyn Transcriber + Send>)> {
+    fn next_transcriber(
+        &mut self,
+        cancel: &Arc<AtomicBool>,
+    ) -> Option<(NoteId, Box<dyn Transcriber + Send>)> {
         while let Some((id, provider)) = self.note_detail.transcription.queue.pop_front() {
             let local = runs_locally(provider, self.store.openai_base_url());
             if !local && self.consent_needed(provider).is_some() {
                 continue;
             }
-            match self.transcriber(provider) {
+            match self.transcriber(provider, cancel) {
                 Ok(transcriber) => return Some((id, transcriber)),
                 Err(message) => {
                     let failure = Failure::Transcribe {
@@ -305,7 +312,7 @@ impl NativeView {
                 locale,
                 result,
             } => {
-                let cancelled = job.cancelled;
+                let cancelled = job.cancel.load(Ordering::Relaxed);
                 transcription.running = None;
                 match result {
                     _ if cancelled => {}

@@ -1,10 +1,13 @@
 //! A Local Model: one Crumble downloaded, run in a worker process (`worker`) so a crash in it
 //! cannot end the app. A worker killed by a signal, as a GPU fault ends one, runs once more on
-//! the CPU (ADR 0010).
+//! the CPU (ADR 0010). The worker stops when its stdin closes: when the job is cancelled, or
+//! when Crumble quits or crashes.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -20,6 +23,8 @@ pub struct Local {
     pub vad: PathBuf,
     /// The Model's name, as the Transcript records it.
     pub name: String,
+    /// Set when the job is no longer wanted; the worker is stopped.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl Transcriber for Local {
@@ -74,14 +79,27 @@ impl Local {
             .arg(language)
             .arg(if cpu { "cpu" } else { "gpu" })
             .args(tracks.iter().map(|(_, path)| path))
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .context("Couldn't start transcribing.")?;
+        let (stdin, stdout) = (child.stdin.take(), child.stdout.take());
+        let finished = AtomicBool::new(false);
         let mut segments = Vec::new();
         let mut said = None;
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        std::thread::scope(|scope| {
+            // Closing the worker's stdin stops it.
+            scope.spawn(|| {
+                let _stdin = stdin;
+                while !finished.load(Ordering::Relaxed) && !self.cancel.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            });
+            for line in stdout
+                .into_iter()
+                .flat_map(|out| BufReader::new(out).lines())
+            {
+                let Ok(line) = line else { break };
                 match Line::parse(&line, tracks) {
                     Some(Line::Progress(fraction)) => progress(fraction),
                     Some(Line::Segment(index, segment)) => segments.push((index, segment)),
@@ -89,7 +107,8 @@ impl Local {
                     None => eprintln!("Transcription worker said: {line}"),
                 }
             }
-        }
+            finished.store(true, Ordering::Relaxed);
+        });
         let status = child
             .wait()
             .context("Couldn't transcribe this recording.")?;

@@ -26,6 +26,12 @@ pub fn run_if_asked() -> Option<ExitCode> {
     if args.next()? != FLAG {
         return None;
     }
+    // Crumble closes stdin when it cancels the job, quits or crashes: stop rather than work for
+    // no one.
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        quit_now();
+    });
     Some(match work(args.collect()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -173,4 +179,15 @@ fn milliseconds(samples: usize) -> i64 {
 /// `text` with tabs and line breaks as spaces, so it fits one line of output.
 fn one_line(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
+}
+
+/// Ends the process with code 1 at once. `std::process::exit` runs ggml's C++ destructors while
+/// its threads still compute, which kills the worker with SIGILL, read as a GPU fault.
+#[allow(unsafe_code)]
+fn quit_now() -> ! {
+    unsafe extern "C" {
+        fn _exit(code: i32) -> !;
+    }
+    // SAFETY: `_exit` takes any code and never returns.
+    unsafe { _exit(1) }
 }
