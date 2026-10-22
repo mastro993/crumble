@@ -8,6 +8,7 @@ mod download;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use anyhow::Context;
 
@@ -24,6 +25,15 @@ fn vad_file() -> ModelFile {
         size: 1_241_056,
         sha256: "0d871a800c420fdd5d1b17a3aea4296d1c39608f0ff4a9295eb76457eb1c88e6".to_owned(),
     }
+}
+
+/// Held while a download fetches the VAD file or saves its list entry, and while a delete decides
+/// whether the VAD file goes: so downloads running at once never fetch it into one partial file
+/// together, and a delete never takes it from a Model still downloading.
+static VAD: Mutex<()> = Mutex::new(());
+
+fn lock_vad() -> MutexGuard<'static, ()> {
+    VAD.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A downloaded Local Model.
@@ -111,23 +121,37 @@ impl Library {
         progress: &mut dyn FnMut(u64, u64),
         cancel: &AtomicBool,
     ) -> anyhow::Result<Outcome> {
-        if !self.vad().exists() {
-            let outcome =
-                download::fetch(&vad_file(), &self.dir, &model.name, &mut |_, _| {}, cancel)?;
-            if outcome == Outcome::Cancelled {
-                return Ok(outcome);
-            }
+        if self.fetch_vad(&model.name, cancel, &lock_vad())? == Outcome::Cancelled {
+            return Ok(Outcome::Cancelled);
         }
         let outcome = download::fetch(&model.file, &self.dir, &model.name, progress, cancel)?;
-        if outcome == Outcome::Done {
-            let entry =
-                serde_json::to_vec_pretty(model).context("Couldn't save the Model's details.")?;
-            fs::write(self.entry(&model.slug), entry).map_err(|error| {
-                eprintln!("Could not save {}'s list entry: {error}", model.name);
-                anyhow::anyhow!("Couldn't save {} on this Mac.", model.name)
-            })?;
+        if outcome == Outcome::Cancelled {
+            return Ok(outcome);
         }
-        Ok(outcome)
+        // Deleting the last other Model while this one downloaded took the VAD file with it.
+        // The Model is in place by now, so this fetch is not cancelled.
+        let vad = lock_vad();
+        self.fetch_vad(&model.name, &AtomicBool::new(false), &vad)?;
+        let entry =
+            serde_json::to_vec_pretty(model).context("Couldn't save the Model's details.")?;
+        fs::write(self.entry(&model.slug), entry).map_err(|error| {
+            eprintln!("Could not save {}'s list entry: {error}", model.name);
+            anyhow::anyhow!("Couldn't save {} on this Mac.", model.name)
+        })?;
+        Ok(Outcome::Done)
+    }
+
+    /// Fetches the VAD file, for `name`, unless it is there; `_vad` shows the lock is held.
+    fn fetch_vad(
+        &self,
+        name: &str,
+        cancel: &AtomicBool,
+        _vad: &MutexGuard<'static, ()>,
+    ) -> anyhow::Result<Outcome> {
+        if self.vad().exists() {
+            return Ok(Outcome::Done);
+        }
+        download::fetch(&vad_file(), &self.dir, name, &mut |_, _| {}, cancel)
     }
 
     /// Deletes the downloaded Model `slug`, with what a cancelled download of it left, and the
@@ -138,6 +162,7 @@ impl Library {
             remove(&self.dir.join(format!("{}.partial", model.file.filename)))?;
         }
         remove(&self.entry(slug))?;
+        let _vad = lock_vad();
         if self.downloaded().is_empty() {
             remove(&self.vad())?;
         }

@@ -88,6 +88,7 @@ pub(crate) fn fetch(
         }
         out.sync_all().map_err(|error| saving(name, &error))?;
     } else {
+        progress(held, file.size);
         hash_file(&partial, &mut hasher).map_err(|error| saving(name, &error))?;
     }
 

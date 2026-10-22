@@ -184,3 +184,36 @@ fn downloads_and_resumes_from_hugging_face() {
     );
     assert_eq!(first, Some(500_000));
 }
+
+/// Deleting the last other Model while one downloads takes the VAD file; the download fetches it
+/// again before the Model shows as downloaded.
+#[test]
+#[ignore = "downloads from Hugging Face"]
+fn a_download_fetches_the_vad_file_again_when_a_delete_took_it() {
+    let folder = Folder::new();
+    let library = Library::at(folder.0.clone());
+    let other = catalog()[1].clone();
+    place(&library, &other);
+    let _ = fs::write(library.vad(), b"vad");
+    let model = Model {
+        file: file(b"weights"),
+        ..catalog()[0].clone()
+    };
+    let _ = fs::write(folder.0.join("m.gguf.partial"), b"weights");
+    let downloaded = library.download(
+        &model,
+        &mut |_, _| {
+            let _ = library.delete(&other.slug);
+        },
+        &AtomicBool::new(false),
+    );
+    assert_eq!(
+        downloaded.map_err(|error| error.to_string()),
+        Ok(Outcome::Done)
+    );
+    assert_eq!(
+        fs::metadata(library.vad()).map(|meta| meta.len()).ok(),
+        Some(vad_file().size)
+    );
+    assert!(library.get(&model.slug).is_some());
+}
