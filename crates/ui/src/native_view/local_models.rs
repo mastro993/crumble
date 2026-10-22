@@ -19,7 +19,6 @@ use gpui_kit::{
     AppContext, Context, Entity, ListAlignment, ListOffset, ListState, SharedString, Subscription,
     Task, Window, px,
 };
-use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -44,6 +43,8 @@ pub(super) struct LocalModels {
     /// The language filter, made the first time the section shows.
     language: Option<Entity<Select<LanguageFilter>>>,
     sort: Entity<Select<Sort>>,
+    /// The picked order, and whether it runs from the most down; picking it again flips it.
+    sorted: (Sort, bool),
     /// The rows the list shows, as last drawn.
     rows: Rc<Vec<Row>>,
     list: ListState,
@@ -75,26 +76,46 @@ enum Row {
     Credit,
 }
 
-/// The order of each group's Models.
+/// What each group's Models are ordered by.
 #[derive(Clone, Copy, PartialEq)]
 enum Sort {
-    /// Handy's recommended Models first, in its order; the rest stay in the list's order.
+    /// Handy's recommended Models, in its order, then the rest in the list's.
     Recommended,
-    /// The most accurate first.
     Accuracy,
-    /// The fastest first.
     Speed,
+    Size,
 }
 
 impl Sort {
-    /// Puts `models` in this order; Models that tie keep theirs.
-    fn apply<T>(self, models: &mut [T], model: impl Fn(&T) -> &Model) {
-        match self {
-            Sort::Recommended => {
-                models.sort_by_key(|item| model(item).recommended.unwrap_or(u32::MAX));
-            }
-            Sort::Accuracy => models.sort_by_key(|item| Reverse(model(item).accuracy)),
-            Sort::Speed => models.sort_by_key(|item| Reverse(model(item).speed)),
+    /// Whether this order first runs from the most down: all but Size, which puts the smallest
+    /// first.
+    fn descending(self) -> bool {
+        self != Sort::Size
+    }
+
+    /// Puts `models` in this order, from the most down when `descending`; Models that tie keep
+    /// theirs.
+    fn apply<T>(self, descending: bool, models: &mut [T], model: impl Fn(&T) -> &Model) {
+        let rank = |model: &Model| model.recommended.unwrap_or(u32::MAX);
+        models.sort_by(|a, b| {
+            let (a, b) = (model(a), model(b));
+            let order = match self {
+                // A lower rank is more recommended.
+                Sort::Recommended => rank(b).cmp(&rank(a)),
+                Sort::Accuracy => a.accuracy.cmp(&b.accuracy),
+                Sort::Speed => a.speed.cmp(&b.speed),
+                Sort::Size => a.file.size.cmp(&b.file.size),
+            };
+            if descending { order.reverse() } else { order }
+        });
+    }
+
+    /// The select's icon for an order running from the most down, or up.
+    fn icon(descending: bool) -> &'static str {
+        if descending {
+            "sort-descending"
+        } else {
+            "sort-ascending"
         }
     }
 }
@@ -107,6 +128,7 @@ impl Choice for Sort {
             Sort::Recommended => "Recommended",
             Sort::Accuracy => "Accuracy",
             Sort::Speed => "Speed",
+            Sort::Size => "Size",
         }
         .into()
     }
@@ -155,11 +177,11 @@ impl LocalModels {
         let sort = cx.new(|cx| {
             Select::new(
                 "Sort",
-                vec![Sort::Recommended, Sort::Accuracy, Sort::Speed],
+                vec![Sort::Recommended, Sort::Accuracy, Sort::Speed, Sort::Size],
                 Some(0),
                 cx,
             )
-            .icon("sort")
+            .icon(Sort::icon(true))
         });
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |view, _, event, _, cx| {
@@ -167,8 +189,17 @@ impl LocalModels {
                     view.local_models.filtered(cx);
                 }
             }),
-            cx.subscribe(&sort, |view, _, _: &Picked<Sort>, cx| {
-                view.local_models.filtered(cx)
+            cx.subscribe(&sort, |view, select, Picked(sort): &Picked<Sort>, cx| {
+                let models = &mut view.local_models;
+                let (last, descending) = models.sorted;
+                let descending = if *sort == last {
+                    !descending
+                } else {
+                    sort.descending()
+                };
+                models.sorted = (*sort, descending);
+                select.update(cx, |select, cx| select.set_icon(Sort::icon(descending), cx));
+                models.filtered(cx);
             }),
         ];
         Self {
@@ -181,6 +212,7 @@ impl LocalModels {
             streaming: false,
             language: None,
             sort,
+            sorted: (Sort::Recommended, true),
             rows: Rc::default(),
             // Every row is measured once, so the scrollbar spans the whole list from the start.
             list: ListState::new(0, ListAlignment::Top, px(200.0)).measure_all(),
@@ -421,16 +453,33 @@ mod tests {
     use crumble_local_models::{Model, catalog};
 
     #[test]
-    fn a_sort_puts_the_best_first_and_keeps_ties_in_order() {
+    fn a_sort_orders_models_either_way_and_keeps_ties_in_order() {
         let mut models: Vec<&Model> = catalog().iter().collect();
-        Sort::Speed.apply(&mut models, |model| model);
+        Sort::Speed.apply(true, &mut models, |model| model);
         assert!(models.windows(2).all(|pair| pair[0].speed >= pair[1].speed));
-        Sort::Accuracy.apply(&mut models, |model| model);
+        Sort::Accuracy.apply(true, &mut models, |model| model);
         assert!(models.windows(2).all(|pair| {
             pair[0].accuracy > pair[1].accuracy
                 || (pair[0].accuracy == pair[1].accuracy && pair[0].speed >= pair[1].speed)
         }));
-        Sort::Recommended.apply(&mut models, |model| model);
+        Sort::Accuracy.apply(false, &mut models, |model| model);
+        assert!(models.windows(2).all(|pair| {
+            pair[0].accuracy < pair[1].accuracy
+                || (pair[0].accuracy == pair[1].accuracy && pair[0].speed >= pair[1].speed)
+        }));
+        Sort::Size.apply(Sort::Size.descending(), &mut models, |model| model);
+        assert!(
+            models
+                .windows(2)
+                .all(|pair| pair[0].file.size <= pair[1].file.size)
+        );
+        Sort::Recommended.apply(true, &mut models, |model| model);
         assert!(models[0].recommended.is_some());
+        Sort::Recommended.apply(false, &mut models, |model| model);
+        assert!(
+            models
+                .last()
+                .is_some_and(|model| model.recommended.is_some())
+        );
     }
 }

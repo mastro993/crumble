@@ -113,6 +113,12 @@ impl<C: Choice> Select<C> {
         self
     }
 
+    /// Shows the app icon `name` before the picked choice instead.
+    pub(super) fn set_icon(&mut self, name: &'static str, cx: &mut Context<Self>) {
+        self.icon = Some(name);
+        cx.notify();
+    }
+
     /// Adds a search field to the menu.
     pub(super) fn searchable(mut self) -> Self {
         self.searchable = true;

@@ -11,7 +11,7 @@ use super::super::settings_page::form::{
 };
 use super::super::settings_page::{SettingsSection, centered, title};
 use super::card::{Card, Place};
-use super::{LanguageFilter, Row, Sort, language_filters};
+use super::{LanguageFilter, Row, language_filters};
 use crumble_local_models::{Downloaded, Filter, Model, catalog};
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::scroll::ScrollableElement;
@@ -117,7 +117,7 @@ impl NativeView {
         let models = &self.local_models;
         let query = models.search.read(cx).value().to_string();
         let code = language.read(cx).selected_value().cloned().flatten();
-        let sort = (models.sort.read(cx).selected_value().copied()).unwrap_or(Sort::Recommended);
+        let (sort, descending) = models.sorted;
         let filter = Filter {
             query: &query,
             streaming: models.streaming,
@@ -131,7 +131,7 @@ impl NativeView {
         let mut matching: Vec<&Downloaded> = (models.downloaded.iter())
             .filter(|downloaded| downloaded.model.matches(&filter))
             .collect();
-        sort.apply(&mut matching, |downloaded| &downloaded.model);
+        sort.apply(descending, &mut matching, |downloaded| &downloaded.model);
         downloaded.extend(matching.into_iter().map(|downloaded| {
             Some(Card::Downloaded(
                 Box::new(downloaded.model.clone()),
@@ -148,7 +148,7 @@ impl NativeView {
                     && !(models.downloaded.iter()).any(|d| d.model.slug == model.slug)
             })
             .collect();
-        sort.apply(&mut available, |model| model);
+        sort.apply(descending, &mut available, |model| model);
         let shown = any_downloaded || !available.is_empty();
         rows.push(Row::Label("Available to download"));
         push_group(
