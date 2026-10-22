@@ -20,9 +20,9 @@ chrono-tz = "0.10"
 diesel = { version = "2.3.14", default-features = false, features = ["sqlite", "32-column-tables"] }
 diesel_migrations = { version = "2.3.2", default-features = false, features = ["sqlite"] }
 dirs = "6.0"
-gpui-kit = "=0.7.0"
+gpui-kit = "=0.8.0"
 # GPUI core for crates that hold entities but no components; the version gpui-kit pins.
-gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui = { package = "gpui-pre", version = "=0.3.9" }
 crumble-audio = { path = "crates/audio" }
 crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
@@ -35,7 +35,7 @@ crumble-summarize = { path = "crates/summarize" }
 crumble-sync = { path = "crates/sync" }
 crumble-transcribe = { path = "crates/transcribe" }
 # Agent automation for `--features mcp` builds. The rev matches the `gpui-mcp` server it talks to.
-gpui-mcp = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb49990261e3fdaa26abe38112d30dafb", default-features = false, features = ["gpui-pre"] }
+gpui-mcp = { git = "https://github.com/mastro993/gpui-mcp", rev = "ac1585046143b30dadfbcaff4ddf15b4aff42d71", default-features = false, features = ["gpui-pre"] }
 crumble-theme = { path = "crates/theme" }
 crumble-ui = { path = "crates/ui" }
 uuid = { version = "1.28", features = ["v7"] }
@@ -91,4 +91,4 @@ strip = "debuginfo"
 # gpui-mcp needs GPUI's automation hooks, so every build links its patched copy of gpui-pre.
 # Cargo patches apply to the whole workspace; drop this once the hooks land upstream.
 [patch.crates-io]
-gpui-pre = { git = "https://github.com/themixednuts/gpui-mcp", rev = "9dda8e5cb49990261e3fdaa26abe38112d30dafb" }
+gpui-pre = { git = "https://github.com/mastro993/gpui-mcp", rev = "ac1585046143b30dadfbcaff4ddf15b4aff42d71" }

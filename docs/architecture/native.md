@@ -51,4 +51,5 @@ Each area has its own page:
 
 - `cargo run -p crumble --features mcp` installs a [gpui-mcp](https://github.com/themixednuts/gpui-mcp) bridge on the main window under the app ID `crumble`. The `gpui-mcp` server in `.mcp.json` finds it, and agents can then read the semantic tree, click, type, and take window screenshots through GPUI's own event pipeline instead of the system mouse. Builds without the feature carry no bridge.
 - The bridge needs GPUI automation hooks, so the workspace patches `gpui-pre` with gpui-mcp's copy for every build. The bridge and the patch are pinned to the same gpui-mcp revision as the installed server; update all three together.
+- GPUI Kit 0.8.0 needs `gpui-pre` 0.3.9, which upstream gpui-mcp does not vendor yet, so the pin points at the `gpui-pre-0.3.9` branch of the [mastro993/gpui-mcp](https://github.com/mastro993/gpui-mcp) fork. Move back to upstream once it vendors 0.3.9.
 - Only elements with an `.id(...)` appear in the tree. In GPUI Kit 0.7.0 a Select's options are drawn but not published, so pick them with the keyboard.

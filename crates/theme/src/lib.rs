@@ -204,6 +204,13 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
         (PAGE, ESPRESSO, SHELL, ROW_FILL, FILL, CARD, BROWN, inks)
     };
     let [muted_text, ring, selection] = inks;
+    // The backdrop behind a dialog: the page at 70%, a frosted wash in place of a blur, which
+    // GPUI cannot draw.
+    let overlay = if mode.is_dark() {
+        "#14100cb3"
+    } else {
+        "#fcf8f3b3"
+    };
     let color = |value: &str| Some(SharedString::new(value));
     // Built field by field: the struct has private fields, so `..Default::default()` is out.
     let mut colors = ThemeConfigColors::default();
@@ -221,6 +228,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     colors.border = color(fill);
     colors.ring = color(ring);
     colors.selection = color(selection);
+    colors.overlay = color(overlay);
     ThemeConfig {
         name: "Crumble".into(),
         mode,
@@ -260,6 +268,7 @@ mod tests {
                 colors.border,
                 colors.ring,
                 colors.selection,
+                colors.overlay,
             ];
             for value in values.into_iter().flatten() {
                 assert!(try_parse_color(&value).is_ok(), "{mode:?}: {value}");

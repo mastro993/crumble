@@ -18,6 +18,7 @@ use crumble_eventkit::Event;
 use crumble_notes::{NoteId, RecordingInfo};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::{Context, Entity, Subscription, Task, Window};
 use std::time::Duration;
@@ -216,6 +217,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id) = (view.clone(), id.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title("Delete this recording?")
                 .description("Its audio is deleted from this Mac. This can't be undone.")
                 .show_cancel(true)

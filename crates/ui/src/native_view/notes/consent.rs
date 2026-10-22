@@ -9,6 +9,7 @@ use crumble_store::secrets;
 use crumble_transcribe::{Apple, OpenAiCompatible, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::{Context, Window};
 
 /// The Providers that transcribe, in the order Settings and the Note actions menu list them.
@@ -88,6 +89,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id, model, host) = (view.clone(), id.clone(), model.clone(), host.clone());
             alert
+                .entrance(DialogEntrance::Fade)
                 .title(format!("Send this Recording to {}?", provider.name()))
                 .description(format!(
                     "Crumble will upload the audio of this Recording to {host} to make its \

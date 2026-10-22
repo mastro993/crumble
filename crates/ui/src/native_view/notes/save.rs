@@ -6,6 +6,7 @@ use chrono::Utc;
 use crumble_notes::{Note, NoteId};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
+use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::{Context, Task, Window};
 use std::time::Duration;
 
@@ -27,6 +28,7 @@ impl NativeView {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let view = view.clone();
             alert
+                .entrance(DialogEntrance::Fade)
                 .title("Close without saving?")
                 .description("Some notes couldn't be saved. Closing loses their changes.")
                 .show_cancel(true)
