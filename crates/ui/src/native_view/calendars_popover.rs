@@ -6,14 +6,14 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use super::NativeView;
-use super::menu::{SUBMENU_CLOSE_DELAY, opening, panel};
+use super::menu::{SUBMENU_CLOSE_DELAY, opening, panel, scrolling};
 use super::rail::rail_button;
 use crumble_theme::menu::{PADDING, WINDOW_MARGIN};
 use crumble_theme::sidebar::{DETAIL_SIZE, ROW_PADDING, SECTION_HEIGHT};
 use gpui_kit::base::{Align, POPUP_PRIORITY, Placement, Positioner};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
-    App, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Pixels,
+    App, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Pixels, ScrollHandle,
     StatefulInteractiveElement, Styled, Task, Window, canvas, deferred, div, px,
 };
 
@@ -36,6 +36,8 @@ pub(super) struct CalendarsPopover {
     popover: Rc<Cell<Bounds<Pixels>>>,
     /// Opens or closes the popover once the pointer has stayed for the delay.
     pending: Option<Task<()>>,
+    /// The rows' scroll, which their scrollbar follows.
+    rows: ScrollHandle,
 }
 
 impl CalendarsPopover {
@@ -150,14 +152,11 @@ impl NativeView {
                         .inset_0(),
                 )
                 .child(title)
-                .child(
-                    div()
-                        .id("calendars-popover-rows")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .children(self.render_calendars_section(window, cx)),
-                );
+                .child(scrolling(
+                    "calendars-popover-rows",
+                    &self.calendars_popover.rows,
+                    self.render_calendars_section(window, cx),
+                ));
             deferred(
                 Positioner::side(bounds.get())
                     .placement(Placement::Right)

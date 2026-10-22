@@ -1,5 +1,7 @@
-//! The app's context menu: rows with an icon, a label, and a trailing check or submenu chevron,
-//! opened at the pointer above a backdrop that swallows clicks outside it.
+//! The app's context menu: rows with an icon, a label and an optional description, and a
+//! trailing check or submenu chevron, opened at the pointer or under a select above a backdrop
+//! that swallows clicks outside it. A select's menu can have a search field that hides the rows
+//! whose label lacks its text.
 //!
 //! GPUI Kit's `PopupMenu` fixes its row height, separators, and corners and cannot animate in,
 //! so Crumble draws its own. One `Menu` entity holds a menu, its open submenu, and the panel one
@@ -7,17 +9,20 @@
 
 mod input;
 mod render;
+mod search;
 
-pub(super) use render::{opening, panel};
+pub(super) use render::{opening, panel, scrolling};
+pub(super) use search::Place;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::base::POPUP_PRIORITY;
+use gpui_kit::component::input::InputState;
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    IntoElement, Pixels, Point, SharedString, Subscription, Task, Window, deferred,
+    IntoElement, Pixels, ScrollHandle, SharedString, Subscription, Task, Window, deferred,
 };
 
 /// How long a submenu stays open once the pointer moves onto another row, so a diagonal move
@@ -31,9 +36,13 @@ type Content = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 pub(super) struct MenuItem {
     id: SharedString,
     label: SharedString,
+    /// A muted line under the label.
+    description: Option<SharedString>,
     leading: Option<Leading>,
     checked: Option<bool>,
     disabled: bool,
+    /// Left out by the search field's text.
+    hidden: bool,
     kind: Kind,
 }
 
@@ -64,9 +73,11 @@ impl MenuItem {
         Self {
             id: id.into(),
             label: label.into(),
+            description: None,
             leading: None,
             checked: None,
             disabled: false,
+            hidden: false,
             kind: Kind::Action(None),
         }
     }
@@ -87,6 +98,12 @@ impl MenuItem {
     /// Leads the row with any element that fits the icon slot, such as a color dot.
     pub(super) fn leading(mut self, element: impl Fn(&App) -> AnyElement + 'static) -> Self {
         self.leading = Some(Leading::Element(Rc::new(element)));
+        self
+    }
+
+    /// Adds a muted line under the label.
+    pub(super) fn description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
         self
     }
 
@@ -129,7 +146,7 @@ impl MenuItem {
 
     /// Whether the pointer and the keyboard can highlight the row.
     fn selectable(&self) -> bool {
-        !self.disabled && !matches!(self.kind, Kind::Separator)
+        !self.disabled && !self.hidden && !matches!(self.kind, Kind::Separator)
     }
 
     fn submenu_items(&self) -> Option<&[MenuItem]> {
@@ -163,8 +180,7 @@ fn step(items: &[MenuItem], from: Option<usize>, down: bool) -> Option<usize> {
 /// A menu and its open submenu.
 pub(super) struct Menu {
     items: Vec<MenuItem>,
-    /// Where the menu's top-left corner was asked to be, in window coordinates.
-    position: Point<Pixels>,
+    place: Place,
     focus: FocusHandle,
     /// Where focus returns when the menu closes.
     restore: FocusHandle,
@@ -172,6 +188,10 @@ pub(super) struct Menu {
     fallback: FocusHandle,
     /// The highlighted row.
     highlight: Option<usize>,
+    /// Scrolls the rows once a select's menu reaches its maximum height.
+    scroll: ScrollHandle,
+    /// The field that filters a select's rows.
+    search: Option<Entity<InputState>>,
     submenu: Option<Submenu>,
     /// Where each row was last drawn; a submenu opens beside its row.
     row_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
@@ -182,7 +202,7 @@ pub(super) struct Menu {
     /// Closes the panel once the pointer has stayed off its row for `SUBMENU_CLOSE_DELAY`.
     closing_panel: Option<Task<()>>,
     closed: bool,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: Vec<Subscription>,
 }
 
 struct Submenu {
@@ -199,7 +219,7 @@ impl EventEmitter<DismissEvent> for Menu {}
 impl Menu {
     fn new(
         items: Vec<MenuItem>,
-        position: Point<Pixels>,
+        place: Place,
         fallback: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -207,7 +227,7 @@ impl Menu {
         let focus = cx.focus_handle();
         // Tab moves focus elsewhere, a shortcut acts on the window under the menu, and a menu
         // does not outlive its app going to the background.
-        let subscriptions = [
+        let subscriptions = vec![
             cx.on_focus_out(&focus, window, |menu, _, window, cx| {
                 // Focus left with a panel that closed while it held focus; the menu takes it back.
                 if menu.fallback.contains_focused(window, cx) {
@@ -218,7 +238,7 @@ impl Menu {
             }),
             // Keys typed into a panel, such as a hex field's, run actions of their own.
             cx.observe_keystrokes(|menu, event, window, cx| {
-                if event.action.is_some() && !menu.panel_focused(window, cx) {
+                if event.action.is_some() && !menu.inner_focused(window, cx) {
                     menu.close(window, cx);
                 }
             }),
@@ -231,11 +251,13 @@ impl Menu {
         Self {
             row_bounds: Rc::new(RefCell::new(vec![Bounds::default(); items.len()])),
             items,
-            position,
+            place,
             focus,
             restore: window.focused(cx).unwrap_or_else(|| fallback.clone()),
             fallback,
             highlight: None,
+            scroll: ScrollHandle::new(),
+            search: None,
             submenu: None,
             closing_submenu: None,
             panel_row: Rc::new(Cell::new(Bounds::default())),
@@ -274,19 +296,20 @@ pub(super) struct OpenMenu {
 }
 
 impl OpenMenu {
-    /// Opens `items` at `position` for the element `owner` of a view `V`, whose own focus is
+    /// Opens `items` at `place` for the element `owner` of a view `V`, whose own focus is
     /// `fallback`. `V` must store the result in the field `slot` returns and draw it with
-    /// [`OpenMenu::render`]. Call it from a mouse-down listener.
+    /// [`OpenMenu::render`]. Call it from a mouse-down or click listener.
     pub(super) fn new<V: 'static>(
         owner: impl Into<SharedString>,
         items: Vec<MenuItem>,
-        position: Point<Pixels>,
+        place: impl Into<Place>,
         fallback: FocusHandle,
         window: &mut Window,
         cx: &mut Context<V>,
         slot: fn(&mut V) -> &mut Option<OpenMenu>,
     ) -> Self {
-        let menu = cx.new(|cx| Menu::new(items, position, fallback, window, cx));
+        let place = place.into();
+        let menu = cx.new(|cx| Menu::new(items, place, fallback, window, cx));
         let dismiss = cx.subscribe(&menu, move |view, menu, _: &DismissEvent, cx| {
             let open = slot(view);
             if open.as_ref().is_some_and(|open| open.menu == menu) {

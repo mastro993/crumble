@@ -14,11 +14,12 @@ use crumble_calendar::{local_midnight, today};
 use crumble_eventkit::{Access, Event};
 use crumble_notes::{Note, Notes};
 use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, App, Context, Hsla, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, Window, div, ease_out_quint,
-    linear_color_stop, linear_gradient, list, prelude::FluentBuilder, px,
+    Animation, AnimationExt, AnyElement, App, Context, Hsla, IntoElement, ParentElement, Styled,
+    Window, div, ease_out_quint, linear_color_stop, linear_gradient, list, prelude::FluentBuilder,
+    px,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -303,14 +304,14 @@ impl NativeView {
         };
         let content = self.agenda.selected.is_some().then(|| {
             div()
-                .id("agenda-content")
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .overflow_y_scroll()
                 .px(px(CONTENT_PADDING))
                 .pb_6()
                 .child(self.render_note_detail(cx))
+                .overflow_y_scrollbar()
+                .id("agenda-content")
         });
         h_flex()
             .size_full()

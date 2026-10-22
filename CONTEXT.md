@@ -69,7 +69,7 @@ _Avoid_: nickname, display name, rename
 The list of every Account that is not Disabled, in a popover beside the rail's Calendars button. Its title says "Calendars" even though each row is an Account.
 
 **Settings page**:
-The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, turns Suggestions on or off, and picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. It is split into sections picked from a sidebar at its leading edge, grouped under Calendar (General, Calendars) and Notes (Recording, Models, Providers). Written "Settings" when nothing else could be meant.
+The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, turns Suggestions on or off, and downloads and deletes Local Models, picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. It is split into sections picked from a sidebar at its leading edge, grouped under Calendar (General, Calendars) and Notes (Recording, Transcription, Local Models, Summary, Providers). Written "Settings" when nothing else could be meant.
 _Avoid_: preferences, options
 
 ### Agenda
@@ -121,8 +121,12 @@ What turns a Recording into a Transcript, or a Transcript into a Summary. The us
 _Avoid_: engine, backend, AI
 
 **Provider**:
-Where a Model runs: on the Mac, such as Apple's on-device Models, or remotely, such as Anthropic or any OpenAI-compatible server.
+Where a Model runs: on the Mac, such as Apple's on-device Models or Crumble's own Local Models, or remotely, such as Anthropic or any OpenAI-compatible server.
 _Avoid_: vendor, service, backend
+
+**Local Model**:
+A Model that makes Transcripts, which Crumble downloads and runs itself, on the Mac. It is kept until the user deletes it. Apple's Model is not a Local Model: macOS ships and updates it.
+_Avoid_: offline model, speech model, downloaded model
 
 ## Relationships
 
@@ -139,6 +143,7 @@ _Avoid_: vendor, service, backend
 - One occurrence of an **Event** has at most one **Note**, which every **Calendar** showing that occurrence shares; a **Note** belongs to at most one occurrence, never to a whole repeating series
 - A **Note** has at most one **Recording**; its **Transcript** comes from that **Recording** and its **Summary** from that **Transcript** only, never from the **Memo**
 - A **Note** follows its **Event**'s **Disabled** and **Hidden** state; a **Quick note** is always shown
+- A **Local Model** can make a **Transcript** only once it is downloaded; its **Provider** is Crumble, on the Mac
 
 ## Example dialogue
 

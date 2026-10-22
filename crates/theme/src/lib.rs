@@ -105,6 +105,12 @@ pub mod menu {
     pub const SUBMENU_OVERLAP: f32 = 4.0;
     /// Closest a menu comes to the window edges.
     pub const WINDOW_MARGIN: f32 = 8.0;
+    /// Space above and below a row with a description.
+    pub const DESCRIPTION_PADDING: f32 = 6.0;
+    /// Tallest a select's menu is drawn before its rows scroll.
+    pub const MAX_HEIGHT: f32 = 320.0;
+    /// Space between a select and the menu under it.
+    pub const SELECT_GAP: f32 = 6.0;
 
     /// The menu surface, a step above the sidebar it opens over. The dark popover is darker
     /// than the dark sidebar, so dark mode lifts it to the muted color.
@@ -134,6 +140,13 @@ pub mod menu {
                 .spread_radius(px(-4.)),
         ]
     }
+}
+
+/// The hairline between the rows of a card: the ink at 6%, or 8% in dark mode.
+pub fn divider(theme: &Theme) -> Hsla {
+    theme
+        .foreground
+        .opacity(if theme.is_dark() { 0.08 } else { 0.06 })
 }
 
 /// Unselected icons and hints, a step below secondary text.
@@ -174,11 +187,11 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     const ESPRESSO: &str = "#1f150a";
     const BROWN: &str = "#3e2b13";
     const SHELL: &str = "#f7f0e7";
-    const PAGE: &str = "#fcf8f3";
-    const CARD: &str = "#fcf9f5";
+    const PAGE: &str = "#fefcf9";
+    const CARD: &str = "#ffffff";
     const FILL: &str = "#f2e5d5";
     const ROW_FILL: &str = "#f4eadd";
-    const DARK_PAGE: &str = "#14100c";
+    const DARK_PAGE: &str = "#0d0a07";
     const DARK_CARD: &str = "#201b15";
     const DARK_SIDEBAR: &str = "#221c15";
     const DARK_FILL: &str = "#3a3228";
@@ -186,23 +199,36 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     // Secondary text and icons, focus rings, and text selection are tints of the second ink,
     // the last at a fifth strength. Light secondary text is at 84%, and its focus ring at 54%
     // clears 3:1 on the fills. Dark secondary text is at 96.5% and its ring at half.
-    let (background, foreground, sidebar, row_fill, fill, card, primary, inks) = if mode.is_dark() {
-        let inks = ["#f0e2d0f6", "#f0e2d080", "#f0e2d033"];
-        // One fill for sidebar rows, the rail, the Agenda list and borders.
-        (
-            DARK_PAGE,
-            CREAM,
-            DARK_SIDEBAR,
-            DARK_FILL,
-            DARK_FILL,
-            DARK_CARD,
-            CREAM,
-            inks,
-        )
-    } else {
-        let inks = ["#3e2b13d6", "#3e2b138a", "#3e2b1333"];
-        (PAGE, ESPRESSO, SHELL, ROW_FILL, FILL, CARD, BROWN, inks)
-    };
+    // The edge of cards and controls is the ink at 6%, or 7% in dark mode.
+    let (background, foreground, sidebar, row_fill, fill, card, primary, inks, edge) =
+        if mode.is_dark() {
+            let inks = ["#f0e2d0f6", "#f0e2d080", "#f0e2d033"];
+            // One fill for sidebar rows, the rail, the Agenda list and borders.
+            (
+                DARK_PAGE,
+                CREAM,
+                DARK_SIDEBAR,
+                DARK_FILL,
+                DARK_FILL,
+                DARK_CARD,
+                CREAM,
+                inks,
+                "#faf5ef12",
+            )
+        } else {
+            let inks = ["#3e2b13d6", "#3e2b138a", "#3e2b1333"];
+            (
+                PAGE,
+                ESPRESSO,
+                SHELL,
+                ROW_FILL,
+                FILL,
+                CARD,
+                BROWN,
+                inks,
+                "#1f150a0f",
+            )
+        };
     let [muted_text, ring, selection] = inks;
     // The backdrop behind a dialog: the page at 70%, a frosted wash in place of a blur, which
     // GPUI cannot draw.
@@ -226,6 +252,16 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     colors.muted = color(fill);
     colors.muted_foreground = color(muted_text);
     colors.border = color(fill);
+    // gpui-kit draws its fields' and buttons' edges in `input`, and Crumble its cards' and
+    // selects'.
+    colors.input = color(edge);
+    // gpui-kit derives button fills from `input`; keep them on the fill.
+    let tint = |alpha: &str| color(&format!("{fill}{alpha}"));
+    colors.button_hover = tint("80");
+    colors.button_active = tint("b3");
+    if mode.is_dark() {
+        colors.button = tint("4d");
+    }
     colors.ring = color(ring);
     colors.selection = color(selection);
     colors.overlay = color(overlay);
@@ -266,6 +302,10 @@ mod tests {
                 colors.muted,
                 colors.muted_foreground,
                 colors.border,
+                colors.input,
+                colors.button,
+                colors.button_hover,
+                colors.button_active,
                 colors.ring,
                 colors.selection,
                 colors.overlay,

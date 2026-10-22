@@ -70,6 +70,11 @@ pub fn request_mic_access(done: impl FnOnce(bool) + Send + 'static) {
 }
 
 /// Always errors.
+pub fn read_samples(_file: &Path, _sample_rate: f64) -> anyhow::Result<Vec<f32>> {
+    bail!("reading audio needs macOS")
+}
+
+/// Always errors.
 pub fn recorded_length(_dir: &Path) -> anyhow::Result<Duration> {
     bail!("recordings need macOS")
 }

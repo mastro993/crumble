@@ -10,15 +10,15 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use super::menu::{SUBMENU_CLOSE_DELAY, opening, panel};
+use super::menu::{SUBMENU_CLOSE_DELAY, opening, panel, scrolling};
 use crumble_theme::menu::WINDOW_MARGIN;
 use gpui_kit::base::{Align, POPUP_PRIORITY, Placement, Positioner, TestSupportExt};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::{
     Anchor, AnyElement, App, Bounds, Context, ElementId, InteractiveElement, IntoElement,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Task, Window, canvas, deferred, div,
-    phi, px,
+    ParentElement, Pixels, ScrollHandle, StatefulInteractiveElement, Styled, Task, Window, canvas,
+    deferred, div, phi, px,
 };
 
 /// How long the pointer rests on the trigger before the card opens.
@@ -148,10 +148,13 @@ pub(super) fn click_card(
         .appearance(false)
         .trigger(trigger)
         .content(move |_, window, cx| {
+            let scroll = window
+                .use_keyed_state("click-card-scroll", cx, |_, _| ScrollHandle::new())
+                .read(cx)
+                .clone();
             let surface = surface("click-card", cx)
                 .max_h(px(CLICK_MAX_HEIGHT))
-                .overflow_y_scroll()
-                .child(content(window, cx));
+                .child(scrolling("click-card-rows", &scroll, [content(window, cx)]));
             opening(surface, "click-card-open", window, cx)
         })
 }

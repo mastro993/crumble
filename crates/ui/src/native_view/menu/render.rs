@@ -1,20 +1,22 @@
 //! How a menu draws: the backdrop, the menu, submenu, and panel surfaces, and their rows.
 
 use super::super::controls::app_icon;
-use super::{Kind, Leading, Menu, MenuItem};
+use super::{Kind, Leading, Menu, MenuItem, Place};
 use crumble_theme::SURFACE_RADIUS;
 use crumble_theme::menu::{
-    DISABLED_OPACITY, HIGHLIGHT_INK, LABEL_SIZE, LINE_INK, MIN_WIDTH, PADDING, SEPARATOR_MARGIN,
-    SUBMENU_OVERLAP, TRAILING_SIZE, WINDOW_MARGIN, shadow, surface,
+    DESCRIPTION_PADDING, DISABLED_OPACITY, HIGHLIGHT_INK, LABEL_SIZE, LINE_INK, MAX_HEIGHT,
+    MIN_WIDTH, PADDING, SELECT_GAP, SEPARATOR_MARGIN, SUBMENU_OVERLAP, TRAILING_SIZE,
+    WINDOW_MARGIN, shadow, surface,
 };
 use crumble_theme::sidebar::{ICON_GAP, ICON_SIZE, ROW_HEIGHT, ROW_PADDING};
 use gpui_kit::base::{Align, Placement, Positioner, TestSupportExt};
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::{
-    Anchor, Animation, AnimationElement, AnimationExt, AnyElement, App, Bounds, Context,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Role, SharedString,
-    StatefulInteractiveElement, Styled, Toggled, Window, canvas, div, point,
-    prelude::FluentBuilder, px, size,
+    Anchor, Animation, AnimationElement, AnimationExt, AnyElement, App, Bounds, Context, Div,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Role, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Toggled, Window, anchored, canvas, div,
+    point, prelude::FluentBuilder, px, size,
 };
 
 impl Render for Menu {
@@ -29,25 +31,36 @@ impl Render for Menu {
         let menu = panel(div().id("menu").test_support(), cx)
             .role(Role::Menu)
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key_down))
-            .children(rows)
+            .on_key_down(cx.listener(Self::key_down));
+        let menu = self
+            .search_keys(menu, cx)
+            .when_some(self.render_search(cx), |menu, search| menu.child(search))
+            .child(scrolling("menu-rows", &self.scroll, rows))
             .children(self.render_submenu(window, cx));
+        let (positioner, menu) = match self.place {
+            Place::At(position) => (Positioner::corner(Anchor::TopLeft, position), menu),
+            Place::Below(select) => (
+                Positioner::side(select)
+                    .placement(Placement::Bottom)
+                    .align(Align::End)
+                    .offset(px(SELECT_GAP)),
+                menu.min_w(select.size.width.max(px(MIN_WIDTH)))
+                    .max_h(px(MAX_HEIGHT)),
+            ),
+        };
         let menu = opening(menu, "menu-open", window, cx);
         // Over the whole window, so a press outside the menu closes it instead of reaching
-        // what is underneath.
-        div()
-            .id("menu-backdrop")
-            .test_support()
-            .absolute()
-            .inset_0()
-            .occlude()
-            .on_any_mouse_down(cx.listener(|menu, _, window, cx| menu.close(window, cx)))
-            .child(
-                Positioner::corner(Anchor::TopLeft, self.position)
-                    .margin(px(WINDOW_MARGIN))
-                    .occlude()
-                    .child(menu),
-            )
+        // what is underneath; pinned to the window, as a select draws its menu inside itself.
+        anchored().position(point(px(0.), px(0.))).child(
+            div()
+                .id("menu-backdrop")
+                .test_support()
+                .w(window.viewport_size().width)
+                .h(window.viewport_size().height)
+                .occlude()
+                .on_any_mouse_down(cx.listener(|menu, _, window, cx| menu.close(window, cx)))
+                .child(positioner.margin(px(WINDOW_MARGIN)).occlude().child(menu)),
+        )
     }
 }
 
@@ -160,6 +173,7 @@ impl Menu {
                 .h(px(1.))
                 .my(px(SEPARATOR_MARGIN))
                 .bg(line)
+                .when(item.hidden, Styled::hidden)
                 .into_any_element();
         }
         let submenu = self.submenu.as_ref();
@@ -195,50 +209,59 @@ impl Menu {
         let check = (item.checked == Some(true)).then(|| app_icon("check").text_color(foreground));
         let chevron =
             (opens_submenu || opens_panel).then(|| app_icon("chevron-right").text_color(muted));
-        let row = div()
-            .id(SharedString::from(format!("menu-item-{}", item.id)))
-            .test_support()
-            .role(if item.checked.is_some() {
-                Role::MenuItemCheckBox
-            } else {
-                Role::MenuItem
-            })
-            .aria_label(item.label.clone())
-            .aria_disabled(item.disabled)
-            .when_some(item.checked, |row, checked| {
-                row.aria_toggled(if checked {
-                    Toggled::True
+        let row =
+            div()
+                .id(SharedString::from(format!("menu-item-{}", item.id)))
+                .test_support()
+                .role(if item.checked.is_some() {
+                    Role::MenuItemCheckBox
                 } else {
-                    Toggled::False
+                    Role::MenuItem
                 })
-            })
-            .when(opens_submenu || opens_panel, |row| {
-                row.aria_expanded(expanded)
-            })
-            .when(active, |row| row.aria_active_descendant())
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap(px(ICON_GAP))
-            .h(px(ROW_HEIGHT))
-            .px(px(ROW_PADDING))
-            .rounded(radius)
-            .when(highlighted, |row| row.bg(highlight))
-            .when(item.disabled, |row| row.opacity(DISABLED_OPACITY))
-            .children(leading)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(item.label.clone()),
-            )
-            .children(
-                check
-                    .into_iter()
-                    .chain(chevron)
-                    .map(|icon| icon.size(px(TRAILING_SIZE)).flex_shrink_0()),
-            );
+                .aria_label(item.label.clone())
+                .aria_disabled(item.disabled)
+                .when_some(item.checked, |row, checked| {
+                    row.aria_toggled(if checked {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                })
+                .when(opens_submenu || opens_panel, |row| {
+                    row.aria_expanded(expanded)
+                })
+                .when(active, |row| row.aria_active_descendant())
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(ICON_GAP))
+                .min_h(px(ROW_HEIGHT))
+                .px(px(ROW_PADDING))
+                .when(item.description.is_some(), |row| {
+                    row.py(px(DESCRIPTION_PADDING))
+                })
+                .rounded(radius)
+                .when(highlighted, |row| row.bg(highlight))
+                .when(item.disabled, |row| row.opacity(DISABLED_OPACITY))
+                .when(item.hidden, Styled::hidden)
+                .children(leading)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().truncate().child(item.label.clone()))
+                        .children(item.description.clone().map(|description| {
+                            div().truncate().text_color(muted).child(description)
+                        })),
+                )
+                .children(
+                    check
+                        .into_iter()
+                        .chain(chevron)
+                        .map(|icon| icon.size(px(TRAILING_SIZE)).flex_shrink_0()),
+                );
         // A disabled row in the menu still lets the open submenu close.
         let row = row.when(parent.is_none() || !item.disabled, |row| {
             row.on_hover(
@@ -333,4 +356,29 @@ pub(in crate::native_view) fn panel<E: Styled>(panel: E, cx: &App) -> E {
         .bg(surface(theme))
         .text_size(px(LABEL_SIZE))
         .text_color(theme.popover_foreground)
+}
+
+/// `children` scrolling in a panel once it reaches its maximum height, under a scrollbar that
+/// `scroll` drives. The scrollbar overlays the box the children scroll in, which stays put.
+pub(in crate::native_view) fn scrolling<E: IntoElement>(
+    id: &'static str,
+    scroll: &ScrollHandle,
+    children: impl IntoIterator<Item = E>,
+) -> Div {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .children(children),
+        )
+        .vertical_scrollbar(scroll)
 }

@@ -181,6 +181,18 @@ impl Store {
         self.write(db::write_app_state);
     }
 
+    /// The slug of the Local Model that makes Transcripts while the Transcription Provider is
+    /// `local`; `None` until one is picked.
+    pub fn local_model(&self) -> Option<&str> {
+        self.state.local_model.as_deref()
+    }
+
+    /// Makes the Local Model `slug` the one Transcripts use, or none.
+    pub fn set_local_model(&mut self, slug: Option<&str>) {
+        self.state.local_model = slug.map(str::to_owned);
+        self.write(db::write_app_state);
+    }
+
     /// Whether a meeting's start brings a notification that suggests recording it; on until
     /// turned off.
     pub fn suggests_recording(&self) -> bool {

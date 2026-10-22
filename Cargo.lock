@@ -870,6 +870,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "cocoa"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1242,6 +1251,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crumble-theme",
+ "crumble-transcribe",
  "crumble-ui",
  "gpui-kit",
  "gpui-mcp",
@@ -1296,6 +1306,20 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-event-kit",
  "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "crumble-local-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "fs4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "ureq",
+ "uuid",
 ]
 
 [[package]]
@@ -1375,8 +1399,10 @@ name = "crumble-transcribe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crumble-audio",
  "crumble-remote",
  "serde_json",
+ "transcribe-cpp",
  "uuid",
 ]
 
@@ -1390,6 +1416,7 @@ dependencies = [
  "crumble-audio",
  "crumble-calendar",
  "crumble-eventkit",
+ "crumble-local-models",
  "crumble-notes",
  "crumble-notify",
  "crumble-remote",
@@ -1622,7 +1649,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.3",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1861,7 +1888,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2117,6 +2144,16 @@ dependencies = [
  "cc",
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "fs4"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
+dependencies = [
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5880,7 +5917,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6438,7 +6475,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6961,7 +6998,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7339,7 +7376,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7735,6 +7772,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "transcribe-cpp"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6cad85eeb846a7064891c8b49b92a57a0f2d4dd089104cb199608b23043555e"
+dependencies = [
+ "log",
+ "thiserror 2.0.21",
+ "transcribe-cpp-sys",
+]
+
+[[package]]
+name = "transcribe-cpp-sys"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f0976932ee2a0d9bcfb7a90947d0a73771cee383b163bd7189a8e0d67da1157"
+dependencies = [
+ "cmake",
+ "serde_json",
+]
+
+[[package]]
 name = "triomphe"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7774,7 +7832,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8700,7 +8758,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9325,7 +9383,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

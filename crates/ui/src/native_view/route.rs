@@ -31,6 +31,12 @@ impl Route {
     pub(super) fn fills_panel(&self) -> bool {
         matches!(self, Route::Agenda | Route::Settings)
     }
+
+    /// Whether the page scrolls its own parts, as the Agenda list, the Settings sections and
+    /// the Calendar's grids do, instead of scrolling as a whole inside the panel.
+    pub(super) fn scrolls_itself(&self) -> bool {
+        matches!(self, Route::Agenda | Route::Settings | Route::Calendar)
+    }
 }
 
 /// Routes behind and ahead of the current one.

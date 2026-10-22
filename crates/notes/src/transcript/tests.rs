@@ -28,6 +28,14 @@ fn a_transcript_is_kept_in_order_and_replaced_whole() {
             .map(|info| (info.provider, info.model, info.locale)),
         Some(("openai".into(), "whisper-1".into(), "it_IT".into()))
     );
+
+    // A Local Model's Transcript (ADR 0010), which the provider's CHECK once refused.
+    ok(notes.set_transcript(&note.id, "local", "Whisper Medium", "it", &again, at(10)));
+    let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
+    assert_eq!(
+        found.transcript.map(|info| (info.provider, info.model)),
+        Some(("local".into(), "Whisper Medium".into()))
+    );
 }
 
 #[test]

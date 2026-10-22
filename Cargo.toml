@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/notes", "crates/notify", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
+members = ["apps/desktop", "crates/audio", "crates/calendar", "crates/db", "crates/eventkit", "crates/local-models", "crates/notes", "crates/notify", "crates/remote", "crates/store", "crates/summarize", "crates/sync", "crates/transcribe", "crates/ui", "crates/theme"]
 default-members = ["apps/desktop"]
 resolver = "3"
 
@@ -27,6 +27,7 @@ crumble-audio = { path = "crates/audio" }
 crumble-calendar = { path = "crates/calendar" }
 crumble-db = { path = "crates/db" }
 crumble-eventkit = { path = "crates/eventkit" }
+crumble-local-models = { path = "crates/local-models" }
 crumble-notes = { path = "crates/notes" }
 crumble-notify = { path = "crates/notify" }
 crumble-remote = { path = "crates/remote" }
@@ -62,6 +63,12 @@ sonora-common-audio = "=0.2.0"
 # run on a background thread (ADRs 0007 and 0008).
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+# Local Models (ADR 0010): the sha256 a download is checked against, and the free space it needs.
+sha2 = "0.11"
+fs4 = "1.1"
+# Runs Local Models: transcribe.cpp on ggml with Metal (ADR 0010). Builds C++ with CMake.
+transcribe-cpp = "0.4"
 # API keys in the macOS Keychain (ADR 0007).
 security-framework = "3.7"
 

@@ -121,7 +121,7 @@ impl NativeView {
                 let id = note.id.clone();
                 MenuItem::new(
                     format!("note-transcribe-{}", provider.id()),
-                    provider.name(),
+                    self.transcriber_name(provider),
                 )
                 .checked(made_by == Some(provider.id()))
                 .on_select(act(view, move |view, window, cx| {
@@ -157,7 +157,7 @@ impl NativeView {
             .summary
             .as_ref()
             .map(|summary| summary.provider.as_str());
-        let providers: Vec<MenuItem> = Provider::ALL
+        let providers: Vec<MenuItem> = Provider::SUMMARIZERS
             .into_iter()
             .filter(|provider| self.is_configured(*provider))
             .map(|provider| {

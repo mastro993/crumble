@@ -19,11 +19,21 @@ pub enum Provider {
     Claude,
     /// A server that speaks OpenAI's API: chat completions, and audio transcriptions.
     OpenAiCompatible,
+    /// Crumble itself, running a Local Model it downloaded (ADR 0010). Transcripts only.
+    Local,
 }
 
 impl Provider {
     /// Every Provider, in the order Settings lists them.
-    pub const ALL: [Provider; 3] = [
+    pub const ALL: [Provider; 4] = [
+        Provider::Apple,
+        Provider::Claude,
+        Provider::OpenAiCompatible,
+        Provider::Local,
+    ];
+
+    /// The Providers that make Summaries, in the order Settings lists them.
+    pub const SUMMARIZERS: [Provider; 3] = [
         Provider::Apple,
         Provider::Claude,
         Provider::OpenAiCompatible,
@@ -35,6 +45,7 @@ impl Provider {
             Provider::Apple => "apple",
             Provider::Claude => "claude",
             Provider::OpenAiCompatible => "openai",
+            Provider::Local => "local",
         }
     }
 
@@ -51,17 +62,18 @@ impl Provider {
             Provider::Apple => "Apple, on this Mac",
             Provider::Claude => "Claude",
             Provider::OpenAiCompatible => "OpenAI-compatible server",
+            Provider::Local => "Crumble, on this Mac",
         }
     }
 }
 
-/// Whether `provider` keeps what it reads on this Mac: Apple's Models, or an OpenAI-compatible
-/// server at `openai_base_url` whose host is `localhost`, `127.0.0.1` or `::1`. Only such a
-/// Provider works on older Recordings and Transcripts without being asked, and only a remote
-/// one needs consent before it gets audio (ADRs 0007 and 0008).
+/// Whether `provider` keeps what it reads on this Mac: Apple's Models, Local Models, or an
+/// OpenAI-compatible server at `openai_base_url` whose host is `localhost`, `127.0.0.1` or `::1`.
+/// Only such a Provider summarizes older Transcripts without being asked, and only a remote one
+/// needs consent before it gets audio (ADRs 0007, 0008 and 0010).
 pub fn runs_locally(provider: Provider, openai_base_url: &str) -> bool {
     match provider {
-        Provider::Apple => true,
+        Provider::Apple | Provider::Local => true,
         Provider::Claude => false,
         Provider::OpenAiCompatible => is_loopback(openai_base_url),
     }
@@ -237,9 +249,10 @@ mod tests {
     }
 
     #[test]
-    fn only_apple_and_a_loopback_server_run_locally() {
-        use Provider::{Apple, Claude, OpenAiCompatible};
+    fn only_apple_local_models_and_a_loopback_server_run_locally() {
+        use Provider::{Apple, Claude, Local, OpenAiCompatible};
         assert!(runs_locally(Apple, ""));
+        assert!(runs_locally(Local, "https://api.openai.com/v1"));
         assert!(!runs_locally(Claude, "http://localhost:11434/v1"));
         for local in [
             "http://localhost:11434/v1",

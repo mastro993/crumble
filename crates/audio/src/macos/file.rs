@@ -9,8 +9,8 @@ use std::time::Duration;
 use anyhow::{Context, anyhow, bail};
 use objc2_audio_toolbox::{
     AudioFileFlags, ExtAudioFileCreateWithURL, ExtAudioFileDispose, ExtAudioFileGetProperty,
-    ExtAudioFileOpenURL, ExtAudioFileRef, ExtAudioFileSetProperty, ExtAudioFileWrite,
-    kAudioFileAAC_ADTSType, kExtAudioFileProperty_ClientDataFormat,
+    ExtAudioFileOpenURL, ExtAudioFileRead, ExtAudioFileRef, ExtAudioFileSetProperty,
+    ExtAudioFileWrite, kAudioFileAAC_ADTSType, kExtAudioFileProperty_ClientDataFormat,
     kExtAudioFileProperty_FileDataFormat, kExtAudioFileProperty_FileLengthFrames,
 };
 use objc2_core_audio_types::{
@@ -109,14 +109,7 @@ impl Drop for AacFile {
 /// How much audio the file at `path` holds; it may have been cut short by a crash. ADTS keeps
 /// no priming count, so this runs up to ~70 ms long.
 pub(super) fn length(path: &Path) -> anyhow::Result<Duration> {
-    let url = CFURL::from_file_path(path).ok_or_else(|| anyhow!("bad path {path:?}"))?;
-    let mut file: ExtAudioFileRef = ptr::null_mut();
-    // SAFETY: the URL outlives the call, and `file` receives the handle.
-    check(
-        unsafe { ExtAudioFileOpenURL(&url, NonNull::from(&mut file)) },
-        "open the file",
-    )?;
-    let file = OpenFile(file);
+    let file = OpenFile::open(path)?;
     let mut frames: i64 = 0;
     let mut format = float_format(0.0);
     file.property(kExtAudioFileProperty_FileLengthFrames, &mut frames)?;
@@ -133,10 +126,62 @@ pub(super) fn length(path: &Path) -> anyhow::Result<Duration> {
     ))
 }
 
+/// Every sample of the file at `path` as mono `f32` at `sample_rate`, which ExtAudioFile
+/// converts to as it decodes, for a Model to transcribe.
+pub(super) fn read(path: &Path, sample_rate: f64) -> anyhow::Result<Vec<f32>> {
+    let file = OpenFile::open(path)?;
+    let mut format = float_format(sample_rate);
+    // SAFETY: a live file, and a format that outlives the call.
+    check(
+        unsafe {
+            ExtAudioFileSetProperty(
+                file.0,
+                kExtAudioFileProperty_ClientDataFormat,
+                size_of::<AudioStreamBasicDescription>() as u32,
+                NonNull::from(&mut format).cast(),
+            )
+        },
+        "set the client format",
+    )?;
+    let mut samples = Vec::new();
+    let mut block = vec![0.0f32; 64 * 1024];
+    loop {
+        let mut frames = block.len() as u32;
+        let mut list = AudioBufferList {
+            mNumberBuffers: 1,
+            mBuffers: [AudioBuffer {
+                mNumberChannels: 1,
+                mDataByteSize: frames * 4,
+                mData: block.as_mut_ptr().cast(),
+            }],
+        };
+        // SAFETY: a live file, and a buffer list pointing at `frames` writable floats.
+        let status = unsafe {
+            ExtAudioFileRead(file.0, NonNull::from(&mut frames), NonNull::from(&mut list))
+        };
+        check(status, "read")?;
+        if frames == 0 {
+            return Ok(samples);
+        }
+        samples.extend_from_slice(block.get(..frames as usize).unwrap_or_default());
+    }
+}
+
 /// A file opened for reading, closed on drop.
 struct OpenFile(ExtAudioFileRef);
 
 impl OpenFile {
+    fn open(path: &Path) -> anyhow::Result<Self> {
+        let url = CFURL::from_file_path(path).ok_or_else(|| anyhow!("bad path {path:?}"))?;
+        let mut file: ExtAudioFileRef = ptr::null_mut();
+        // SAFETY: the URL outlives the call, and `file` receives the handle.
+        check(
+            unsafe { ExtAudioFileOpenURL(&url, NonNull::from(&mut file)) },
+            "open the file",
+        )?;
+        Ok(Self(file))
+    }
+
     fn property<T>(&self, id: u32, value: &mut T) -> anyhow::Result<()> {
         let mut size = size_of::<T>() as u32;
         // SAFETY: a live file, and `value` holds `size` bytes for a property of that type.
@@ -220,6 +265,29 @@ mod tests {
             read.abs_diff(Duration::from_secs(3)) < Duration::from_millis(100),
             "{read:?}"
         );
+    }
+
+    #[test]
+    fn a_file_reads_back_as_16_khz_samples() {
+        let path = file("read");
+        let mut aac = ok(AacFile::create(&path, 48_000.0));
+        for _ in 0..2 {
+            ok(aac.write(&tone()));
+        }
+        ok(aac.close());
+        let samples = super::read(&path, 16_000.0);
+        let _ = std::fs::remove_file(&path);
+        let samples = ok(samples);
+        // Two seconds, plus up to ~70 ms of encoder lead-in and last packet.
+        assert!(
+            (32_000..33_500).contains(&samples.len()),
+            "{}",
+            samples.len()
+        );
+        let peak = samples
+            .iter()
+            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        assert!((0.2..0.3).contains(&peak), "{peak}");
     }
 
     #[test]

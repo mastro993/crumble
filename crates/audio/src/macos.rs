@@ -45,6 +45,12 @@ pub fn request_mic_access(done: impl FnOnce(bool) + Send + 'static) {
     unsafe { AVAudioApplication::requestRecordPermissionWithCompletionHandler(&block) };
 }
 
+/// The track `file` of a Recording, such as `mic.aac`, as mono `f32` samples at `sample_rate`:
+/// what a Local Model transcribes. An hour at 16 kHz is about 230 MB.
+pub fn read_samples(file: &Path, sample_rate: f64) -> anyhow::Result<Vec<f32>> {
+    file::read(file, sample_rate)
+}
+
 /// How much audio the Recording in `dir` holds: its longest track. Reads what a crash left
 /// behind as well as a finished Recording. Zero when the tracks are missing or empty, so the
 /// Recording holds nothing; an error when a track exists but cannot be read and no other holds
