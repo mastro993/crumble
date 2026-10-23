@@ -14,13 +14,15 @@ jobs:
     # Reviews every PR when it opens, and answers `/review`, `/improve`, `/ask …` comments. The repo
     # is public, so only people with write access can spend the API key through a comment. Drafts
     # wait for `ready_for_review`, and fork PRs, which get no secrets, wait for a `/review` comment.
-    # PR-Agent reads the diff through the API and never checks out the PR's code.
+    # Other comments never start the job. PR-Agent reads the diff through the API and never checks
+    # out the PR's code.
     if: >-
       github.event.sender.type != 'Bot' &&
       ((github.event_name == 'pull_request' &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
     timeout-minutes: 15
