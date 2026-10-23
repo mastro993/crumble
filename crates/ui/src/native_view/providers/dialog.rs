@@ -29,7 +29,7 @@ use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::dialog::{DialogEntrance, DialogFooter};
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{Sizable, WindowExt, h_flex, v_flex};
+use gpui_kit::component::{IconName, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription,
@@ -151,11 +151,21 @@ fn open(dialog: Entity<ProviderDialog>, window: &mut Window, cx: &mut App) {
             .w(px(WIDTH))
             // Enter checks the key or the address it is pressed in; only Done closes.
             .on_ok(|_, _, _| false)
+            // GPUI Kit's close button keeps the arrow cursor, so the title draws one with a hand.
+            .close_button(false)
             .title(
                 h_flex()
                     .gap_3()
                     .child(logo_tile(provider, cx))
-                    .child(provider.name()),
+                    .child(div().flex_1().min_w_0().child(provider.name()))
+                    .child(
+                        button("provider-dialog-close")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Close)
+                            .accessibility_label("Close")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    ),
             )
             .child(dialog.clone())
             .footer(footer(&dialog, cx))

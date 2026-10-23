@@ -216,6 +216,8 @@ pub(super) struct Menu {
     scroll: ScrollHandle,
     /// The field that filters a select's rows.
     search: Option<Entity<InputState>>,
+    /// The width a searchable menu was last drawn at, which it keeps as its rows are filtered.
+    width: Rc<Cell<Option<Pixels>>>,
     submenu: Option<Submenu>,
     /// Where each row was last drawn; a submenu opens beside its row.
     row_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
@@ -282,6 +284,7 @@ impl Menu {
             highlight: None,
             scroll: ScrollHandle::new(),
             search: None,
+            width: Rc::default(),
             submenu: None,
             closing_submenu: None,
             panel_row: Rc::new(Cell::new(Bounds::default())),

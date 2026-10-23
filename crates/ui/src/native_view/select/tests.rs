@@ -1,13 +1,16 @@
 //! UI integration tests of a searchable select whose choices can be any text, as a Provider's
-//! Model select is: a choice typed in, and a row picked after the choices are listed again.
+//! Model select is: a choice typed in, a row picked after the choices are listed again, the
+//! menu's width as a search filters it, and the picked choice's logo.
 
-use super::{Choice, Picked, Select};
+use super::{Choice, Leading, Picked, Select};
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::test::{ElementSnapshot, TestQueryExt, TestWindowExt};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, TestAppContext, Window, WindowBounds, WindowOptions, div,
-    px, size,
+    AnyWindowHandle, App, AppContext, Bounds, Context, Entity, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Render, SharedString, Styled, Subscription, TestAppContext, Window,
+    WindowBounds, WindowOptions, div, px, size,
 };
+use std::rc::Rc;
 
 /// A Model's id, listed or typed.
 #[derive(Clone)]
@@ -26,6 +29,19 @@ impl Choice for Model {
 
     fn typed() -> Option<fn(SharedString) -> Self> {
         Some(|model| Self(model.into()))
+    }
+
+    /// A logo for the Models of one family.
+    fn leading(&self) -> Option<Leading> {
+        self.0.starts_with("gpt").then(|| {
+            Rc::new(|_: &App| {
+                div()
+                    .id("gpt-logo")
+                    .test_support()
+                    .size(px(16.))
+                    .into_any_element()
+            }) as Leading
+        })
     }
 }
 
@@ -143,6 +159,12 @@ impl Harness {
         self.step(cx, |window, cx| window.click(id, cx));
     }
 
+    fn menu_width(&self, cx: &mut TestAppContext) -> Pixels {
+        let mut width = px(0.);
+        self.check(cx, |window| width = window.find("menu").bounds().size.width);
+        width
+    }
+
     fn picks(&self, cx: &mut TestAppContext) -> Vec<String> {
         cx.update(|cx| self.owner.read(cx).picks.clone())
     }
@@ -198,4 +220,48 @@ fn a_row_picks_the_choice_it_shows_after_the_choices_are_listed_again(cx: &mut T
 
     harness.click_row(cx, "my-model");
     assert_eq!(harness.picks(cx), ["my-model"]);
+}
+
+#[gpui_kit::test]
+fn a_search_keeps_the_menu_as_wide_as_it_opened(cx: &mut TestAppContext) {
+    let harness = Harness::open(
+        cx,
+        &["gpt-6", "a-model-named-longer-than-the-menu-is-wide"],
+        None,
+    );
+    harness.step(cx, |window, cx| window.click("select", cx));
+    let opened = harness.menu_width(cx);
+    // The long row is hidden.
+    harness.step(cx, |window, cx| window.input("gpt", cx));
+    assert_eq!(harness.menu_width(cx), opened);
+    // The row offering a text longer than any row cuts it short.
+    let text = "-fine-tuned-on-every-meeting-note-and-transcript-kept-this-year";
+    harness.step(cx, |window, cx| window.input(text, cx));
+    assert!(harness.row(cx, &format!("Use “gpt{text}”")).is_some());
+    assert_eq!(harness.menu_width(cx), opened);
+}
+
+#[gpui_kit::test]
+fn a_choice_s_logo_leads_its_row_and_the_select_once_picked(cx: &mut TestAppContext) {
+    let harness = Harness::open(cx, &["llama3.2", "gpt-6-luna"], Some(0));
+    // How many logos show in the menu, and in the select itself.
+    let logos = |harness: &Harness, cx: &mut TestAppContext| {
+        let mut shown = (0, 0);
+        harness.check(cx, |window| {
+            for logo in window.find_all("gpt-logo") {
+                if logo.path().iter().any(|id| id.to_string() == "menu") {
+                    shown.0 += 1;
+                } else {
+                    shown.1 += 1;
+                }
+            }
+        });
+        shown
+    };
+    assert_eq!(logos(&harness, cx), (0, 0));
+    // Only the row whose choice has a logo leads with it.
+    harness.step(cx, |window, cx| window.click("select", cx));
+    assert_eq!(logos(&harness, cx), (1, 0));
+    harness.click_row(cx, "gpt-6-luna");
+    assert_eq!(logos(&harness, cx), (0, 1));
 }

@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, SharedString};
 
-/// Embedded application artwork with explicit component icon replacements, and the remote
-/// Providers' logos.
+/// Embedded application artwork with explicit component icon replacements, and the Providers'
+/// logos.
 pub struct Assets;
 
 const ICONS: &[(&str, &[u8])] = &[
@@ -205,9 +205,13 @@ const ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// The remote Providers' logos, each named after its Provider's id (see
+/// The Providers' logos, each named after its Provider's id (see
 /// `assets/lobehub/README.md`).
 const LOGOS: &[(&str, &[u8])] = &[
+    (
+        "logos/apple.svg",
+        include_bytes!("../../../assets/lobehub/apple.svg"),
+    ),
     (
         "logos/anthropic.svg",
         include_bytes!("../../../assets/lobehub/anthropic.svg"),
@@ -279,6 +283,7 @@ mod tests {
             IconName::Check,
             IconName::ChevronDown,
             IconName::ChevronRight,
+            IconName::Close,
         ] {
             let path = icon.path();
             assert!(

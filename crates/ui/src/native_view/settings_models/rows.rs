@@ -1,12 +1,16 @@
 //! The rows of the Transcription, Summary and Intelligence Provider selects: Apple's, Local
-//! Models' for Transcripts, then each remote Provider set up for the job, described by what it
-//! gets. A picked remote Provider no longer set up, such as one whose key was removed, stays as
-//! a row of its own, so the pick isn't silently replaced; its jobs then say what it lacks.
+//! Models' for Transcripts, then each remote Provider set up for the job. Transcription's and
+//! Intelligence's rows lead with the Provider's logo; Summary's are described by what the
+//! Provider gets. A picked remote Provider no longer set up, such as one whose key was removed,
+//! stays as a row of its own, so the pick isn't silently replaced; its jobs then say what it
+//! lacks.
 
-use super::super::providers::SetUp;
-use super::super::select::Choice;
+use super::super::providers::{SetUp, provider_logo};
+use super::super::select::{Choice, Leading};
 use crumble_remote::{Job, Provider};
+use crumble_theme::sidebar::ICON_SIZE;
 use gpui_kit::SharedString;
+use std::rc::Rc;
 
 /// What a picked remote Provider that is no longer set up says in its row.
 const NOT_SET_UP: &str = "Not set up";
@@ -18,6 +22,8 @@ pub(super) struct ProviderItem {
     provider: Provider,
     description: Option<SharedString>,
     disabled: bool,
+    /// Whether the row leads with the Provider's logo.
+    logo: bool,
 }
 
 impl ProviderItem {
@@ -27,6 +33,7 @@ impl ProviderItem {
             provider,
             description: description.map(SharedString::new_static),
             disabled: false,
+            logo: false,
         }
     }
 }
@@ -49,15 +56,21 @@ impl Choice for ProviderItem {
     fn disabled(&self) -> bool {
         self.disabled
     }
+
+    fn leading(&self) -> Option<Leading> {
+        let provider = self.provider;
+        self.logo
+            .then(|| Rc::new(move |cx: &_| provider_logo(provider, ICON_SIZE, cx)) as Leading)
+    }
 }
 
-/// What a set-up remote Provider gets for `job`, or that it is on this Mac.
-fn gets(set_up: &SetUp, job: Job) -> &'static str {
+/// That a set-up remote Provider is on this Mac, for any job, or else what it gets for a Summary;
+/// nothing else for the other jobs, whose rows show the Provider's logo instead.
+fn gets(set_up: &SetUp, job: Job) -> Option<&'static str> {
     match job {
-        _ if set_up.on_this_mac => "On this Mac",
-        Job::Transcription => "Gets the Recording's audio",
-        Job::Summary => "Gets the Transcript's text",
-        Job::Intelligence => "Gets what you ask",
+        _ if set_up.on_this_mac => Some("On this Mac"),
+        Job::Summary => Some("Gets the Transcript's text"),
+        Job::Transcription | Job::Intelligence => None,
     }
 }
 
@@ -82,7 +95,7 @@ pub(super) fn provider_items(
         items.push(ProviderItem::new(Provider::Local, None));
     }
     items.extend(
-        (set_up.iter()).map(|set_up| ProviderItem::new(set_up.provider, Some(gets(set_up, job)))),
+        (set_up.iter()).map(|set_up| ProviderItem::new(set_up.provider, gets(set_up, job))),
     );
     let selected = picked.and_then(|picked| {
         let found = items.iter().position(|item| item.provider == picked);
@@ -93,6 +106,10 @@ pub(super) fn provider_items(
             })
         })
     });
+    let logo = job != Job::Summary;
+    let items = (items.into_iter())
+        .map(|item| ProviderItem { logo, ..item })
+        .collect();
     (items, selected)
 }
 
@@ -145,14 +162,25 @@ mod tests {
             ]
         );
         assert_eq!(selected, Some(2));
-        let (items, _) = provider_items(Job::Intelligence, true, false, &set_up[..1], None);
+        assert!(items.iter().all(|item| item.leading().is_none()));
+    }
+
+    #[test]
+    fn intelligence_rows_lead_with_the_provider_s_logo_and_say_only_where_it_runs() {
+        let set_up = [
+            set_up(Provider::Anthropic, false),
+            set_up(Provider::OpenAiCompatible, true),
+        ];
+        let (items, _) = provider_items(Job::Intelligence, true, false, &set_up, None);
         assert_eq!(
             shown(&items),
             [
                 row("Apple, on this Mac", None, false),
-                row("Anthropic", Some("Gets what you ask"), false),
+                row("Anthropic", None, false),
+                row("OpenAI-compatible server", Some("On this Mac"), false),
             ]
         );
+        assert!(items.iter().all(|item| item.leading().is_some()));
     }
 
     #[test]
@@ -168,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn transcription_rows_are_apple_local_models_then_set_up_providers() {
+    fn transcription_rows_are_apple_local_models_then_set_up_providers_each_with_its_logo() {
         let set_up = [set_up(Provider::OpenAi, false)];
         let picked = Some(Provider::OpenAi);
         let (items, selected) = provider_items(Job::Transcription, false, true, &set_up, picked);
@@ -177,10 +205,11 @@ mod tests {
             [
                 row("Apple, on this Mac", None, false),
                 row("Crumble, on this Mac", None, false),
-                row("OpenAI", Some("Gets the Recording's audio"), false),
+                row("OpenAI", None, false),
             ]
         );
         assert_eq!(selected, Some(2));
+        assert!(items.iter().all(|item| item.leading().is_some()));
         // Local Models show once one is downloaded, or while picked.
         let picked = Some(Provider::Local);
         let (items, selected) = provider_items(Job::Transcription, true, false, &[], picked);

@@ -1,6 +1,6 @@
 # Provider logos
 
-These are the logos Settings shows next to each remote Provider. They come from [LobeHub Icons](https://github.com/lobehub/lobe-icons), MIT licensed (see [LICENSE.md](LICENSE.md)). Each logo is a trademark of its owner and is shown only to identify that Provider.
+These are the logos Settings shows next to each remote Provider, in the Providers list, and next to Apple's and each remote Provider's row in the Transcription and Intelligence Provider selects. They come from [LobeHub Icons](https://github.com/lobehub/lobe-icons), MIT licensed (see [LICENSE.md](LICENSE.md)). Each logo is a trademark of its owner and is shown only to identify that Provider.
 
 Each file is named after its Provider's id, `Provider::id()` in `crumble-remote`. Every file was downloaded from npm `@lobehub/icons-static-svg` version 1.97.0:
 
@@ -10,6 +10,7 @@ https://unpkg.com/@lobehub/icons-static-svg@1.97.0/icons/<slug>.svg
 
 | File | Slug | Kind | sha256 of the download |
 |---|---|---|---|
+| `apple.svg` | `apple` | mono | `100637681febc38512bf8d43f7d5f79f2aa8caead15b256cd28b378b053fca69` |
 | `anthropic.svg` | `anthropic` | mono | `e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3` |
 | `openai.svg` | `openai` | mono | `a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186` |
 | `gemini.svg` | `gemini-color` | color | `8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602` |

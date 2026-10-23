@@ -8,7 +8,7 @@ use regex::Regex;
 pub struct KeyFormat {
     /// A regex every whole key of this Provider matches; `None` takes any text.
     pub(crate) pattern: Option<&'static str>,
-    /// How its keys start, for the hint under the field, such as `sk-ant-api`; one of them
+    /// How its keys start, for the hint under the field, such as `sk-ant-`; one of them
     /// before a key that fails `pattern` makes it look incomplete rather than another kind.
     pub(crate) starts: &'static [&'static str],
     /// Keys of another kind this Provider also issues, which its API refuses for this use: a

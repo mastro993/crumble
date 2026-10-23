@@ -7,10 +7,12 @@ pub(crate) static REMOTE: Remote = Remote {
     key_url: Some("https://platform.claude.com/settings/keys"),
     base_url: Some("https://api.anthropic.com"),
     sign_in: SignIn {
-        // `sk-ant-api03-` and 95 more characters today; later versions keep the prefix.
+        // A workspace key is `sk-ant-api03-` and 95 more characters; a personal key starts
+        // `sk-ant-usr` and a service account's `sk-ant-svc`. Any kind but those refused below
+        // passes, so one Anthropic adds later does too, and the ping proves it.
         api_key: Some(KeyFormat {
-            pattern: Some(r"^sk-ant-api\d{2}-[A-Za-z0-9_-]{40,}$"),
-            starts: &["sk-ant-api"],
+            pattern: Some(r"^sk-ant-[a-z]+\d*-[A-Za-z0-9_-]{20,}$"),
+            starts: &["sk-ant-"],
             refused: &[
                 (
                     r"^sk-ant-admin\d{2}-",

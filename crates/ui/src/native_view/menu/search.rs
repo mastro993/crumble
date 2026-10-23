@@ -1,5 +1,6 @@
 //! A select's menu: opening under its trigger on the picked row, the search field that hides
-//! the rows whose label lacks its text, and the row that offers the text itself.
+//! the rows whose label lacks its text while the menu keeps its width, and the row that offers
+//! the text itself.
 
 use super::super::controls::app_icon;
 use super::{Kind, Menu, MenuItem, OpenMenu, step};
@@ -9,7 +10,7 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Div, Focusable, InteractiveElement, ParentElement, Pixels,
-    Point, SharedString, Styled, Window, div, point, prelude::FluentBuilder, px,
+    Point, SharedString, Styled, Window, canvas, div, point, prelude::FluentBuilder, px,
 };
 
 /// Where a menu opens.
@@ -88,6 +89,21 @@ impl Menu {
                 )
                 .child(div().h(px(1.)).my(px(SEPARATOR_MARGIN)).bg(line)),
         )
+    }
+
+    /// Keeps `menu` at the width it opened at, so hiding its widest rows does not narrow it,
+    /// and the row offering a long text cuts it short instead of widening it.
+    pub(super) fn keep_width<E: Styled + ParentElement + FluentBuilder>(&self, menu: E) -> E {
+        let width = self.width.clone();
+        menu.when_some(width.get(), |menu, width| menu.w(width))
+            .child(
+                canvas(
+                    move |menu, _, _| width.set(Some(menu.size.width)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
     }
 
     /// Takes the keys a search field would move its caret with, before it does.

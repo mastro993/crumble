@@ -13,6 +13,8 @@ mod list;
 mod listing;
 mod logo;
 
+pub(super) use logo::provider_logo;
+
 use super::NativeView;
 use crumble_remote::{Job, Listed, Provider, Remote, runs_locally};
 use crumble_store::{ProviderSettings, secrets};

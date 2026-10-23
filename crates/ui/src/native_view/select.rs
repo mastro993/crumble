@@ -1,5 +1,6 @@
-//! Crumble's select: a button showing the picked choice, with an optional icon before it and a
-//! chevron after it, that opens the app's menu under it with the picked row checked. A
+//! Crumble's select: a button showing the picked choice, led by its logo if it has one, else by
+//! an optional icon, with a chevron after it, that opens the app's menu under it with the picked
+//! row checked, each row led by its choice's logo. A
 //! searchable select is a combo box: its menu has a search field, and when its choices can be
 //! any text, a row that picks the text typed there.
 //!
@@ -11,11 +12,11 @@ use super::menu::{MenuItem, OpenMenu, Place};
 use crumble_theme::menu::{HIGHLIGHT_INK, TRAILING_SIZE};
 use crumble_theme::sidebar::ICON_GAP;
 use gpui_kit::base::TestSupportExt;
-use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::{ActiveTheme, Icon};
 use gpui_kit::{
-    Bounds, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, Render, Role, SharedString, StatefulInteractiveElement, Styled, Window,
-    canvas, div, prelude::FluentBuilder, px,
+    AnyElement, App, Bounds, Context, EventEmitter, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Render, Role, SharedString,
+    StatefulInteractiveElement, Styled, Window, canvas, div, prelude::FluentBuilder, px,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -40,6 +41,11 @@ pub(super) trait Choice: 'static {
 
     /// A muted line under the title in the choice's row.
     fn description(&self) -> Option<SharedString> {
+        None
+    }
+
+    /// What leads the choice's row in the icon slot, such as a Provider's logo.
+    fn leading(&self) -> Option<Leading> {
         None
     }
 
@@ -69,6 +75,9 @@ impl Choice for &'static str {
         self
     }
 }
+
+/// Draws what leads a choice's row.
+pub(super) type Leading = Rc<dyn Fn(&App) -> AnyElement>;
 
 /// A choice picked from the menu, even the one already picked.
 pub(super) struct Picked<V>(pub(super) V);
@@ -171,6 +180,10 @@ impl<C: Choice> Select<C> {
                     .on_select(move |_, cx| {
                         let _ = select.update(cx, |select, cx| select.pick_shown(ix, &title, cx));
                     });
+                let item = match choice.leading() {
+                    Some(leading) => item.leading(move |cx| leading(cx)),
+                    None => item,
+                };
                 match choice.description() {
                     Some(description) => item.description(description),
                     None => item,
@@ -242,17 +255,11 @@ impl<C: Choice> Render for Select<C> {
             theme.foreground.alpha(HIGHLIGHT_INK),
         );
         let ring = theme.ring;
-        let title = self
-            .selected
-            .and_then(|ix| self.items.get(ix))
-            .map(C::title);
+        let picked = self.selected.and_then(|ix| self.items.get(ix));
+        let title = picked.map(C::title);
+        let leading = (picked.and_then(C::leading).map(|leading| leading(cx)))
+            .or_else(|| self.icon.map(|name| icon(name, muted).into_any_element()));
         let bounds = self.bounds.clone();
-        let icon = |name| {
-            app_icon(name)
-                .size(px(TRAILING_SIZE))
-                .flex_shrink_0()
-                .text_color(muted)
-        };
         div()
             .id("select")
             .test_support()
@@ -285,7 +292,7 @@ impl<C: Choice> Render for Select<C> {
                     cx.stop_propagation();
                 }
             }))
-            .children(self.icon.map(icon))
+            .children(leading)
             .child(
                 div()
                     .min_w_0()
@@ -293,7 +300,7 @@ impl<C: Choice> Render for Select<C> {
                     .when(title.is_none(), |title| title.text_color(muted))
                     .child(title.unwrap_or_else(|| self.placeholder.clone())),
             )
-            .child(icon("chevron-down"))
+            .child(icon("chevron-down", muted))
             .child(
                 canvas(move |select, _, _| bounds.set(select), |_, _, _, _| {})
                     .absolute()
@@ -301,6 +308,14 @@ impl<C: Choice> Render for Select<C> {
             )
             .children(self.menu.as_ref().map(OpenMenu::render))
     }
+}
+
+/// The app icon `name` at a select's size, in `color`.
+fn icon(name: &'static str, color: Hsla) -> Icon {
+    app_icon(name)
+        .size(px(TRAILING_SIZE))
+        .flex_shrink_0()
+        .text_color(color)
 }
 
 #[cfg(test)]

@@ -113,6 +113,20 @@ fn real_key_shapes_pass_and_other_providers_keys_do_not() {
             }
         }
     }
+    // Anthropic's personal and service account keys, and a kind it may add later.
+    for kind in [
+        "sk-ant-usr01-",
+        "sk-ant-svc01-",
+        "sk-ant-usr-",
+        "sk-ant-new01-",
+    ] {
+        let identity = format!("{kind}{}AA", "Ab_-9".repeat(19)[..93].to_owned());
+        assert_eq!(
+            key(Provider::Anthropic).check(&identity),
+            KeyCheck::Valid,
+            "{kind}"
+        );
+    }
     for refused in ["sk-ant-admin01-", "sk-ant-oat01-", "sk-ant-ort01-"] {
         let refused = format!("{refused}{}AA", "a".repeat(93));
         assert!(

@@ -1,12 +1,15 @@
-//! Each remote Provider's logo, from `assets/lobehub/`, on a small rounded tile so names beside
-//! logos of any shape line up. A mono logo is tinted with the text ink, as the app's icons are;
-//! a color one keeps its colors. The OpenAI-compatible server, which stands for any server, has
-//! one of the app's icons instead.
+//! Each Provider's logo, from `assets/lobehub/`: on a small rounded tile in the Providers list,
+//! so names beside logos of any shape line up, and alone before its name in a Provider select's
+//! row. A mono logo is tinted with the text ink, as the app's icons are; a color one keeps its
+//! colors. The OpenAI-compatible server, which stands for any server, and Local Models, which
+//! Crumble runs, have one of the app's icons instead.
 
 use super::super::controls::app_icon;
 use crumble_remote::Provider;
 use gpui_kit::component::{ActiveTheme, Icon};
-use gpui_kit::{App, Div, ParentElement, Styled, div, img, px};
+use gpui_kit::{
+    AnyElement, App, Div, Hsla, IntoElement, ParentElement, Pixels, Styled, div, img, px,
+};
 
 /// Side of the tile a logo sits on.
 const TILE_SIZE: f32 = 28.0;
@@ -26,10 +29,10 @@ enum Logo {
     AppIcon(&'static str),
 }
 
-/// `provider`'s logo; `None` for Apple's and Local Models, which have no Providers row.
-fn logo(provider: Provider) -> Option<Logo> {
-    Some(match provider {
-        Provider::Apple | Provider::Local => return None,
+/// `provider`'s logo.
+fn logo(provider: Provider) -> Logo {
+    match provider {
+        Provider::Apple => Logo::Mono("logos/apple.svg"),
         Provider::Anthropic => Logo::Mono("logos/anthropic.svg"),
         Provider::OpenAi => Logo::Mono("logos/openai.svg"),
         Provider::Gemini => Logo::Color("logos/gemini.svg"),
@@ -38,13 +41,32 @@ fn logo(provider: Provider) -> Option<Logo> {
         Provider::DeepSeek => Logo::Color("logos/deepseek.svg"),
         Provider::Xai => Logo::Mono("logos/xai.svg"),
         Provider::OpenAiCompatible => Logo::AppIcon("globe"),
-    })
+        // The icon of the Local Models section.
+        Provider::Local => Logo::AppIcon("chip"),
+    }
+}
+
+/// `provider`'s logo, `size` wide, a mono one tinted with `ink`.
+fn mark(provider: Provider, size: Pixels, ink: Hsla) -> AnyElement {
+    match logo(provider) {
+        Logo::Mono(path) => (Icon::empty().path(path).size(size).flex_shrink_0())
+            .text_color(ink)
+            .into_any_element(),
+        Logo::Color(path) => img(path).size(size).flex_shrink_0().into_any_element(),
+        Logo::AppIcon(name) => (app_icon(name).size(size).flex_shrink_0())
+            .text_color(ink)
+            .into_any_element(),
+    }
+}
+
+/// `provider`'s logo alone, `size` wide, as a menu row leads with an icon.
+pub(in super::super) fn provider_logo(provider: Provider, size: f32, cx: &App) -> AnyElement {
+    mark(provider, px(size), cx.theme().foreground)
 }
 
 /// `provider`'s logo on its tile.
 pub(super) fn logo_tile(provider: Provider, cx: &App) -> Div {
     let theme = cx.theme();
-    let ink = theme.foreground;
     let tile = div()
         .flex()
         .flex_shrink_0()
@@ -55,14 +77,7 @@ pub(super) fn logo_tile(provider: Provider, cx: &App) -> Div {
         .border_1()
         .border_color(theme.border)
         .bg(theme.background);
-    match logo(provider) {
-        Some(Logo::Mono(path)) => {
-            tile.child(Icon::empty().path(path).size(px(LOGO_SIZE)).text_color(ink))
-        }
-        Some(Logo::Color(path)) => tile.child(img(path).size(px(LOGO_SIZE))),
-        Some(Logo::AppIcon(name)) => tile.child(app_icon(name).size(px(LOGO_SIZE)).text_color(ink)),
-        None => tile,
-    }
+    tile.child(mark(provider, px(LOGO_SIZE), theme.foreground))
 }
 
 #[cfg(test)]
@@ -73,21 +88,23 @@ mod tests {
     use gpui_kit::AssetSource;
 
     #[test]
-    fn every_remote_provider_but_the_server_has_a_logo_that_loads() {
-        for provider in Provider::REMOTE {
+    fn every_provider_has_a_logo_that_loads() {
+        for provider in Provider::ALL {
             let path = match logo(provider) {
-                Some(Logo::Mono(path) | Logo::Color(path)) => {
+                Logo::Mono(path) | Logo::Color(path) => {
                     assert!(
                         path == format!("logos/{}.svg", provider.id()),
                         "{provider:?}'s logo is {path}"
                     );
                     path.to_owned()
                 }
-                Some(Logo::AppIcon(name)) => {
-                    assert_eq!(provider, Provider::OpenAiCompatible, "{provider:?}");
+                Logo::AppIcon(name) => {
+                    assert!(
+                        matches!(provider, Provider::OpenAiCompatible | Provider::Local),
+                        "{provider:?} has no logo of its own"
+                    );
                     format!("icons/{name}.svg")
                 }
-                None => panic!("{provider:?} has no logo"),
             };
             assert!(
                 matches!(Assets.load(&path), Ok(Some(_))),

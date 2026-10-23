@@ -60,7 +60,7 @@ SOFTWARE.
 
 ## LobeHub Icons
 
-Settings shows each remote Provider's logo, from LobeHub Icons, in `assets/lobehub/`. Its README lists the version, the files and the edits made to them. The logos are trademarks of their owners and are shown only to identify each Provider. <https://github.com/lobehub/lobe-icons>
+Settings shows Apple's and each remote Provider's logo, from LobeHub Icons, in `assets/lobehub/`. Its README lists the version, the files and the edits made to them. The logos are trademarks of their owners and are shown only to identify each Provider. <https://github.com/lobehub/lobe-icons>
 
 ```
 MIT License
