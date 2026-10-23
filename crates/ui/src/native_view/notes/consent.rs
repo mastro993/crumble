@@ -3,10 +3,10 @@
 //! that Provider, Model and host, which `Store` remembers (ADR 0008).
 
 use super::super::NativeView;
+use super::super::providers::saved_key;
 use crumble_notes::NoteId;
-use crumble_remote::{Provider, base_url, host, runs_locally};
-use crumble_store::secrets;
-use crumble_transcribe::{Apple, Local, OpenAiCompatible, Transcriber};
+use crumble_remote::{Job, Provider, host, runs_locally};
+use crumble_transcribe::{Apple, Local, Transcriber};
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::DialogEntrance;
@@ -14,15 +14,11 @@ use gpui_kit::{Context, Window};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-/// The Providers that transcribe, in the order the Note actions menu lists them.
-pub(in super::super) const TRANSCRIBERS: [Provider; 3] =
-    [Provider::Apple, Provider::Local, Provider::OpenAiCompatible];
-
 /// What the user agrees to before audio goes to a remote Model.
 pub(super) struct Consent {
     provider: Provider,
     model: String,
-    /// The server's host in lowercase, as the consent is kept.
+    /// The host of the Provider's address in lowercase, as the consent is kept.
     host: String,
 }
 
@@ -39,34 +35,18 @@ impl NativeView {
             .map_or_else(crumble_transcribe::current_locale, str::to_owned)
     }
 
-    /// Whether `provider` can transcribe with what Settings holds: Apple always offers to, a
-    /// Local Model once picked and downloaded, and the OpenAI-compatible server needs an
-    /// address requests can go to and a Transcription Model, as its Transcriber checks before
-    /// it uploads.
-    pub(in super::super) fn can_transcribe(&self, provider: Provider) -> bool {
-        match provider {
-            Provider::Apple => true,
-            Provider::Local => self.picked_local_model().is_some(),
-            Provider::Claude => false,
-            Provider::OpenAiCompatible => {
-                base_url(self.store.openai_base_url()).is_ok()
-                    && !self.store.transcription_model().is_empty()
-            }
-        }
-    }
-
-    /// What the user must agree to before `provider` gets a Recording's audio; `None` when it
-    /// runs on the Mac, has no address requests can go to, or the user already agreed for its
-    /// Model and host.
+    /// What the user must agree to before `provider` gets a Recording's audio; `None` when its
+    /// address is on the Mac, it has no address requests can go to or no Transcription Model,
+    /// or the user already agreed for that Model and host.
     pub(super) fn consent_needed(&self, provider: Provider) -> Option<Consent> {
-        let url = self.store.openai_base_url();
-        if runs_locally(provider, url) {
+        let address = self.provider_address(provider);
+        if runs_locally(provider, &address) {
             return None;
         }
         let consent = Consent {
             provider,
-            model: self.store.transcription_model().to_owned(),
-            host: host(url)?,
+            model: self.provider_model(provider, Job::Transcription)?,
+            host: host(&address)?,
         };
         let agreed = self
             .store
@@ -125,8 +105,8 @@ impl NativeView {
         });
     }
 
-    /// The Transcriber for `provider`, with the Settings picks and the server's key from the
-    /// Keychain; or why there is none, for the user.
+    /// The Transcriber for `provider`, with the Settings picks and a remote Provider's key from
+    /// the Keychain; or why there is none, for the user.
     /// `cancel` stops a Local Model's worker once set.
     pub(super) fn transcriber(
         &self,
@@ -135,14 +115,6 @@ impl NativeView {
     ) -> Result<Box<dyn Transcriber + Send>, String> {
         Ok(match provider {
             Provider::Apple => Box::new(Apple),
-            Provider::OpenAiCompatible => Box::new(OpenAiCompatible {
-                base_url: self.store.openai_base_url().to_owned(),
-                api_key: secrets::get(provider.id()).map_err(|error| {
-                    eprintln!("Could not read the API key: {error:#}");
-                    "Couldn't read the API key from the Keychain.".to_owned()
-                })?,
-                model: self.store.transcription_model().to_owned(),
-            }),
             Provider::Local => {
                 let (library, downloaded) = self
                     .local_model_on_disk()
@@ -154,7 +126,12 @@ impl NativeView {
                     cancel: cancel.clone(),
                 })
             }
-            Provider::Claude => return Err("Claude can't transcribe Recordings.".to_owned()),
+            _ => Box::new(crumble_transcribe::Remote {
+                provider,
+                base_url: self.provider_address(provider),
+                api_key: saved_key(provider)?,
+                model: (self.provider_model(provider, Job::Transcription)).unwrap_or_default(),
+            }),
         })
     }
 

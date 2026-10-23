@@ -63,6 +63,8 @@ sonora-common-audio = "=0.2.0"
 # run on a background thread (ADRs 0007 and 0008).
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
 serde_json = "1.0"
+# The shapes of remote Providers' API keys (ADR 0011); already in the build through gpui-kit.
+regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 # Local Models (ADR 0010): the sha256 a download is checked against, and the free space it needs.
 sha2 = "0.11"

@@ -1,56 +1,60 @@
 //! Settings › Transcription: the Transcription Model, its language, and transcribing the
 //! Recordings without a Transcript; Settings › Summary: the Summary Model; and Settings ›
-//! Providers: what each remote Provider needs, Claude's API key and Model id, and an
-//! OpenAI-compatible server's address, optional key, and a Model for each job. Choices are kept
-//! through `Store`; keys go to the Keychain through `secrets` and are never shown again.
-//! The fields and what their changes do are in `fields`; the sections are drawn in `render`.
+//! Intelligence: the Model Crumble's Chat talks to. Each picks a Provider, from Apple's, Local
+//! Models' for Transcripts, and the remote Providers set up for its job, then that Provider's
+//! Model: one it lists or one typed, or a downloaded Local Model. Choices are kept through
+//! `Store`. The selects and what picking does are in `fields`, the Provider selects' rows in
+//! `rows` and the Model selects' in `models`, and the sections are drawn in `render`.
 
 mod fields;
+mod models;
 mod render;
+mod rows;
 
 pub(super) use fields::model_settings;
 
 use super::NativeView;
+use super::providers::saved_model;
 use super::select::{Choice, Select};
-use crumble_local_models::{Downloaded, Model};
-use crumble_remote::Provider;
+use crumble_local_models::Model;
+use crumble_remote::{Job, Provider};
 use crumble_store::Store;
-use crumble_store::secrets;
-use crumble_summarize::{Availability, Claude, OpenAiCompatible};
-use gpui_kit::component::input::InputState;
-use gpui_kit::{Context, Entity, SharedString, Subscription, Task, Window};
-use std::collections::{HashMap, HashSet};
+use crumble_summarize::Availability;
+use gpui_kit::{Context, Entity, SharedString, Subscription};
+use models::{LocalModelItem, ModelItem, local_model_choices, model_choices};
+use rows::{ProviderItem, provider_items};
 use std::time::Instant;
 
-/// The Transcription, Summary and Providers sections' fields, and what they know of the
-/// Keychain.
-pub(super) struct ModelSettings {
+/// A job's Provider select, and the Model select of a remote Provider picked in it.
+pub(super) struct JobSelects {
     provider: Entity<Select<ProviderItem>>,
-    /// Apple's availability the select's items were made with, and when it was last read.
+    model: Entity<Select<ModelItem>>,
+}
+
+/// The Transcription, Summary and Intelligence sections' selects.
+pub(super) struct ModelSettings {
+    transcription: JobSelects,
+    summary: JobSelects,
+    intelligence: JobSelects,
+    /// The Model select while Local Models make Transcripts.
+    local_model: Entity<Select<LocalModelItem>>,
+    /// Apple's availability the selects' items were made with, and when it was last read.
     apple: Availability,
     apple_read: Instant,
-    transcription: Entity<Select<TranscriberItem>>,
     language: Entity<Select<LanguageItem>>,
     /// SpeechAnalyzer's locales by name, read once.
     apple_languages: Vec<LanguageItem>,
-    claude_key: Entity<InputState>,
-    claude_model: Entity<InputState>,
-    openai_url: Entity<InputState>,
-    openai_key: Entity<InputState>,
-    openai_model: Entity<InputState>,
-    transcription_model: Entity<InputState>,
-    /// The Providers with a key in the Keychain: read at launch, then kept as keys are saved and
-    /// removed here.
-    saved_keys: HashSet<Provider>,
-    /// The last Test of each remote Provider.
-    checks: HashMap<Provider, Check>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ModelSettings {
-    /// Whether `provider` has a key in the Keychain.
-    pub(super) fn has_key(&self, provider: Provider) -> bool {
-        self.saved_keys.contains(&provider)
+    /// `job`'s selects.
+    fn job(&self, job: Job) -> &JobSelects {
+        match job {
+            Job::Transcription => &self.transcription,
+            Job::Summary => &self.summary,
+            Job::Intelligence => &self.intelligence,
+        }
     }
 
     /// The ISO 639 code of each locale SpeechAnalyzer transcribes.
@@ -61,107 +65,9 @@ impl ModelSettings {
     }
 }
 
-enum Check {
-    /// Holds the Test; dropping it drops its result.
-    Running {
-        _task: Task<()>,
-    },
-    Passed,
-    Failed(String),
-}
-
-/// A row of the Summary Model select; Apple's is disabled when its model can't run.
-#[derive(Clone)]
-struct ProviderItem {
-    provider: Provider,
-    disabled: bool,
-}
-
-impl Choice for ProviderItem {
-    type Value = Provider;
-
-    fn title(&self) -> SharedString {
-        self.provider.name().into()
-    }
-
-    fn value(&self) -> &Provider {
-        &self.provider
-    }
-
-    /// Apple's name already says where it runs.
-    fn description(&self) -> Option<SharedString> {
-        (self.provider != Provider::Apple).then(|| "Gets the Transcript's text".into())
-    }
-
-    fn disabled(&self) -> bool {
-        self.disabled
-    }
-}
-
-/// What makes Transcripts: a Provider, or a downloaded Local Model by its slug.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Transcriber {
-    Provider(Provider),
-    Local(String),
-}
-
-/// A row of the Transcription Model select.
-#[derive(Clone)]
-struct TranscriberItem {
-    transcriber: Transcriber,
-    name: SharedString,
-}
-
-impl Choice for TranscriberItem {
-    type Value = Transcriber;
-
-    fn title(&self) -> SharedString {
-        self.name.clone()
-    }
-
-    fn value(&self) -> &Transcriber {
-        &self.transcriber
-    }
-
-    /// Apple's name already says where it runs.
-    fn description(&self) -> Option<SharedString> {
-        match self.transcriber {
-            Transcriber::Provider(Provider::Apple) => None,
-            Transcriber::Provider(_) => Some("Gets the Recording's audio".into()),
-            Transcriber::Local(_) => Some("On this Mac".into()),
-        }
-    }
-}
-
-/// Apple's Model, each downloaded Local Model, then the OpenAI-compatible server.
-fn transcriber_items(downloaded: &[Downloaded]) -> Vec<TranscriberItem> {
-    let provider = |provider: Provider| TranscriberItem {
-        transcriber: Transcriber::Provider(provider),
-        name: provider.name().into(),
-    };
-    let mut items = vec![provider(Provider::Apple)];
-    items.extend(downloaded.iter().map(|downloaded| TranscriberItem {
-        transcriber: Transcriber::Local(downloaded.model.slug.clone()),
-        name: downloaded.model.name.clone().into(),
-    }));
-    items.push(provider(Provider::OpenAiCompatible));
-    items
-}
-
-/// The Transcription Model picked in `store`.
-fn picked_transcriber(store: &Store) -> Transcriber {
-    match Provider::from_id(store.transcription_provider()) {
-        Some(Provider::Local) => {
-            Transcriber::Local(store.local_model().unwrap_or_default().to_owned())
-        }
-        Some(provider) => Transcriber::Provider(provider),
-        None => Transcriber::Provider(Provider::Apple),
-    }
-}
-
 /// The Language select's rows for the picked Transcription Model, and the row picked in
 /// `store`: a Local Model's languages, with "Detect automatically" when it can, or else
-/// SpeechAnalyzer's locales, which a remote server is asked in too. A stored locale the Model
+/// SpeechAnalyzer's locales, which a remote Provider is asked in too. A stored locale the Model
 /// does not list stays, as an extra row, so its Transcripts say why they fail.
 fn languages_for(
     store: &Store,
@@ -259,31 +165,46 @@ fn language_items() -> Vec<LanguageItem> {
     items
 }
 
-fn provider_items(apple: Availability) -> Vec<ProviderItem> {
-    Provider::SUMMARIZERS
-        .into_iter()
-        .map(|provider| ProviderItem {
-            provider,
-            disabled: provider == Provider::Apple && apple != Availability::Available,
-        })
-        .collect()
-}
-
-/// The row of `provider` in a select listing `providers`.
-fn index_of(providers: &[Provider], provider: Option<Provider>) -> Option<usize> {
-    let provider = provider?;
-    providers.iter().position(|known| *known == provider)
-}
-
 impl NativeView {
-    /// Makes the Transcription Model and Language selects show the downloaded Local Models
-    /// and the picked Model's languages, as after a download, a Delete or a Use.
-    pub(super) fn refresh_transcription_selects(&mut self, cx: &mut Context<Self>) {
-        let downloaded = self.local_models.downloaded();
-        let items = transcriber_items(downloaded);
-        let picked = picked_transcriber(&self.store);
-        let selected = items.iter().position(|item| item.transcriber == picked);
-        (self.models.transcription).update(cx, |select, cx| select.set_items(items, selected, cx));
+    /// The Provider picked for `job`: Apple's for Transcripts until another is, and for
+    /// Summaries while it can run, as last read once a second rather than asking macOS on each
+    /// frame.
+    fn picked_provider(&self, job: Job) -> Option<Provider> {
+        match job {
+            Job::Transcription => Some(self.transcription_provider()),
+            Job::Summary => {
+                let apple_runs = self.models.apple == Availability::Available;
+                (self.store.summary_provider(apple_runs)).and_then(Provider::from_id)
+            }
+            Job::Intelligence => (self.store.intelligence_provider()).and_then(Provider::from_id),
+        }
+    }
+
+    /// Makes the selects list what can do each job now, as after a download, a Delete or a Use,
+    /// Apple Intelligence turning on or off, or a Provider's key, address, Models or Model
+    /// changing: the Providers set up for it, the picked one's Models, and the picked
+    /// Transcription Model's languages.
+    pub(super) fn refresh_model_selects(&mut self, cx: &mut Context<Self>) {
+        let apple_runs = self.models.apple == Availability::Available;
+        let local_models = !self.local_models.downloaded().is_empty();
+        for job in [Job::Transcription, Job::Summary, Job::Intelligence] {
+            let picked = self.picked_provider(job);
+            let set_up = self.set_up_remotes(job);
+            let (items, selected) = provider_items(job, apple_runs, local_models, &set_up, picked);
+            let selects = self.models.job(job);
+            (selects.provider).update(cx, |select, cx| select.set_items(items, selected, cx));
+            let Some((picked, remote)) = picked.and_then(|picked| Some((picked, picked.remote()?)))
+            else {
+                continue;
+            };
+            let settings = self.store.provider(picked.id());
+            let saved = saved_model(&settings, job);
+            let (items, selected) = model_choices(remote, job, saved, self.listed(picked));
+            (selects.model).update(cx, |select, cx| select.set_items(items, selected, cx));
+        }
+        let (items, selected) =
+            local_model_choices(self.local_models.downloaded(), self.store.local_model());
+        (self.models.local_model).update(cx, |select, cx| select.set_items(items, selected, cx));
         let local = self
             .picked_local_model()
             .map(|downloaded| &downloaded.model);
@@ -292,114 +213,5 @@ impl NativeView {
         (self.models.language).update(cx, |select, cx| {
             select.set_items(languages, Some(selected), cx)
         });
-    }
-
-    /// The key field of `provider`.
-    fn key_field(&self, provider: Provider) -> &Entity<InputState> {
-        match provider {
-            Provider::Claude => &self.models.claude_key,
-            _ => &self.models.openai_key,
-        }
-    }
-
-    /// Moves the key typed for `provider` into the Keychain and empties its field.
-    fn save_key(&mut self, provider: Provider, window: &mut Window, cx: &mut Context<Self>) {
-        let field = self.key_field(provider).clone();
-        let key = field.read(cx).value().trim().to_owned();
-        if key.is_empty() {
-            return;
-        }
-        match secrets::set(provider.id(), &key) {
-            Ok(()) => {
-                self.models.saved_keys.insert(provider);
-                self.models.checks.remove(&provider);
-                self.forget_summary_failures(provider);
-                self.forget_transcription_failures(provider);
-                field.update(cx, |input, cx| input.set_value("", window, cx));
-                self.summarize_unsummarized(cx);
-            }
-            Err(error) => {
-                eprintln!("Could not save the key: {error:#}");
-                self.models
-                    .checks
-                    .insert(provider, Check::Failed("Couldn't save the key.".to_owned()));
-            }
-        }
-        cx.notify();
-    }
-
-    fn remove_key(&mut self, provider: Provider, cx: &mut Context<Self>) {
-        match secrets::delete(provider.id()) {
-            Ok(()) => {
-                self.models.saved_keys.remove(&provider);
-                self.models.checks.remove(&provider);
-                self.forget_summary_failures(provider);
-                self.forget_transcription_failures(provider);
-            }
-            Err(error) => {
-                eprintln!("Could not remove the key: {error:#}");
-                self.models.checks.insert(
-                    provider,
-                    Check::Failed("Couldn't remove the key.".to_owned()),
-                );
-            }
-        }
-        cx.notify();
-    }
-
-    /// Sends a tiny prompt to `provider` with what Settings holds, and shows how it went.
-    fn test_provider(&mut self, provider: Provider, cx: &mut Context<Self>) {
-        let key = match secrets::get(provider.id()) {
-            Ok(key) => key,
-            Err(error) => {
-                eprintln!("Could not read the API key: {error:#}");
-                self.models.checks.insert(
-                    provider,
-                    Check::Failed("Couldn't read the API key from the Keychain.".to_owned()),
-                );
-                cx.notify();
-                return;
-            }
-        };
-        let store = &self.store;
-        let work = match provider {
-            Provider::Claude => {
-                let claude = Claude {
-                    api_key: key.unwrap_or_default(),
-                    model: store.claude_model().to_owned(),
-                };
-                cx.background_executor()
-                    .spawn(async move { claude.check() })
-            }
-            _ => {
-                let server = OpenAiCompatible {
-                    base_url: store.openai_base_url().to_owned(),
-                    api_key: key,
-                    model: store.openai_model().to_owned(),
-                };
-                cx.background_executor()
-                    .spawn(async move { server.check() })
-            }
-        };
-        let task = cx.spawn(async move |view, cx| {
-            let result = work.await;
-            let _ = view.update(cx, |view, cx| {
-                let check = match result {
-                    Ok(()) => {
-                        // Settings may have been right all along, with the server not yet up.
-                        view.forget_summary_failures(provider);
-                        view.summarize_unsummarized(cx);
-                        Check::Passed
-                    }
-                    Err(error) => Check::Failed(error.to_string()),
-                };
-                view.models.checks.insert(provider, check);
-                cx.notify();
-            });
-        });
-        self.models
-            .checks
-            .insert(provider, Check::Running { _task: task });
-        cx.notify();
     }
 }

@@ -1,12 +1,12 @@
 //! The Note actions in the page header: a "…" button opening a menu with Transcribe again with…
 //! and Delete recording when the Note has a finished Recording, Summarize again with… when it has
-//! a Transcript, and Delete note.
+//! a Transcript, and Delete note. Replacing a Transcript and deleting a Note ask first.
 
 use super::super::NativeView;
 use super::super::controls::{app_icon, button};
 use super::super::menu::{MenuItem, OpenMenu};
-use super::consent::TRANSCRIBERS;
-use crumble_remote::Provider;
+use crumble_notes::NoteId;
+use crumble_remote::{Job, Provider};
 use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::component::{Sizable, WindowExt};
@@ -114,9 +114,8 @@ impl NativeView {
             .transcript
             .as_ref()
             .map(|transcript| transcript.provider.as_str());
-        let providers: Vec<MenuItem> = TRANSCRIBERS
-            .into_iter()
-            .filter(|provider| self.can_transcribe(*provider))
+        let providers: Vec<MenuItem> = (Provider::ALL.into_iter())
+            .filter(|&provider| self.ready_for(provider, Job::Transcription))
             .map(|provider| {
                 let id = note.id.clone();
                 MenuItem::new(
@@ -157,9 +156,8 @@ impl NativeView {
             .summary
             .as_ref()
             .map(|summary| summary.provider.as_str());
-        let providers: Vec<MenuItem> = Provider::SUMMARIZERS
-            .into_iter()
-            .filter(|provider| self.is_configured(*provider))
+        let providers: Vec<MenuItem> = (Provider::ALL.into_iter())
+            .filter(|&provider| self.ready_for(provider, Job::Summary))
             .map(|provider| {
                 let id = note.id.clone();
                 MenuItem::new(format!("note-summarize-{}", provider.id()), provider.name())
@@ -184,13 +182,49 @@ impl NativeView {
         )
     }
 
-    /// Asks before deleting the Note `id`, as nothing brings it back.
-    fn confirm_delete_note(
+    /// Asks before transcribing the Note `id` again with `provider` when it has a Transcript,
+    /// as the new one replaces it; then asks for consent when `provider` needs it.
+    fn confirm_transcribe_again(
         &mut self,
-        id: crumble_notes::NoteId,
+        id: NoteId,
+        provider: Provider,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let replaces = self
+            .note_detail
+            .note
+            .iter()
+            .any(|note| note.id == id && note.transcript.is_some());
+        if !replaces {
+            self.transcribe(id, Some(provider), Some(window), cx);
+            return;
+        }
+        let view = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (view, id) = (view.clone(), id.clone());
+            alert
+                .entrance(DialogEntrance::Fade)
+                .title("Transcribe this recording again?")
+                .description("The new Transcript replaces the current one.")
+                .show_cancel(true)
+                .ok_text("Transcribe")
+                .ok_variant(ButtonVariant::Primary)
+                .on_ok(move |_, window, cx| {
+                    // After this dialog closes, so a consent dialog can open in its place.
+                    let (view, id) = (view.clone(), id.clone());
+                    window.defer(cx, move |window, cx| {
+                        let _ = view.update(cx, |view, cx| {
+                            view.transcribe(id, Some(provider), Some(window), cx);
+                        });
+                    });
+                    true
+                })
+        });
+    }
+
+    /// Asks before deleting the Note `id`, as nothing brings it back.
+    fn confirm_delete_note(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id) = (view.clone(), id.clone());

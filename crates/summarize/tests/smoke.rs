@@ -3,8 +3,9 @@
 //! Intelligence on; the server's needs Ollama on this Mac with `OLLAMA_MODEL` pulled (default
 //! `llama3.2`), and skips otherwise.
 
+use crumble_remote::{Provider, ping};
 use crumble_summarize::{
-    Apple, Availability, OpenAiCompatible, Speaker, Summarizer, apple_availability, transcript_text,
+    Apple, Availability, Remote, Speaker, Summarizer, apple_availability, transcript_text,
 };
 
 /// An invented meeting; nothing real.
@@ -61,14 +62,20 @@ fn apple_summarizes_a_long_meeting_in_parts() {
 #[test]
 #[ignore = "needs a local Ollama"]
 fn a_local_server_summarizes_an_invented_meeting() {
-    let server = OpenAiCompatible {
+    let server = Remote {
+        provider: Provider::OpenAiCompatible,
         base_url: "http://localhost:11434/v1".into(),
         api_key: None,
         model: std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".into()),
     };
-    if let Err(error) = server.check() {
-        eprintln!("Skipped: no Ollama with {} here ({error})", server.model);
-        return;
+    // Ollama lists a Model with its tag, such as `llama3.2:latest`.
+    let tagged = format!("{}:", server.model);
+    let pulled = ping(Provider::OpenAiCompatible, &server.base_url, None).map(|listed| {
+        (listed.chat.iter()).any(|id| *id == server.model || id.starts_with(&tagged))
+    });
+    match pulled {
+        Ok(true) => check(&server, &transcript(1)),
+        Ok(false) => eprintln!("Skipped: Ollama here hasn't pulled {}", server.model),
+        Err(error) => eprintln!("Skipped: no Ollama here ({error})"),
     }
-    check(&server, &transcript(1));
 }

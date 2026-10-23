@@ -61,12 +61,23 @@ pub fn open(url: &str) -> anyhow::Result<SqliteConnection> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Display;
+
+    use diesel::connection::SimpleConnection;
     use diesel::dsl::sql;
     use diesel::prelude::*;
-    use diesel::sql_types::{Integer, Text};
+    use diesel::sql_types::{Integer, Nullable, Text};
     use diesel_migrations::MigrationHarness;
 
-    use super::open;
+    use super::{MIGRATIONS, open};
+    use crate::schema::{app_state, notes, providers, remote_audio_consents};
+
+    /// The last migration before Provider ids came from `crumble-remote`'s registry.
+    const BEFORE_PROVIDERS: &str = "20261019000010";
+
+    fn ok<T, E: Display>(result: Result<T, E>) -> T {
+        result.unwrap_or_else(|error| panic!("{error}"))
+    }
 
     fn journal_mode(connection: &mut SqliteConnection) -> QueryResult<String> {
         diesel::select(sql::<Text>(
@@ -83,7 +94,7 @@ mod tests {
             std::time::SystemTime::now()
         ));
         let url = path.to_string_lossy().into_owned();
-        let open = || open(&url).unwrap_or_else(|error| panic!("{error}"));
+        let open = || ok(open(&url));
         let mut connection = open();
         assert_eq!(journal_mode(&mut connection).as_deref(), Ok("wal"));
         let foreign_keys = diesel::select(sql::<Integer>(
@@ -93,9 +104,7 @@ mod tests {
         assert_eq!(foreign_keys, Ok(1));
         // The version `crumble-store` recorded before the migration moved here, so a database
         // migrated then does not run it again.
-        let applied = connection
-            .applied_migrations()
-            .unwrap_or_else(|error| panic!("{error}"));
+        let applied = ok(connection.applied_migrations());
         assert!(
             applied
                 .iter()
@@ -115,7 +124,151 @@ mod tests {
 
     #[test]
     fn memory_skips_wal() {
-        let mut connection = open(":memory:").unwrap_or_else(|error| panic!("{error}"));
+        let mut connection = ok(open(":memory:"));
         assert_eq!(journal_mode(&mut connection).as_deref(), Ok("memory"));
+    }
+
+    /// An in-memory database migrated up to `version`, and no further.
+    fn migrated_to(version: &str) -> SqliteConnection {
+        let mut connection = ok(SqliteConnection::establish(":memory:"));
+        while ok(connection.run_next_migration(MIGRATIONS)).to_string() != version {}
+        connection
+    }
+
+    /// A database from before the Provider registry, holding a user's Claude Model and
+    /// OpenAI-compatible server, a Note made with both, and a consent to send it audio.
+    fn with_old_providers() -> SqliteConnection {
+        let mut connection = migrated_to(BEFORE_PROVIDERS);
+        ok(connection.batch_execute(
+            "UPDATE app_state SET summary_provider = 'claude', transcription_provider = 'openai',
+                claude_model = 'claude-opus-5-5', openai_base_url = 'http://localhost:11434/v1',
+                openai_model = 'llama3.2', transcription_model = 'whisper-large-v3';
+            INSERT INTO notes (id, created_at, updated_at, transcript_model, transcript_locale,
+                transcribed_at, transcript_provider, summary, summary_provider, summary_model,
+                summarized_at)
+            VALUES ('note-1', 't', 't', 'whisper-large-v3', 'it_IT', 't', 'openai', '# Hi',
+                'claude', 'claude-opus-5-5', 't');
+            INSERT INTO remote_audio_consents VALUES ('openai', 'whisper-large-v3', 'localhost', 't');",
+        ));
+        connection
+    }
+
+    type ProviderRow = (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+
+    #[test]
+    fn provider_settings_move_to_their_table_under_the_new_ids() {
+        let mut connection = with_old_providers();
+        ok(connection.run_pending_migrations(MIGRATIONS));
+        let rows = providers::table
+            .order(providers::id)
+            .load::<ProviderRow>(&mut connection);
+        let some = |value: &str| Some(value.to_owned());
+        assert_eq!(
+            rows,
+            Ok(vec![
+                (
+                    "anthropic".into(),
+                    None,
+                    some("claude-opus-5-5"),
+                    None,
+                    None
+                ),
+                (
+                    "openai-compatible".into(),
+                    some("http://localhost:11434/v1"),
+                    some("llama3.2"),
+                    some("whisper-large-v3"),
+                    None,
+                ),
+            ])
+        );
+        let picked = app_state::table
+            .select((
+                app_state::summary_provider,
+                app_state::transcription_provider,
+                app_state::intelligence_provider,
+            ))
+            .first::<(Option<String>, String, Option<String>)>(&mut connection);
+        assert_eq!(
+            picked,
+            Ok((some("anthropic"), "openai-compatible".into(), None))
+        );
+        let made_by = notes::table
+            .select((notes::transcript_provider, notes::summary_provider))
+            .first::<(Option<String>, Option<String>)>(&mut connection);
+        assert_eq!(made_by, Ok((some("openai-compatible"), some("anthropic"))));
+        let consented = remote_audio_consents::table
+            .select((
+                remote_audio_consents::provider,
+                remote_audio_consents::model,
+                remote_audio_consents::host,
+            ))
+            .load::<(String, String, String)>(&mut connection);
+        assert_eq!(
+            consented,
+            Ok(vec![(
+                "openai-compatible".into(),
+                "whisper-large-v3".into(),
+                "localhost".into()
+            )])
+        );
+        // Ids are no longer listed in a CHECK, so a new Provider needs no migration.
+        let updated = diesel::update(app_state::table)
+            .set(app_state::transcription_provider.eq("elevenlabs"))
+            .execute(&mut connection);
+        assert_eq!(updated, Ok(1));
+    }
+
+    #[test]
+    fn default_or_blank_provider_settings_leave_no_row() {
+        let mut connection = migrated_to(BEFORE_PROVIDERS);
+        ok(connection.batch_execute("UPDATE app_state SET claude_model = ''"));
+        ok(connection.run_pending_migrations(MIGRATIONS));
+        let rows = providers::table.count().get_result::<i64>(&mut connection);
+        assert_eq!(rows, Ok(0));
+    }
+
+    #[test]
+    fn reverting_the_providers_migration_restores_the_old_columns_and_ids() {
+        let mut connection = with_old_providers();
+        ok(connection.run_pending_migrations(MIGRATIONS));
+        ok(connection.revert_last_migration(MIGRATIONS));
+        let mut read = |query: &str| {
+            diesel::select(sql::<Nullable<Text>>(&format!("({query})")))
+                .get_result::<Option<String>>(&mut connection)
+                .unwrap_or_else(|error| panic!("{query}: {error}"))
+        };
+        let restored = [
+            "SELECT claude_model FROM app_state",
+            "SELECT openai_base_url FROM app_state",
+            "SELECT openai_model FROM app_state",
+            "SELECT transcription_model FROM app_state",
+            "SELECT summary_provider FROM app_state",
+            "SELECT transcription_provider FROM app_state",
+            "SELECT transcript_provider FROM notes",
+            "SELECT summary_provider FROM notes",
+            "SELECT provider FROM remote_audio_consents",
+        ]
+        .map(&mut read);
+        assert_eq!(
+            restored.each_ref().map(Option::as_deref),
+            [
+                Some("claude-opus-5-5"),
+                Some("http://localhost:11434/v1"),
+                Some("llama3.2"),
+                Some("whisper-large-v3"),
+                Some("claude"),
+                Some("openai"),
+                Some("openai"),
+                Some("claude"),
+                Some("openai"),
+            ]
+        );
     }
 }

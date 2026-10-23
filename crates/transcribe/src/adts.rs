@@ -28,12 +28,16 @@ pub(crate) struct Chunk {
     pub(crate) length: Duration,
 }
 
-/// Cuts `adts` into runs of whole frames, each at most `max_bytes` long unless one frame is
-/// longer, in order. A frame cut short at the end, as a crash leaves one, is dropped. Errors
-/// when `adts` is not ADTS.
-// ponytail: cuts fall wherever the size runs out, so a word can be split across two uploads;
+/// Cuts `adts` into runs of whole frames, in order, each at most `max_bytes` long and playing at
+/// most `max_length`, unless one frame is past either. A frame cut short at the end, as a crash
+/// leaves one, is dropped. Errors when `adts` is not ADTS.
+// ponytail: cuts fall wherever a limit runs out, so a word can be split across two uploads;
 // cut at a quiet frame if Transcripts show it.
-pub(crate) fn chunks(adts: &[u8], max_bytes: usize) -> anyhow::Result<Vec<Chunk>> {
+pub(crate) fn chunks(
+    adts: &[u8],
+    max_bytes: usize,
+    max_length: Duration,
+) -> anyhow::Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
     let (mut start, mut at) = (0, 0);
     let (mut start_samples, mut samples) = (0_u64, 0_u64);
@@ -55,12 +59,15 @@ pub(crate) fn chunks(adts: &[u8], max_bytes: usize) -> anyhow::Result<Vec<Chunk>
         if at + length > adts.len() {
             break;
         }
-        if at > start && at + length - start > max_bytes {
+        let blocks = SAMPLES_PER_BLOCK * (u64::from(header[6] & 0x03) + 1);
+        let plays =
+            Duration::from_micros((samples + blocks - start_samples) * 1_000_000 / frame_rate);
+        if at > start && (at + length - start > max_bytes || plays > max_length) {
             chunks.push(chunk(start..at, start_samples, samples, rate));
             (start, start_samples) = (at, samples);
         }
         rate = frame_rate;
-        samples += SAMPLES_PER_BLOCK * (u64::from(header[6] & 0x03) + 1);
+        samples += blocks;
         at += length;
     }
     if at > start {
@@ -111,20 +118,20 @@ mod tests {
     fn a_short_track_is_one_chunk() {
         let audio = track(&[100, 120, 90]);
         assert_eq!(
-            chunks(&audio, 1000).ok(),
+            chunks(&audio, 1000, Duration::MAX).ok(),
             Some(vec![Chunk {
                 bytes: 0..310,
                 start: Duration::ZERO,
                 length: frames(3),
             }])
         );
-        assert_eq!(chunks(&[], 1000).ok(), Some(Vec::new()));
+        assert_eq!(chunks(&[], 1000, Duration::MAX).ok(), Some(Vec::new()));
     }
 
     #[test]
     fn a_long_track_is_cut_between_frames_with_each_cut_s_start() {
         let audio = track(&[100, 100, 100, 100, 100]);
-        let cut = chunks(&audio, 250).unwrap_or_default();
+        let cut = chunks(&audio, 250, Duration::MAX).unwrap_or_default();
         assert_eq!(
             cut,
             [
@@ -146,18 +153,33 @@ mod tests {
             ]
         );
         // A frame longer than the limit still goes, alone.
-        let big = chunks(&track(&[50, 400, 50]), 100).unwrap_or_default();
+        let big = chunks(&track(&[50, 400, 50]), 100, Duration::MAX).unwrap_or_default();
         let sizes: Vec<_> = big.iter().map(|chunk| chunk.bytes.len()).collect();
         assert_eq!(sizes, [50, 400, 50]);
+    }
+
+    #[test]
+    fn a_track_is_cut_where_a_piece_would_play_too_long() {
+        let audio = track(&[100, 100, 100, 100, 100]);
+        let cut = chunks(&audio, 1000, frames(2)).unwrap_or_default();
+        let lengths: Vec<_> = cut.iter().map(|chunk| chunk.length).collect();
+        assert_eq!(
+            lengths,
+            [frames(2), frames(4) - frames(2), frames(5) - frames(4)]
+        );
+        assert_eq!(cut[1].start, frames(2));
+        // A frame longer than the limit still goes, alone.
+        let cut = chunks(&audio, 1000, Duration::ZERO).unwrap_or_default();
+        assert_eq!(cut.len(), 5);
     }
 
     #[test]
     fn a_frame_cut_short_is_dropped_and_garbage_is_an_error() {
         let mut audio = track(&[100, 100]);
         audio.truncate(150);
-        let cut = chunks(&audio, 1000).unwrap_or_default();
+        let cut = chunks(&audio, 1000, Duration::MAX).unwrap_or_default();
         assert_eq!(cut.len(), 1);
         assert_eq!(cut[0].bytes, 0..100);
-        assert!(chunks(b"RIFF....WAVEfmt ", 1000).is_err());
+        assert!(chunks(b"RIFF....WAVEfmt ", 1000, Duration::MAX).is_err());
     }
 }

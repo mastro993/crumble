@@ -13,6 +13,7 @@ mod list_rows;
 mod local_models;
 mod menu;
 mod notes;
+mod providers;
 mod rail;
 mod route;
 mod select;
@@ -45,6 +46,7 @@ use gpui_kit::{
 use local_models::LocalModels;
 use menu::OpenMenu;
 use notes::NoteDetail;
+use providers::Providers;
 use route::{History, Route};
 use settings_models::ModelSettings;
 use settings_page::{SettingsSection, WeekdaySelect};
@@ -76,8 +78,12 @@ pub struct NativeView {
     first_day_select: WeekdaySelect,
     /// The Settings section on screen.
     settings_section: SettingsSection,
-    /// The fields of Settings › Transcription, Summary and Providers.
+    /// The Provider, Model and Language selects of Settings › Transcription, Summary and
+    /// Intelligence.
     models: ModelSettings,
+    /// Which remote Providers have a key, the Models each listed, and the listings running or
+    /// failed.
+    providers: Providers,
     /// Settings › Local Models, and the downloads running.
     local_models: LocalModels,
     calendar: CalendarPage,
@@ -113,7 +119,8 @@ impl NativeView {
         let note_detail = NoteDetail::new(window, cx);
         let first_day_select = settings_page::first_day_select(&store, cx);
         let local_models = LocalModels::new(window, cx);
-        let models = settings_models::model_settings(&store, local_models.downloaded(), window, cx);
+        let models = settings_models::model_settings(cx);
+        let providers = Providers::read();
         let calendar = CalendarPage::new(store.calendar_view());
         let calendar_sync = cx.new(CalendarSync::new);
         let events = cx.new(|_| CalendarEvents::default());
@@ -146,6 +153,7 @@ impl NativeView {
             first_day_select,
             settings_section: SettingsSection::default(),
             models,
+            providers,
             local_models,
             calendar,
             events,
@@ -158,6 +166,7 @@ impl NativeView {
             suggestions,
             _minute_tick: calendar::tick_minutes(cx),
         };
+        view.refresh_model_selects(cx);
         // Transcripts left without a Summary, as when the app quit while making them. Recordings
         // without a Transcript wait for the user (ADR 0010).
         view.summarize_unsummarized(cx);
@@ -170,12 +179,14 @@ impl NativeView {
         if self.route != route {
             self.history.push(std::mem::replace(&mut self.route, route));
         }
+        self.arrived();
         cx.notify();
     }
 
     fn go_back(&mut self, cx: &mut Context<Self>) {
         if let Some(route) = self.history.back(self.route.clone()) {
             self.route = route;
+            self.arrived();
             cx.notify();
         }
     }
@@ -183,7 +194,15 @@ impl NativeView {
     fn go_forward(&mut self, cx: &mut Context<Self>) {
         if let Some(route) = self.history.forward(self.route.clone()) {
             self.route = route;
+            self.arrived();
             cx.notify();
+        }
+    }
+
+    /// Follows the route on screen becoming `self.route`, by a link, the rail or history.
+    fn arrived(&mut self) {
+        if self.route == Route::Settings {
+            self.settings_shown();
         }
     }
 }

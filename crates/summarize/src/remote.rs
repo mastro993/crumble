@@ -1,151 +1,112 @@
-//! Remote Providers over HTTP, through `crumble-remote`: the Claude API and OpenAI-compatible
-//! servers. Each gets the whole Transcript in one request. An API key goes only into its
-//! request's header: never into an error, a log, or anything else this module returns.
+//! Remote Providers over HTTP, through `crumble-remote`: any whose Models chat, each through the
+//! API its [`Chat`] names, one module per API in `remote/`. Each gets the whole Transcript in one
+//! request. An API key goes only into its request's header: never into an error, a log, or
+//! anything else this module returns.
+
+mod anthropic;
+mod gemini;
+mod openai;
 
 use anyhow::{Context as _, bail};
 use crumble_remote::{
-    Provider, TIMEOUT, base_url, failure, no_response, post_json, without_userinfo,
+    Chat, Provider, TIMEOUT, base_url, failure, no_response, post_json, without_userinfo,
 };
-use serde_json::{Value, json};
 
 use crate::{Summarizer, prompt};
 
-/// The Claude API's address.
-const CLAUDE_URL: &str = "https://api.anthropic.com/v1/messages";
-/// The Messages API version Crumble speaks.
-const CLAUDE_VERSION: &str = "2023-06-01";
-/// The most tokens Claude may spend on a Summary, any thinking included. An OpenAI-compatible
-/// server gets no cap: the parameter's name differs between servers, and a Summary that runs out
-/// fails either way.
-const CLAUDE_MAX_TOKENS: u32 = 16_000;
-/// The longest Transcript sent, about 150,000 tokens: under the context of current Claude
+/// The longest Transcript sent, about 150,000 tokens: under the context of current remote
 /// Models and large local ones. ponytail: a fixed limit; ask each server for its context if a
 /// smaller one turns long Transcripts away.
 const MAX_CHARS: usize = 600_000;
 
-/// The Claude API, with the user's API key.
-pub struct Claude {
-    /// The key, from the Keychain.
-    pub api_key: String,
+/// A remote Provider's Model, reached through the chat API `crumble-remote` names for it.
+pub struct Remote {
+    /// Who runs the Model: one of [`Provider::REMOTE`] whose Models chat.
+    pub provider: Provider,
+    /// The address requests go to, such as `https://api.anthropic.com` or
+    /// `http://localhost:11434/v1`: the caller's `provider.remote().base_url(saved)`, the one
+    /// the user saved or else the Provider's usual one.
+    pub base_url: String,
+    /// The API key, from the Keychain; `None` when there is none, which only a server the user
+    /// runs may accept.
+    pub api_key: Option<String>,
     /// The Model id, such as `claude-sonnet-5-5`.
     pub model: String,
 }
 
-/// A server that speaks OpenAI's chat completions, such as Ollama or LM Studio.
-pub struct OpenAiCompatible {
-    /// Its address up to `/chat/completions`, such as `http://localhost:11434/v1`.
-    pub base_url: String,
-    /// The key, from the Keychain, if the server wants one.
-    pub api_key: Option<String>,
-    /// The Model's name on that server.
-    pub model: String,
-}
-
-impl Summarizer for Claude {
+impl Summarizer for Remote {
     fn provider(&self) -> Provider {
-        Provider::Claude
+        self.provider
     }
 
     fn model(&self) -> &str {
-        &self.model
+        self.model.trim()
     }
 
     fn summarize(&self, transcript: &str, progress: &mut dyn FnMut(f32)) -> anyhow::Result<String> {
         fits(transcript)?;
-        let response = self.ask(
+        let summary = self.ask(
             &prompt::summary_instructions(false),
             &prompt::prompt(transcript, false),
-            CLAUDE_MAX_TOKENS,
         )?;
-        let summary = claude_text(&response)?;
         progress(1.0);
         Ok(summary)
     }
 }
 
-impl Claude {
-    /// Sends a tiny prompt, to check the key and the Model: any answer will do.
-    pub fn check(&self) -> anyhow::Result<()> {
-        self.ask("Reply with OK.", "OK?", 16).map(drop)
-    }
-
-    /// Sends the prompt and returns the response's body, or why it failed.
-    fn ask(&self, instructions: &str, prompt: &str, max_tokens: u32) -> anyhow::Result<String> {
-        if self.api_key.trim().is_empty() {
-            bail!("Add a Claude API key in Settings.");
-        }
-        if self.model.trim().is_empty() {
-            bail!("Enter a Claude Model in Settings.");
-        }
-        let body = claude_body(&self.model, instructions, prompt, max_tokens);
-        let headers = [
-            ("x-api-key", self.api_key.as_str()),
-            ("anthropic-version", CLAUDE_VERSION),
-        ];
-        let (status, text) = post_json(CLAUDE_URL, &headers, &body).map_err(|error| {
-            no_response("Claude", "Check the internet connection.", TIMEOUT, &error)
-        })?;
-        if status != 200 {
-            return Err(failure(Provider::Claude, &self.model, status, &text));
-        }
-        Ok(text)
-    }
-}
-
-impl Summarizer for OpenAiCompatible {
-    fn provider(&self) -> Provider {
-        Provider::OpenAiCompatible
-    }
-
-    fn model(&self) -> &str {
-        &self.model
-    }
-
-    fn summarize(&self, transcript: &str, progress: &mut dyn FnMut(f32)) -> anyhow::Result<String> {
-        fits(transcript)?;
-        let response = self.ask(
-            &prompt::summary_instructions(false),
-            &prompt::prompt(transcript, false),
-        )?;
-        let summary = openai_text(&response)?;
-        progress(1.0);
-        Ok(summary)
-    }
-}
-
-impl OpenAiCompatible {
-    /// Sends a tiny prompt, to check the address, the key and the Model: any answer will do.
-    pub fn check(&self) -> anyhow::Result<()> {
-        self.ask("Reply with OK.", "OK?").map(drop)
-    }
-
-    /// Sends the prompt and returns the response's body, or why it failed.
+impl Remote {
+    /// Sends the prompt and returns the Model's answer, or why there is none. Settings missing
+    /// for the request fail before it is sent.
     fn ask(&self, instructions: &str, prompt: &str) -> anyhow::Result<String> {
+        let provider = self.provider;
+        let name = provider.name();
+        let remote = (provider.remote()).with_context(|| format!("{name} isn't remote."))?;
+        let chat = (remote.chat()).with_context(|| format!("{name} doesn't make Summaries."))?;
+        let key = (self.api_key.as_deref()).filter(|key| !key.trim().is_empty());
+        if key.is_none() && remote.api_key().is_some_and(|format| format.required()) {
+            bail!("Add an API key for {name} in Settings.");
+        }
         let base = base_url(&self.base_url)?;
-        if self.model.trim().is_empty() {
-            bail!("Enter the server's Model in Settings.");
+        let model = self.model.trim();
+        if model.is_empty() {
+            match provider {
+                Provider::OpenAiCompatible => bail!("Enter the server's Model in Settings."),
+                _ => bail!("Choose a Model for {name} in Settings."),
+            }
         }
-        let url = format!("{base}/chat/completions");
-        let body = openai_body(&self.model, instructions, prompt);
-        let authorization = self.api_key.as_ref().map(|key| format!("Bearer {key}"));
-        let headers: Vec<(&str, &str)> = authorization
-            .iter()
-            .map(|value| ("authorization", value.as_str()))
+        let (url, body) = match chat {
+            Chat::AnthropicMessages => anthropic::request(base, model, instructions, prompt),
+            Chat::OpenAiChat => openai::request(base, model, instructions, prompt),
+            Chat::GeminiGenerateContent => gemini::request(base, model, instructions, prompt),
+        };
+        let headers = remote.headers(key);
+        let headers: Vec<(&str, &str)> = (headers.iter())
+            .map(|(header, value)| (*header, value.as_str()))
             .collect();
-        let (status, text) = post_json(&url, &headers, &body).map_err(|error| {
-            // The address may hold a user name and password.
-            let base = without_userinfo(base);
-            no_response(&base, "Check that the server is running.", TIMEOUT, &error)
-        })?;
+        let (status, answer) =
+            post_json(&url, &headers, &body).map_err(|error| match provider {
+                // The address may hold a user name and password.
+                Provider::OpenAiCompatible => no_response(
+                    &without_userinfo(base),
+                    "Check that the server is running.",
+                    TIMEOUT,
+                    &error,
+                ),
+                _ => no_response(name, "Check the internet connection.", TIMEOUT, &error),
+            })?;
         if status != 200 {
-            return Err(failure(
-                Provider::OpenAiCompatible,
-                &self.model,
-                status,
-                &text,
-            ));
+            return Err(failure(provider, model, status, &answer, key));
         }
-        Ok(text)
+        // Named as `failure` names it.
+        let who = match provider {
+            Provider::OpenAiCompatible => "The server",
+            _ => name,
+        };
+        match chat {
+            Chat::AnthropicMessages => anthropic::text(who, &answer),
+            Chat::OpenAiChat => openai::text(who, &answer),
+            Chat::GeminiGenerateContent => gemini::text(who, &answer),
+        }
     }
 }
 
@@ -157,58 +118,8 @@ fn fits(transcript: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn claude_body(model: &str, instructions: &str, prompt: &str, max_tokens: u32) -> Value {
-    json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": instructions,
-        "messages": [{ "role": "user", "content": prompt }],
-    })
-}
-
-fn openai_body(model: &str, instructions: &str, prompt: &str) -> Value {
-    json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": instructions },
-            { "role": "user", "content": prompt },
-        ],
-    })
-}
-
-/// The text of a Messages API response.
-fn claude_text(response: &str) -> anyhow::Result<String> {
-    let response: Value =
-        serde_json::from_str(response).context("Claude's answer wasn't understood.")?;
-    match response["stop_reason"].as_str() {
-        Some("refusal") => bail!("Claude declined to summarize this Transcript."),
-        Some("max_tokens") => bail!("Claude ran out of room before finishing the Summary."),
-        _ => {}
-    }
-    let text: String = response["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|block| block["type"] == "text")
-        .filter_map(|block| block["text"].as_str())
-        .collect();
-    answered(text)
-}
-
-/// The text of a chat completions response.
-fn openai_text(response: &str) -> anyhow::Result<String> {
-    let response: Value =
-        serde_json::from_str(response).context("The server's answer wasn't understood.")?;
-    if response["choices"][0]["finish_reason"] == "length" {
-        bail!("The Model ran out of room before finishing the Summary.");
-    }
-    let text = response["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or_default();
-    answered(text.to_owned())
-}
-
-fn answered(text: String) -> anyhow::Result<String> {
+/// `text` without the spaces around it, or an error when the Model wrote nothing.
+fn answered(text: &str) -> anyhow::Result<String> {
     let text = text.trim();
     if text.is_empty() {
         bail!("The Model answered with nothing.");
@@ -218,133 +129,248 @@ fn answered(text: String) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Claude, OpenAiCompatible, claude_body, claude_text, fits, openai_body, openai_text,
-    };
+    use super::{MAX_CHARS, Remote, fits};
     use crate::Summarizer;
-    use serde_json::json;
+    use crumble_remote::Provider;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
 
-    #[test]
-    fn bodies_carry_the_model_instructions_and_prompt() {
-        assert_eq!(
-            claude_body(
-                "claude-sonnet-5-5",
-                "Be brief.",
-                "Transcript:\n\nYou: Hi.",
-                64
-            ),
-            json!({
-                "model": "claude-sonnet-5-5",
-                "max_tokens": 64,
-                "system": "Be brief.",
-                "messages": [{ "role": "user", "content": "Transcript:\n\nYou: Hi." }],
-            })
-        );
-        assert_eq!(
-            openai_body("llama3.2", "Be brief.", "Hi"),
-            json!({
-                "model": "llama3.2",
-                "messages": [
-                    { "role": "system", "content": "Be brief." },
-                    { "role": "user", "content": "Hi" },
-                ],
-            })
-        );
+    fn remote(provider: Provider, base_url: &str, api_key: Option<&str>, model: &str) -> Remote {
+        Remote {
+            provider,
+            base_url: base_url.to_owned(),
+            api_key: api_key.map(str::to_owned),
+            model: model.to_owned(),
+        }
+    }
+
+    /// What summarizing a short Transcript with `remote` fails with, or `None` if it worked.
+    fn failure(remote: &Remote) -> Option<String> {
+        (remote.summarize("You: Hi.", &mut |_| {}))
+            .map_err(|error| format!("{error:#}"))
+            .err()
+    }
+
+    /// Answers one request on this Mac with 200 and `answer`. Gives the address to send it to,
+    /// and the request as received, in lowercase.
+    fn serve_once(answer: &'static str) -> (String, JoinHandle<String>) {
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(error) => panic!("no port to listen on: {error}"),
+        };
+        let address = match listener.local_addr() {
+            Ok(address) => address,
+            Err(error) => panic!("no address: {error}"),
+        };
+        let served = thread::spawn(move || {
+            let mut stream = match listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(error) => panic!("no request: {error}"),
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+            let mut request = Vec::new();
+            let mut buffer = [0; 8192];
+            while !received_all(&request) {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
+                 connection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            String::from_utf8_lossy(&request).to_lowercase()
+        });
+        (format!("http://{address}"), served)
+    }
+
+    /// Whether `request` holds its whole head and the body its `content-length` announces.
+    fn received_all(request: &[u8]) -> bool {
+        let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
+        let length = (head.lines())
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|length| length.trim().parse().ok())
+            .unwrap_or(0);
+        request.len() >= end + 4 + length
+    }
+
+    /// Summarizes with `provider`'s Model `m1`, at a server on this Mac that answers `answer`,
+    /// and checks that the request starts with `line` and carries `headers`, in lowercase.
+    /// Gives the request.
+    fn assert_served(
+        provider: Provider,
+        key: Option<&str>,
+        answer: &'static str,
+        line: &str,
+        headers: &[&str],
+    ) -> String {
+        let (base, served) = serve_once(answer);
+        let remote = remote(provider, &base, key, " m1 ");
+        assert_eq!(remote.model(), "m1");
+        match remote.summarize("You: Hi.", &mut |_| {}) {
+            Ok(summary) => assert_eq!(summary, "Planned.", "{provider:?}"),
+            // The server still waits for a request, so don't join it.
+            Err(error) => panic!("{provider:?}: {error:#}"),
+        }
+        let request = match served.join() {
+            Ok(request) => request,
+            Err(_) => panic!("{provider:?}: the server failed"),
+        };
+        assert!(request.starts_with(line), "{provider:?}: {request}");
+        for header in headers {
+            assert!(
+                request.contains(header),
+                "{provider:?}: {header} in {request}"
+            );
+        }
+        request
     }
 
     #[test]
-    fn responses_give_their_text() {
-        let claude = r#"{"id":"msg_1","type":"message","role":"assistant","content":[
-            {"type":"text","text":"Planned the launch."},{"type":"text","text":"\n\n## Decisions"}],
-            "stop_reason":"end_turn"}"#;
-        assert_eq!(
-            claude_text(claude).ok().as_deref(),
-            Some("Planned the launch.\n\n## Decisions")
+    fn each_chat_api_gets_its_path_headers_and_answer() {
+        let anthropic =
+            r#"{"content":[{"type":"text","text":"Planned."}],"stop_reason":"end_turn"}"#;
+        let gemini =
+            r#"{"candidates":[{"content":{"parts":[{"text":"Planned."}]},"finishReason":"STOP"}]}"#;
+        let openai = r#"{"choices":[{"message":{"content":"Planned."},"finish_reason":"stop"}]}"#;
+        assert_served(
+            Provider::Anthropic,
+            Some("sk-test"),
+            anthropic,
+            "post /v1/messages ",
+            &["x-api-key: sk-test", "anthropic-version: 2023-06-01"],
         );
-        let refused = r#"{"content":[],"stop_reason":"refusal"}"#;
-        assert!(claude_text(refused).is_err());
-        let cut = r#"{"content":[{"type":"text","text":"Planned"}],"stop_reason":"max_tokens"}"#;
-        assert!(claude_text(cut).is_err());
-        let openai = r#"{"choices":[{"index":0,"message":{"role":"assistant",
-            "content":" Planned the launch.\n"},"finish_reason":"stop"}]}"#;
-        assert_eq!(
-            openai_text(openai).ok().as_deref(),
-            Some("Planned the launch.")
+        assert_served(
+            Provider::Gemini,
+            Some("sk-test"),
+            gemini,
+            "post /v1beta/models/m1:generatecontent ",
+            &["x-goog-api-key: sk-test"],
         );
-        assert!(openai_text(r#"{"choices":[]}"#).is_err());
-        let cut = r#"{"choices":[{"message":{"content":"Planned"},"finish_reason":"length"}]}"#;
-        assert!(openai_text(cut).is_err());
-        assert_eq!(
-            openai_text("<html>")
-                .map_err(|error| error.to_string())
-                .err()
-                .as_deref(),
-            Some("The server's answer wasn't understood.")
+        assert_served(
+            Provider::OpenRouter,
+            Some("sk-test"),
+            openai,
+            "post /chat/completions ",
+            &[
+                "authorization: bearer sk-test",
+                "x-openrouter-title: crumble",
+            ],
         );
+        let keyless = assert_served(
+            Provider::OpenAiCompatible,
+            None,
+            openai,
+            "post /chat/completions ",
+            &[],
+        );
+        assert!(!keyless.contains("authorization"), "{keyless}");
     }
 
     #[test]
     fn a_transcript_must_fit_one_request() {
         assert!(fits("You: Hi.").is_ok());
-        assert!(fits(&"a".repeat(super::MAX_CHARS + 1)).is_err());
+        assert!(fits(&"a".repeat(MAX_CHARS + 1)).is_err());
     }
 
     #[test]
     fn missing_settings_fail_before_any_request() {
-        let claude = Claude {
-            api_key: "sk-test-secret".into(),
-            model: " ".into(),
-        };
-        let error = claude.summarize("You: Hi.", &mut |_| {});
+        let anthropic = "https://api.anthropic.com";
+        let cases = [
+            (
+                remote(Provider::Apple, "", None, "m1"),
+                "Apple, on this Mac isn't remote.",
+            ),
+            (
+                remote(
+                    Provider::ElevenLabs,
+                    "https://api.elevenlabs.io",
+                    None,
+                    "m1",
+                ),
+                "ElevenLabs doesn't make Summaries.",
+            ),
+            (
+                remote(Provider::Anthropic, anthropic, None, "claude-sonnet-5-5"),
+                "Add an API key for Anthropic in Settings.",
+            ),
+            (
+                remote(
+                    Provider::Anthropic,
+                    anthropic,
+                    Some(" "),
+                    "claude-sonnet-5-5",
+                ),
+                "Add an API key for Anthropic in Settings.",
+            ),
+            (
+                remote(Provider::Anthropic, anthropic, Some("sk-test-secret"), " "),
+                "Choose a Model for Anthropic in Settings.",
+            ),
+            (
+                remote(Provider::OpenAiCompatible, "", None, "llama3.2"),
+                "Enter the server's address in Settings.",
+            ),
+            (
+                remote(
+                    Provider::OpenAiCompatible,
+                    "localhost:11434/v1",
+                    None,
+                    "llama3.2",
+                ),
+                "Start the server's address with http:// or https://.",
+            ),
+            (
+                remote(
+                    Provider::OpenAiCompatible,
+                    "http://localhost:11434/v1",
+                    None,
+                    "",
+                ),
+                "Enter the server's Model in Settings.",
+            ),
+        ];
+        for (remote, expected) in cases {
+            assert_eq!(failure(&remote).as_deref(), Some(expected));
+        }
+        let long = remote(Provider::Anthropic, anthropic, Some("sk-test"), "m1");
+        let error = long.summarize(&"a".repeat(MAX_CHARS + 1), &mut |_| {});
         assert_eq!(
             error.map_err(|error| error.to_string()).err().as_deref(),
-            Some("Enter a Claude Model in Settings.")
-        );
-        let server = OpenAiCompatible {
-            base_url: String::new(),
-            api_key: None,
-            model: "llama3.2".into(),
-        };
-        assert!(server.check().is_err());
-        let schemeless = OpenAiCompatible {
-            base_url: "localhost:11434/v1".into(),
-            api_key: None,
-            model: "llama3.2".into(),
-        };
-        assert_eq!(
-            schemeless
-                .check()
-                .map_err(|error| error.to_string())
-                .err()
-                .as_deref(),
-            Some("Start the server's address with http:// or https://.")
-        );
-        let keyless = Claude {
-            api_key: String::new(),
-            model: "claude-sonnet-5-5".into(),
-        };
-        assert_eq!(
-            keyless
-                .check()
-                .map_err(|error| error.to_string())
-                .err()
-                .as_deref(),
-            Some("Add a Claude API key in Settings.")
+            Some("The Transcript is too long to summarize in one request.")
         );
     }
 
     #[test]
-    fn an_unreachable_server_never_shows_the_key() {
+    fn an_unreachable_provider_never_shows_the_key() {
         // Nothing listens on port 9 of this Mac.
-        let server = OpenAiCompatible {
-            base_url: "http://me:pw@127.0.0.1:9/v1/".into(),
-            api_key: Some("sk-test-secret".into()),
-            model: "llama3.2".into(),
-        };
-        let error = server.check().map_err(|error| format!("{error:#}")).err();
+        let server = remote(
+            Provider::OpenAiCompatible,
+            "http://me:pw@127.0.0.1:9/v1/",
+            Some("sk-test-secret"),
+            "llama3.2",
+        );
         assert_eq!(
-            error.as_deref(),
+            failure(&server).as_deref(),
             Some("Couldn't reach http://127.0.0.1:9/v1. Check that the server is running.")
+        );
+        let company = remote(
+            Provider::Anthropic,
+            "http://127.0.0.1:9",
+            Some("sk-test-secret"),
+            "claude-sonnet-5-5",
+        );
+        assert_eq!(
+            failure(&company).as_deref(),
+            Some("Couldn't reach Anthropic. Check the internet connection.")
         );
     }
 }

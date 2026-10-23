@@ -36,7 +36,7 @@ Run `git config core.hooksPath .githooks` once per clone to turn on the pre-comm
 
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
 
-`cargo test -p crumble-summarize --locked -- --ignored --nocapture` summarizes an invented Transcript with Apple's on-device model (Apple Intelligence must be on) and with a local Ollama if one is running. `cargo test -p crumble-store --locked -- --ignored` saves, reads and removes a made-up key in the login Keychain.
+`cargo test -p crumble-summarize --locked -- --ignored --nocapture` summarizes an invented Transcript with Apple's on-device model (Apple Intelligence must be on) and with a local Ollama if one is running with `OLLAMA_MODEL` (default `llama3.2`) pulled. `cargo test -p crumble-store --locked -- --ignored` saves, lists, reads and removes a made-up key in the login Keychain, and moves made-up keys between two made-up services as a launch moves the keys earlier builds saved.
 
 ## Changing the database schema
 

@@ -4,14 +4,13 @@
 
 use super::super::NativeView;
 use super::super::controls::button;
+use super::super::providers::saved_key;
 use super::super::settings_page::SettingsSection;
 use chrono::Utc;
 use crumble_notes::{NoteId, Track};
-use crumble_remote::{Provider, base_url, runs_locally};
-use crumble_store::secrets;
+use crumble_remote::{Provider, runs_locally};
 use crumble_summarize::{
-    Apple, Availability, Claude, OpenAiCompatible, Speaker, Summarizer, apple_availability,
-    transcript_text,
+    Apple, Availability, Speaker, Summarizer, apple_availability, transcript_text,
 };
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::text::TextView;
@@ -88,10 +87,13 @@ impl NativeView {
     /// Queues the older Notes whose Transcript has no Summary, as when the app quit while
     /// summarizing or no Summary Model was picked yet, when the Summary Model keeps the text on
     /// the Mac. A remote one gets an older Transcript only when the user asks, from its Note's
-    /// Summary tab. Run at launch and when a Summary Model is picked.
+    /// Summary tab. Run at launch, when a Summary Model is picked, when Apple's Model becomes
+    /// able to run, and when a Provider's key is saved or removed, a check of it passes, or its
+    /// Summary Model is picked.
     pub(in super::super) fn summarize_unsummarized(&mut self, cx: &mut Context<Self>) {
         let Some(provider) = self.summary_provider().filter(|&provider| {
-            runs_locally(provider, self.store.openai_base_url()) && self.is_configured(provider)
+            runs_locally(provider, &self.provider_address(provider))
+                && self.ready_for(provider, crumble_remote::Job::Summary)
         }) else {
             return;
         };
@@ -114,22 +116,6 @@ impl NativeView {
         self.store
             .summary_provider(apple_availability() == Availability::Available)
             .and_then(Provider::from_id)
-    }
-
-    /// Whether `provider` has what it needs to summarize: Apple's model can run, or the remote
-    /// Provider has its key, address and Model.
-    pub(in super::super) fn is_configured(&self, provider: Provider) -> bool {
-        match provider {
-            Provider::Apple => apple_availability() == Availability::Available,
-            Provider::Claude => {
-                self.models.has_key(provider) && !self.store.claude_model().is_empty()
-            }
-            Provider::OpenAiCompatible => {
-                base_url(self.store.openai_base_url()).is_ok()
-                    && !self.store.openai_model().is_empty()
-            }
-            Provider::Local => false,
-        }
     }
 
     /// Queues the Note `id` to be summarized by `provider`, else by the Summary Model picked in
@@ -208,8 +194,8 @@ impl NativeView {
                 // text on the Mac, and offers to otherwise.
                 continue;
             };
-            if backlog && !runs_locally(provider, self.store.openai_base_url()) {
-                // The server's address changed while it waited; the tab offers it again.
+            if backlog && !runs_locally(provider, &self.provider_address(provider)) {
+                // Its address changed while it waited; the tab offers it again.
                 continue;
             }
             let summarizer = match self.summarizer(provider) {
@@ -277,27 +263,19 @@ impl NativeView {
     /// The Summarizer for `provider`, with the Settings picks and its key from the Keychain; or
     /// why there is none, for the user.
     fn summarizer(&self, provider: Provider) -> Result<Box<dyn Summarizer + Send>, String> {
-        let key = || {
-            secrets::get(provider.id()).map_err(|error| {
-                eprintln!("Could not read the API key: {error:#}");
-                "Couldn't read the API key from the Keychain.".to_owned()
-            })
-        };
         Ok(match provider {
             Provider::Apple => match apple_availability().reason() {
                 Some(reason) => return Err(format!("Apple isn't available: {reason}")),
                 None => Box::new(Apple),
             },
-            Provider::Claude => Box::new(Claude {
-                api_key: key()?.ok_or("Add a Claude API key in Settings.")?,
-                model: self.store.claude_model().to_owned(),
-            }),
-            Provider::OpenAiCompatible => Box::new(OpenAiCompatible {
-                base_url: self.store.openai_base_url().to_owned(),
-                api_key: key()?,
-                model: self.store.openai_model().to_owned(),
-            }),
             Provider::Local => return Err("Local Models don't summarize.".to_owned()),
+            _ => Box::new(crumble_summarize::Remote {
+                provider,
+                base_url: self.provider_address(provider),
+                api_key: saved_key(provider)?,
+                model: (self.provider_model(provider, crumble_remote::Job::Summary))
+                    .unwrap_or_default(),
+            }),
         })
     }
 

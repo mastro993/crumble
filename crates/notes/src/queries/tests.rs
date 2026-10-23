@@ -287,7 +287,7 @@ fn a_deleted_note_keeps_only_its_id_and_timestamps() {
         &[line(crate::Track::Mic, 0, "Hi.")],
         at(8),
     ));
-    ok(notes.set_summary(&note.id, "claude", "m1", "Secret summary", at(8)));
+    ok(notes.set_summary(&note.id, "anthropic", "m1", "Secret summary", at(8)));
     ok(notes.delete(&note.id, at(9)));
 
     let connection = ok(notes.connection());

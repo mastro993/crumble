@@ -149,9 +149,10 @@ pub fn divider(theme: &Theme) -> Hsla {
         .opacity(if theme.is_dark() { 0.08 } else { 0.06 })
 }
 
-/// Unselected icons and hints, a step below secondary text.
+/// Unselected icons and hints, a step below secondary text: the second ink at about 55%, or
+/// 63% in dark mode.
 pub fn faint_foreground(theme: &Theme) -> Hsla {
-    theme.muted_foreground.opacity(0.65)
+    theme.muted_foreground.opacity(0.76)
 }
 
 /// Applies the system font and installs the light and dark palettes, which
@@ -197,12 +198,13 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
     const DARK_FILL: &str = "#3a3228";
 
     // Secondary text and icons, focus rings, and text selection are tints of the second ink,
-    // the last at a fifth strength. Light secondary text is at 84%, and its focus ring at 54%
-    // clears 3:1 on the fills. Dark secondary text is at 96.5% and its ring at half.
+    // the last at a fifth strength. Light secondary text is at 72%, which keeps 4.5:1 on the
+    // fills, and its focus ring at 54% clears 3:1 on them. Dark secondary text is at 83% and
+    // its ring at half.
     // The edge of cards and controls is the ink at 6%, or 7% in dark mode.
     let (background, foreground, sidebar, row_fill, fill, card, primary, inks, edge) =
         if mode.is_dark() {
-            let inks = ["#f0e2d0f6", "#f0e2d080", "#f0e2d033"];
+            let inks = ["#f0e2d0d3", "#f0e2d080", "#f0e2d033"];
             // One fill for sidebar rows, the rail, the Agenda list and borders.
             (
                 DARK_PAGE,
@@ -216,7 +218,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
                 "#faf5ef12",
             )
         } else {
-            let inks = ["#3e2b13d6", "#3e2b138a", "#3e2b1333"];
+            let inks = ["#3e2b13b8", "#3e2b138a", "#3e2b1333"];
             (
                 PAGE,
                 ESPRESSO,
@@ -276,6 +278,7 @@ fn palette(mode: ThemeMode) -> ThemeConfig {
 #[cfg(test)]
 mod tests {
     use super::palette;
+    use gpui_kit::Hsla;
     use gpui_kit::component::{Theme, ThemeMode, try_parse_color};
     use std::rc::Rc;
 
@@ -335,5 +338,39 @@ mod tests {
             dark.secondary,
         ];
         assert!(lightening.windows(2).all(|pair| pair[0].l < pair[1].l));
+    }
+
+    /// WCAG's relative luminance of an opaque color.
+    fn luminance(color: Hsla) -> f32 {
+        let rgb = color.to_rgb();
+        let linear = |channel: f32| {
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+    }
+
+    #[test]
+    fn secondary_text_keeps_4_5_to_1_on_every_surface() {
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            let theme = theme(mode);
+            let surfaces = [
+                theme.background,
+                theme.group_box,
+                theme.sidebar,
+                theme.sidebar_accent,
+                theme.secondary,
+            ];
+            for surface in surfaces {
+                let text = luminance(surface.blend(theme.muted_foreground));
+                let surface_luminance = luminance(surface);
+                let contrast =
+                    (text.max(surface_luminance) + 0.05) / (text.min(surface_luminance) + 0.05);
+                assert!(contrast >= 4.5, "{mode:?}: {contrast:.2} on {surface:?}");
+            }
+        }
     }
 }

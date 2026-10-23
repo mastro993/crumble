@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, SharedString};
 
-/// Embedded application artwork with explicit component icon replacements.
+/// Embedded application artwork with explicit component icon replacements, and the remote
+/// Providers' logos.
 pub struct Assets;
 
 const ICONS: &[(&str, &[u8])] = &[
@@ -135,10 +136,6 @@ const ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/hugeicons/solid/Home01Icon.svg"),
     ),
     (
-        "icons/key.svg",
-        include_bytes!("../../../assets/hugeicons/Key01Icon.svg"),
-    ),
-    (
         "icons/mic.svg",
         include_bytes!("../../../assets/hugeicons/Mic01Icon.svg"),
     ),
@@ -208,21 +205,58 @@ const ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The remote Providers' logos, each named after its Provider's id (see
+/// `assets/lobehub/README.md`).
+const LOGOS: &[(&str, &[u8])] = &[
+    (
+        "logos/anthropic.svg",
+        include_bytes!("../../../assets/lobehub/anthropic.svg"),
+    ),
+    (
+        "logos/deepseek.svg",
+        include_bytes!("../../../assets/lobehub/deepseek.svg"),
+    ),
+    (
+        "logos/elevenlabs.svg",
+        include_bytes!("../../../assets/lobehub/elevenlabs.svg"),
+    ),
+    (
+        "logos/gemini.svg",
+        include_bytes!("../../../assets/lobehub/gemini.svg"),
+    ),
+    (
+        "logos/openai.svg",
+        include_bytes!("../../../assets/lobehub/openai.svg"),
+    ),
+    (
+        "logos/openrouter.svg",
+        include_bytes!("../../../assets/lobehub/openrouter.svg"),
+    ),
+    (
+        "logos/xai.svg",
+        include_bytes!("../../../assets/lobehub/xai.svg"),
+    ),
+];
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
-        if let Some((_, bytes)) = ICONS.iter().find(|(name, _)| *name == path) {
+        if let Some((_, bytes)) = ICONS.iter().chain(LOGOS).find(|(name, _)| *name == path) {
             return Ok(Some(Cow::Borrowed(bytes)));
         }
         if path.starts_with("icons/") {
             anyhow::bail!("Missing application icon mapping for {path}");
         }
+        if path.starts_with("logos/") {
+            anyhow::bail!("Missing Provider logo mapping for {path}");
+        }
         Ok(None)
     }
 
     fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
-        if path.starts_with("icons") {
+        if path.starts_with("icons") || path.starts_with("logos") {
             return Ok(ICONS
                 .iter()
+                .chain(LOGOS)
                 .filter(|(name, _)| name.starts_with(path))
                 .map(|(name, _)| SharedString::from(*name))
                 .collect());
@@ -252,5 +286,13 @@ mod tests {
                 "{path} has no mapping"
             );
         }
+    }
+
+    /// An unmapped icon or logo is a mistake to fix, not artwork to skip.
+    #[test]
+    fn an_unmapped_icon_or_logo_fails_to_load() {
+        assert!(Assets.load("icons/missing.svg").is_err());
+        assert!(Assets.load("logos/missing.svg").is_err());
+        assert!(matches!(Assets.load("elsewhere/missing.svg"), Ok(None)));
     }
 }

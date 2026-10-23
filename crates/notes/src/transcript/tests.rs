@@ -19,14 +19,25 @@ fn a_transcript_is_kept_in_order_and_replaced_whole() {
     assert_eq!(found.updated_at, at(8));
 
     let again = [line(System, 2, "Only this.")];
-    ok(notes.set_transcript(&note.id, "openai", "whisper-1", "it_IT", &again, at(9)));
+    ok(notes.set_transcript(
+        &note.id,
+        "openai-compatible",
+        "whisper-1",
+        "it_IT",
+        &again,
+        at(9),
+    ));
     assert_eq!(ok(notes.transcript(&note.id)), again);
     let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
     assert_eq!(
         found
             .transcript
             .map(|info| (info.provider, info.model, info.locale)),
-        Some(("openai".into(), "whisper-1".into(), "it_IT".into()))
+        Some((
+            "openai-compatible".into(),
+            "whisper-1".into(),
+            "it_IT".into()
+        ))
     );
 
     // A Local Model's Transcript (ADR 0010), which the provider's CHECK once refused.
@@ -110,13 +121,13 @@ fn a_summary_is_kept_and_replaced() {
     let info = ok(notes.set_summary(&note.id, "apple", "Foundation Models", "# Hi", at(9)));
     assert_eq!(info.summarized_at, at(9));
     assert_eq!(summary(&mut notes), Some(info));
-    ok(notes.set_summary(&note.id, "claude", "m1", "# Hello", at(10)));
+    ok(notes.set_summary(&note.id, "anthropic", "m1", "# Hello", at(10)));
     let found = ok(notes.quick_notes(at(0)..at(23))).remove(0);
     assert_eq!(
         found
             .summary
             .map(|info| (info.text, info.provider, info.model)),
-        Some(("# Hello".into(), "claude".into(), "m1".into()))
+        Some(("# Hello".into(), "anthropic".into(), "m1".into()))
     );
     assert_eq!(found.updated_at, at(10));
 }

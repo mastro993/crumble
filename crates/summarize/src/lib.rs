@@ -1,7 +1,8 @@
 //! Summaries of Transcripts, made by a Model the user picks: Apple's on-device Foundation
-//! Models through a small Swift bridge, the Claude API, or any OpenAI-compatible server such as
-//! Ollama or LM Studio (ADR 0007). Each is a [`Summarizer`]; `crumble-remote` names its
-//! [`Provider`](crumble_remote::Provider). No GPUI.
+//! Models through a small Swift bridge, or a [`Remote`] Provider's Model, such as Anthropic's,
+//! Google Gemini's, or one on an OpenAI-compatible server such as Ollama or LM Studio (ADRs 0007
+//! and 0011). Each is a [`Summarizer`]; `crumble-remote` names its
+//! [`Provider`](crumble_remote::Provider) and how to reach it. No GPUI.
 
 mod apple;
 mod chunk;
@@ -15,7 +16,7 @@ mod remote;
 
 pub use apple::Apple;
 pub use ffi::apple_availability;
-pub use remote::{Claude, OpenAiCompatible};
+pub use remote::Remote;
 
 use crumble_remote::Provider;
 

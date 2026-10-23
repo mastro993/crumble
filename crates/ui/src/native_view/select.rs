@@ -1,6 +1,7 @@
 //! Crumble's select: a button showing the picked choice, with an optional icon before it and a
 //! chevron after it, that opens the app's menu under it with the picked row checked. A
-//! searchable select is a combo box: its menu has a search field.
+//! searchable select is a combo box: its menu has a search field, and when its choices can be
+//! any text, a row that picks the text typed there.
 //!
 //! GPUI Kit's `Select` draws its own popup, which cannot take the menu's corners, color, rows
 //! or place under the trigger's trailing edge, so Crumble's reuses its menu instead.
@@ -9,6 +10,7 @@ use super::controls::app_icon;
 use super::menu::{MenuItem, OpenMenu, Place};
 use crumble_theme::menu::{HIGHLIGHT_INK, TRAILING_SIZE};
 use crumble_theme::sidebar::ICON_GAP;
+use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{
     Bounds, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
@@ -44,6 +46,15 @@ pub(super) trait Choice: 'static {
     /// Whether the choice's row is greyed out and cannot be picked.
     fn disabled(&self) -> bool {
         false
+    }
+
+    /// Makes a choice of the text typed into a combo box's search field, for choices that can
+    /// be any text, as Model ids can; `None`, the default, keeps a select to its rows.
+    fn typed() -> Option<fn(SharedString) -> Self>
+    where
+        Self: Sized,
+    {
+        None
     }
 }
 
@@ -151,14 +162,14 @@ impl<C: Choice> Select<C> {
             return;
         }
         let (select, id) = (cx.entity().downgrade(), cx.entity_id());
-        let items = (self.items.iter().enumerate())
+        let mut items: Vec<MenuItem> = (self.items.iter().enumerate())
             .map(|(ix, choice)| {
-                let select = select.clone();
-                let item = MenuItem::new(format!("select-{id}-{ix}"), choice.title())
+                let (select, title) = (select.clone(), choice.title());
+                let item = MenuItem::new(format!("select-{id}-{ix}"), title.clone())
                     .checked(self.selected == Some(ix))
                     .disabled(choice.disabled())
                     .on_select(move |_, cx| {
-                        let _ = select.update(cx, |select, cx| select.pick(ix, cx));
+                        let _ = select.update(cx, |select, cx| select.pick_shown(ix, &title, cx));
                     });
                 match choice.description() {
                     Some(description) => item.description(description),
@@ -166,6 +177,12 @@ impl<C: Choice> Select<C> {
                 }
             })
             .collect();
+        if let Some(make) = C::typed().filter(|_| self.searchable) {
+            let typed = MenuItem::typed(format!("select-{id}-typed"), move |text, _, cx| {
+                let _ = select.update(cx, |select, cx| select.pick_typed(make(text), cx));
+            });
+            items.push(typed);
+        }
         let menu = OpenMenu::new(
             format!("select-{id}"),
             items,
@@ -181,6 +198,30 @@ impl<C: Choice> Select<C> {
         } else {
             menu
         });
+    }
+
+    /// Picks the row the menu showed at `ix`, titled `title`. The choices may have been listed
+    /// again since the menu opened, as a check lists a Provider's Models, so a row that moved
+    /// is found by its title.
+    fn pick_shown(&mut self, ix: usize, title: &SharedString, cx: &mut Context<Self>) {
+        let shown = |choice: &C| choice.title() == *title;
+        let ix = match self.items.get(ix) {
+            Some(choice) if shown(choice) => Some(ix),
+            _ => self.items.iter().position(shown),
+        };
+        if let Some(ix) = ix {
+            self.pick(ix, cx);
+        }
+    }
+
+    /// Picks `choice`, typed into the search field, adding it unless a choice has its title.
+    fn pick_typed(&mut self, choice: C, cx: &mut Context<Self>) {
+        let title = choice.title();
+        let ix = (self.items.iter().position(|item| item.title() == title)).unwrap_or_else(|| {
+            self.items.push(choice);
+            self.items.len() - 1
+        });
+        self.pick(ix, cx);
     }
 
     fn pick(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -214,6 +255,7 @@ impl<C: Choice> Render for Select<C> {
         };
         div()
             .id("select")
+            .test_support()
             .track_focus(&self.focus)
             .role(Role::ComboBox)
             .aria_label(self.label.clone())
@@ -260,3 +302,6 @@ impl<C: Choice> Render for Select<C> {
             .children(self.menu.as_ref().map(OpenMenu::render))
     }
 }
+
+#[cfg(test)]
+mod tests;

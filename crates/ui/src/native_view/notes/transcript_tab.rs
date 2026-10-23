@@ -7,7 +7,7 @@ use super::super::settings_page::SettingsSection;
 use super::recording::clock;
 use super::transcript::{Failure, Stage};
 use crumble_notes::Track;
-use crumble_remote::Provider;
+use crumble_remote::{Job, Provider};
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
@@ -89,7 +89,7 @@ impl NativeView {
             // A finished Recording no job took: one stopped by quitting, one the user did not
             // agree to send, or one whose Transcript was never asked for.
             let provider = self.transcription_provider();
-            if provider == Provider::Local && !self.can_transcribe(provider) {
+            if provider == Provider::Local && !self.ready_for(provider, Job::Transcription) {
                 return line(
                     format!(
                         "Not transcribed yet. {} isn't downloaded.",
@@ -105,10 +105,12 @@ impl NativeView {
                     muted,
                 );
             }
-            if !self.can_transcribe(provider) {
+            if !self.ready_for(provider, Job::Transcription) {
                 return line(
-                    "Not transcribed yet. Add the server's address and Model in Settings."
-                        .to_owned(),
+                    format!(
+                        "Not transcribed yet. Finish setting up {} in Settings.",
+                        provider.name()
+                    ),
                     button("transcript-settings")
                         .outline()
                         .small()
@@ -227,8 +229,12 @@ mod tests {
             "Transcribed by Apple, on this Mac"
         );
         assert_eq!(
-            transcribed_by("openai", "whisper-1"),
+            transcribed_by("openai-compatible", "whisper-1"),
             "Transcribed by OpenAI-compatible server · whisper-1"
+        );
+        assert_eq!(
+            transcribed_by("openai", "gpt-transcribe"),
+            "Transcribed by OpenAI · gpt-transcribe"
         );
     }
 

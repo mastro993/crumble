@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Weekday;
 use chrono::{SecondsFormat, Utc};
 use crumble_calendar::CalendarView;
-use crumble_db::schema::{accounts, app_state, calendars, remote_audio_consents};
+use crumble_db::schema::{accounts, app_state, calendars, providers, remote_audio_consents};
 use diesel::prelude::*;
 use diesel::upsert::excluded;
 
-use crate::AccountColor;
+use crate::{AccountColor, ProviderSettings};
 
 /// Everything the database holds, as the app reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,14 +29,12 @@ pub(crate) struct State {
     pub(crate) account_aliases: BTreeMap<String, String>,
     /// The id of the Summary Provider picked in Settings; `None` until one is.
     pub(crate) summary_provider: Option<String>,
-    pub(crate) claude_model: String,
-    /// Empty until set.
-    pub(crate) openai_base_url: String,
-    pub(crate) openai_model: String,
-    /// The id of the Transcription Provider: `apple`, `local` or `openai`.
+    /// The id of the Transcription Provider, such as `apple`, `local` or `openai-compatible`.
     pub(crate) transcription_provider: String,
-    /// The Transcription Model on the OpenAI-compatible server.
-    pub(crate) transcription_model: String,
+    /// The id of the Intelligence Provider picked in Settings; `None` until one is.
+    pub(crate) intelligence_provider: Option<String>,
+    /// What the user changed for each remote Provider, by its id; only those with a value.
+    pub(crate) providers: BTreeMap<String, ProviderSettings>,
     /// The locale picked for Transcripts; `None` follows the Mac's.
     pub(crate) transcription_locale: Option<String>,
     /// The slug of the Local Model picked for Transcripts; `None` until one is.
@@ -50,11 +48,6 @@ pub(crate) struct State {
 /// A Provider id, Model and lowercase host that may receive Recordings' audio (ADR 0008).
 pub(crate) type AudioConsent = (String, String, String);
 
-/// The Claude Model Settings starts with, as the migration's default.
-pub(crate) const CLAUDE_MODEL: &str = "claude-sonnet-5-5";
-/// The Transcription Model Settings starts with on the server, as the migration's default.
-pub(crate) const TRANSCRIPTION_MODEL: &str = "whisper-1";
-
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -67,11 +60,9 @@ impl Default for State {
             account_colors: BTreeMap::new(),
             account_aliases: BTreeMap::new(),
             summary_provider: None,
-            claude_model: CLAUDE_MODEL.to_owned(),
-            openai_base_url: String::new(),
-            openai_model: String::new(),
             transcription_provider: "apple".to_owned(),
-            transcription_model: TRANSCRIPTION_MODEL.to_owned(),
+            intelligence_provider: None,
+            providers: BTreeMap::new(),
             transcription_locale: None,
             local_model: None,
             audio_consents: BTreeSet::new(),
@@ -91,35 +82,39 @@ struct AccountRow {
     hidden: bool,
 }
 
+#[derive(Queryable, Insertable)]
+#[diesel(table_name = providers)]
+struct ProviderRow {
+    id: String,
+    base_url: Option<String>,
+    summary_model: Option<String>,
+    transcription_model: Option<String>,
+    intelligence_model: Option<String>,
+}
+
 /// Reads the whole database.
 pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
     let mut state = State::default();
     type Row = (
         (i32, String),
-        (Option<String>, String, String, String),
-        (String, String, Option<String>, Option<String>),
+        (Option<String>, String, Option<String>),
+        (Option<String>, Option<String>),
         bool,
     );
     if let Some((
         (day, view),
-        (provider, claude_model, openai_base_url, openai_model),
-        (transcription_provider, transcription_model, transcription_locale, local_model),
+        (summary_provider, transcription_provider, intelligence_provider),
+        (transcription_locale, local_model),
         suggest_recording,
     )) = app_state::table
         .select((
             (app_state::first_day_of_week, app_state::calendar_view),
             (
                 app_state::summary_provider,
-                app_state::claude_model,
-                app_state::openai_base_url,
-                app_state::openai_model,
-            ),
-            (
                 app_state::transcription_provider,
-                app_state::transcription_model,
-                app_state::transcription_locale,
-                app_state::local_model,
+                app_state::intelligence_provider,
             ),
+            (app_state::transcription_locale, app_state::local_model),
             app_state::suggest_recording,
         ))
         .first::<Row>(connection)
@@ -127,16 +122,26 @@ pub(crate) fn load(connection: &mut SqliteConnection) -> QueryResult<State> {
     {
         state.first_day_of_week = decode_weekday(day);
         state.calendar_view = decode_calendar_view(&view);
-        state.summary_provider = provider;
-        state.claude_model = claude_model;
-        state.openai_base_url = openai_base_url;
-        state.openai_model = openai_model;
+        state.summary_provider = summary_provider;
         state.transcription_provider = transcription_provider;
-        state.transcription_model = transcription_model;
+        state.intelligence_provider = intelligence_provider;
         state.transcription_locale = transcription_locale;
         state.local_model = local_model;
         state.suggest_recording = suggest_recording;
     }
+    state.providers = providers::table
+        .load::<ProviderRow>(connection)?
+        .into_iter()
+        .map(|row| {
+            let settings = ProviderSettings {
+                base_url: row.base_url,
+                summary_model: row.summary_model,
+                transcription_model: row.transcription_model,
+                intelligence_model: row.intelligence_model,
+            };
+            (row.id, settings)
+        })
+        .collect();
     state.audio_consents = remote_audio_consents::table
         .select((
             remote_audio_consents::provider,
@@ -180,16 +185,39 @@ pub(crate) fn write_app_state(connection: &mut SqliteConnection, state: &State) 
             app_state::first_day_of_week.eq(encode_weekday(state.first_day_of_week)),
             app_state::calendar_view.eq(encode_calendar_view(state.calendar_view)),
             app_state::summary_provider.eq(&state.summary_provider),
-            app_state::claude_model.eq(&state.claude_model),
-            app_state::openai_base_url.eq(&state.openai_base_url),
-            app_state::openai_model.eq(&state.openai_model),
             app_state::transcription_provider.eq(&state.transcription_provider),
-            app_state::transcription_model.eq(&state.transcription_model),
+            app_state::intelligence_provider.eq(&state.intelligence_provider),
             app_state::transcription_locale.eq(&state.transcription_locale),
             app_state::local_model.eq(&state.local_model),
             app_state::suggest_recording.eq(state.suggest_recording),
         ))
         .execute(connection)?;
+    Ok(())
+}
+
+/// Writes the row of the Provider `id`, or deletes it when nothing is changed for it.
+pub(crate) fn write_provider(
+    connection: &mut SqliteConnection,
+    state: &State,
+    id: &str,
+) -> QueryResult<()> {
+    match state.providers.get(id) {
+        Some(settings) => {
+            let row = ProviderRow {
+                id: id.to_owned(),
+                base_url: settings.base_url.clone(),
+                summary_model: settings.summary_model.clone(),
+                transcription_model: settings.transcription_model.clone(),
+                intelligence_model: settings.intelligence_model.clone(),
+            };
+            diesel::replace_into(providers::table)
+                .values(&row)
+                .execute(connection)?;
+        }
+        None => {
+            diesel::delete(providers::table.find(id)).execute(connection)?;
+        }
+    }
     Ok(())
 }
 

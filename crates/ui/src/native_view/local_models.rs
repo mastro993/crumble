@@ -267,16 +267,16 @@ impl NativeView {
         let downloaded = library.downloaded();
         if downloaded != self.local_models.downloaded {
             self.local_models.downloaded = downloaded;
-            self.refresh_transcription_selects(cx);
+            self.refresh_model_selects(cx);
         }
     }
 
     /// Makes the Local Model `slug` the Transcription Model.
-    fn use_local_model(&mut self, slug: &str, cx: &mut Context<Self>) {
+    pub(super) fn use_local_model(&mut self, slug: &str, cx: &mut Context<Self>) {
         self.forget_transcription_failures(self.transcription_provider());
         self.store.set_transcription_provider(Provider::Local.id());
         self.store.set_local_model(Some(slug));
-        self.refresh_transcription_selects(cx);
+        self.refresh_model_selects(cx);
         cx.notify();
     }
 
@@ -284,7 +284,7 @@ impl NativeView {
     fn use_apple_model(&mut self, cx: &mut Context<Self>) {
         self.forget_transcription_failures(self.transcription_provider());
         self.store.set_transcription_provider(Provider::Apple.id());
-        self.refresh_transcription_selects(cx);
+        self.refresh_model_selects(cx);
         cx.notify();
     }
 
@@ -420,7 +420,7 @@ impl NativeView {
             self.store.set_local_model(None);
         }
         self.local_models.downloaded = library.downloaded();
-        self.refresh_transcription_selects(cx);
+        self.refresh_model_selects(cx);
         cx.notify();
     }
 }

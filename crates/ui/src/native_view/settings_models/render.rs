@@ -1,17 +1,15 @@
-//! Drawing the Transcription and Summary sections, their selects, and the Providers section:
-//! each remote Provider's fields, key row, and Test.
+//! Drawing the Transcription, Summary and Intelligence sections: their Provider and Model
+//! selects, who gets what, and the links to more Models and to Settings › Providers.
 
 use super::super::NativeView;
 use super::super::controls::{Inactive, button};
 use super::super::settings_page::SettingsSection;
-use super::super::settings_page::form::{Group, Setting, field, groups};
-use super::{Check, index_of, provider_items};
-use crumble_remote::Provider;
+use super::super::settings_page::form::{Group, Setting, groups};
+use crumble_remote::{Job, Provider};
 use crumble_summarize::{Availability, apple_availability};
-use gpui_kit::component::button::ButtonVariants;
-use gpui_kit::component::input::Input;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
-use gpui_kit::{Context, Div, ParentElement, Styled, Window, div};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{Sizable, h_flex};
+use gpui_kit::{Context, Div, ParentElement, Styled, Window, prelude::FluentBuilder};
 use std::time::{Duration, Instant};
 
 /// How often Settings reads again whether Apple's Model can run.
@@ -19,8 +17,8 @@ const AVAILABILITY_INTERVAL: Duration = Duration::from_secs(1);
 
 impl NativeView {
     /// Follows Apple Intelligence being turned on or off while Crumble runs: Apple's row of the
-    /// Summary Model select, and the backfill once its Model can run. Reads it at most once
-    /// a second, as each read opens a file macOS keeps.
+    /// Summary and Intelligence Provider selects, and the backfill once its Model can run. Reads it
+    /// at most once a second, as each read opens a file macOS keeps.
     pub(in super::super) fn notice_apple_availability(
         &mut self,
         window: &mut Window,
@@ -33,12 +31,8 @@ impl NativeView {
         let apple = apple_availability();
         if apple != self.models.apple {
             self.models.apple = apple;
-            let selected = self.summary_provider();
             // Apple's row may have been shown as picked only because it could run.
-            let selected = index_of(&Provider::SUMMARIZERS, selected);
-            (self.models.provider).update(cx, |select, cx| {
-                select.set_items(provider_items(apple), selected, cx)
-            });
+            self.refresh_model_selects(cx);
             if apple == Availability::Available {
                 // Its failures may be only that it could not run; backfill once out of render.
                 cx.defer_in(window, |view, _, cx| {
@@ -49,21 +43,76 @@ impl NativeView {
         }
     }
 
-    /// The Summary section: the Summary Model, and who gets the Transcript's text.
-    pub(in super::super) fn render_summary_settings(&self) -> Div {
+    /// The Summary section: the Summary Model's Provider and Model, and who gets the
+    /// Transcript's text.
+    pub(in super::super) fn render_summary_settings(&mut self, cx: &mut Context<Self>) -> Div {
+        self.list_picked_models(Job::Summary, cx);
         groups().child(
-            Group::new("settings-summary-model").heading("Model").child(
-                Setting::new("Summary Model")
-                    .description("Claude and remote servers receive the Transcript's text.")
-                    .descriptions(
-                        self.models
-                            .apple
-                            .reason()
-                            .map(|reason| format!("Apple isn't available: {reason}")),
-                    )
-                    .control(self.models.provider.clone()),
-            ),
+            Group::new("settings-summary-model")
+                .heading("Model")
+                .child(
+                    Setting::new("Provider")
+                        .description("Remote Providers receive the Transcript's text.")
+                        .descriptions(self.apple_unavailable())
+                        .description(add_provider("summary-add-provider", cx))
+                        .control(self.models.summary.provider.clone()),
+                )
+                .children(self.model_row(Job::Summary)),
         )
+    }
+
+    /// The Intelligence section: the Provider and Model Crumble's Chat talks to, and who gets
+    /// what is asked.
+    pub(in super::super) fn render_intelligence_settings(&mut self, cx: &mut Context<Self>) -> Div {
+        self.list_picked_models(Job::Intelligence, cx);
+        groups().child(
+            Group::new("settings-intelligence-model")
+                .heading("Model")
+                .child(
+                    Setting::new("Provider")
+                        .description(
+                            "The Model Crumble's Chat talks to. Remote Providers receive what \
+                             you ask.",
+                        )
+                        .descriptions(self.apple_unavailable())
+                        .description(add_provider("intelligence-add-provider", cx))
+                        .control(self.models.intelligence.provider.clone()),
+                )
+                .children(self.model_row(Job::Intelligence)),
+        )
+    }
+
+    /// Lists, once a run, the Models of a remote Provider picked for `job`.
+    fn list_picked_models(&mut self, job: Job, cx: &mut Context<Self>) {
+        if let Some(provider) = self.picked_provider(job) {
+            self.list_models(provider, cx);
+        }
+    }
+
+    /// The Model row under `job`'s Provider select, while a remote Provider or Local Models are
+    /// picked in it, saying why the Provider's Models couldn't be listed when they couldn't.
+    fn model_row(&self, job: Job) -> Option<Setting> {
+        let provider = self.picked_provider(job)?;
+        let row = Setting::new("Model");
+        if provider == Provider::Local {
+            let none = self.local_models.downloaded().is_empty();
+            return Some(
+                row.when(none, |row| row.description("No Local Model is downloaded."))
+                    .control(self.models.local_model.clone()),
+            );
+        }
+        provider.remote()?;
+        let failure =
+            (self.listing_failure(provider)).map(|why| format!("Couldn't list its Models. {why}"));
+        Some(
+            row.descriptions(failure)
+                .control(self.models.job(job).model.clone()),
+        )
+    }
+
+    /// Why Apple's Model can't run, when it can't.
+    fn apple_unavailable(&self) -> Option<String> {
+        (self.models.apple.reason()).map(|reason| format!("Apple isn't available: {reason}"))
     }
 
     /// The Transcription section: the Transcription Model, its language, and transcribing every
@@ -72,6 +121,7 @@ impl NativeView {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Div {
+        self.list_picked_models(Job::Transcription, cx);
         let untranscribed = self.untranscribed_count();
         let provider = self.transcription_provider();
         groups()
@@ -79,22 +129,26 @@ impl NativeView {
                 Group::new("settings-transcription-model")
                     .heading("Model")
                     .child(
-                        Setting::new("Transcription Model")
+                        Setting::new("Provider")
                             .description(
-                                "Local Models keep the audio on this Mac. A remote server \
-                                 receives the Recording's audio.",
+                                "Local Models keep the audio on this Mac. Remote Providers \
+                                 receive the Recording's audio.",
                             )
                             .description(
-                                button("transcription-get-models")
-                                    .link()
-                                    .small()
-                                    .label("Get more Models")
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.open_settings(SettingsSection::LocalModels, cx)
-                                    })),
+                                h_flex()
+                                    .gap_3()
+                                    .flex_wrap()
+                                    .child(
+                                        link("transcription-get-models", "Get more Models")
+                                            .on_click(cx.listener(|view, _, _, cx| {
+                                                view.open_settings(SettingsSection::LocalModels, cx)
+                                            })),
+                                    )
+                                    .child(add_provider("transcription-add-provider", cx)),
                             )
-                            .control(self.models.transcription.clone()),
+                            .control(self.models.transcription.provider.clone()),
                     )
+                    .children(self.model_row(Job::Transcription))
                     .child(
                         Setting::new("Language")
                             .description("The language Recordings are spoken in.")
@@ -119,7 +173,10 @@ impl NativeView {
                                 .outline()
                                 .small()
                                 .label("Transcribe all")
-                                .inactive(untranscribed == 0 || !self.can_transcribe(provider))
+                                .inactive(
+                                    untranscribed == 0
+                                        || !self.ready_for(provider, Job::Transcription),
+                                )
                                 .on_click(cx.listener(|view, _, window, cx| {
                                     view.transcribe_untranscribed(window, cx);
                                     cx.notify();
@@ -128,91 +185,15 @@ impl NativeView {
                     ),
             )
     }
+}
 
-    /// The Providers section: Claude's and the OpenAI-compatible server's settings.
-    pub(in super::super) fn render_provider_settings(&self, cx: &mut Context<Self>) -> Div {
-        groups()
-            .child(
-                Group::new("settings-claude")
-                    .heading("Claude")
-                    .child(self.key_setting(Provider::Claude, cx))
-                    .child(
-                        Setting::new("Model")
-                            .control(field(Input::new(&self.models.claude_model).small())),
-                    )
-                    .child(self.test_setting(Provider::Claude, cx)),
-            )
-            .child(
-                Group::new("settings-openai")
-                    .heading("OpenAI-compatible server")
-                    .child(
-                        Setting::new("Address")
-                            .control(field(Input::new(&self.models.openai_url).small())),
-                    )
-                    .child(self.key_setting(Provider::OpenAiCompatible, cx))
-                    .child(
-                        Setting::new("Summary Model")
-                            .control(field(Input::new(&self.models.openai_model).small())),
-                    )
-                    .child(
-                        Setting::new("Transcription Model")
-                            .control(field(Input::new(&self.models.transcription_model).small())),
-                    )
-                    .child(self.test_setting(Provider::OpenAiCompatible, cx)),
-            )
-    }
+/// A small link button labeled `label`.
+fn link(id: &'static str, label: &'static str) -> Button {
+    button(id).link().small().label(label)
+}
 
-    /// `provider`'s key: a masked field and Save, or, once saved, a line saying so and Remove.
-    fn key_setting(&self, provider: Provider, cx: &mut Context<Self>) -> Setting {
-        let id = provider.id();
-        let setting = Setting::new("API key");
-        if self.models.has_key(provider) {
-            return setting.description("Saved in Keychain").control(
-                button(format!("{id}-key-remove"))
-                    .outline()
-                    .small()
-                    .label("Remove")
-                    .on_click(cx.listener(move |view, _, _, cx| view.remove_key(provider, cx))),
-            );
-        }
-        setting.control(
-            h_flex()
-                .gap_2()
-                .child(field(Input::new(self.key_field(provider)).small()))
-                .child(
-                    button(format!("{id}-key-save"))
-                        .outline()
-                        .small()
-                        .label("Save")
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.save_key(provider, window, cx)
-                        })),
-                ),
-        )
-    }
-
-    /// Test, and how the last Test went.
-    fn test_setting(&self, provider: Provider, cx: &mut Context<Self>) -> Setting {
-        let theme = cx.theme();
-        let check = self.models.checks.get(&provider);
-        let status = match check {
-            None => None,
-            Some(Check::Running { .. }) => Some(div().child("Testing…")),
-            Some(Check::Passed) => Some(div().text_color(theme.success).child("OK")),
-            Some(Check::Failed(message)) => {
-                Some(div().text_color(theme.danger).child(message.clone()))
-            }
-        };
-        Setting::new("Connection")
-            .description("Test sends a tiny prompt with these settings.")
-            .descriptions(status)
-            .control(
-                button(format!("{}-test", provider.id()))
-                    .outline()
-                    .small()
-                    .label("Test")
-                    .inactive(matches!(check, Some(Check::Running { .. })))
-                    .on_click(cx.listener(move |view, _, _, cx| view.test_provider(provider, cx))),
-            )
-    }
+/// "Add a Provider", which opens Settings › Providers.
+fn add_provider(id: &'static str, cx: &mut Context<NativeView>) -> Button {
+    link(id, "Add a Provider")
+        .on_click(cx.listener(|view, _, _, cx| view.open_settings(SettingsSection::Providers, cx)))
 }
