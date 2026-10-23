@@ -32,6 +32,8 @@ python3 scripts/check-crate-boundaries.py
 
 CI (`.github/workflows/ci.yml`) runs these four on macOS 26 for every pull request and every push to `main`.
 
+PR-Agent (`.github/workflows/pr-agent.yml`) reviews each PR with Claude when it opens or leaves draft, and posts code suggestions; it leaves the PR body alone. A collaborator's `/review`, `/improve` or `/ask …` comment runs it again, and is the only way to review a fork's PR, since GitHub withholds the API key from fork runs.
+
 Run `git config core.hooksPath .githooks` once per clone to turn on the pre-commit hook. It rejects a commit that stages a file over 20,000 bytes and explains how to split it. Lockfiles, generated code, vendored skills and binary files are exempt; `.gitattributes` lists the exempt paths as `linguist-generated` or `linguist-vendored`.
 
 `cargo test -p crumble-transcribe --locked -- --ignored` also transcribes speech made with `say` through Apple's model, downloading the English model the first time.
