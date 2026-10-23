@@ -6,11 +6,13 @@ mod account_color;
 mod accounts;
 mod calendars_section;
 mod db;
+mod providers;
 pub mod secrets;
 
 pub use account_color::AccountColor;
 pub use accounts::account_label;
 pub use calendars_section::{CalendarsSection, calendars_section};
+pub use providers::ProviderSettings;
 
 use chrono::Weekday;
 use crumble_calendar::CalendarView;
@@ -114,39 +116,6 @@ impl Store {
         self.write(db::write_app_state);
     }
 
-    /// The Claude Model id Summaries use.
-    pub fn claude_model(&self) -> &str {
-        &self.state.claude_model
-    }
-
-    /// Makes Summaries use the Claude Model `model`.
-    pub fn set_claude_model(&mut self, model: &str) {
-        self.state.claude_model = model.trim().to_owned();
-        self.write(db::write_app_state);
-    }
-
-    /// The OpenAI-compatible server's address up to `/chat/completions`; empty until set.
-    pub fn openai_base_url(&self) -> &str {
-        &self.state.openai_base_url
-    }
-
-    /// Sets the OpenAI-compatible server's address.
-    pub fn set_openai_base_url(&mut self, url: &str) {
-        self.state.openai_base_url = url.trim().to_owned();
-        self.write(db::write_app_state);
-    }
-
-    /// The Model Summaries use on the OpenAI-compatible server; empty until set.
-    pub fn openai_model(&self) -> &str {
-        &self.state.openai_model
-    }
-
-    /// Makes Summaries use the Model `model` on the OpenAI-compatible server.
-    pub fn set_openai_model(&mut self, model: &str) {
-        self.state.openai_model = model.trim().to_owned();
-        self.write(db::write_app_state);
-    }
-
     /// The id of the Transcription Model's Provider, as `crumble_remote::Provider::id` gives
     /// it: `apple` until another is picked.
     pub fn transcription_provider(&self) -> &str {
@@ -159,14 +128,15 @@ impl Store {
         self.write(db::write_app_state);
     }
 
-    /// The Model Transcripts use on the OpenAI-compatible server, `whisper-1` until changed.
-    pub fn transcription_model(&self) -> &str {
-        &self.state.transcription_model
+    /// The id of the Intelligence Model's Provider, as `crumble_remote::Provider::id` gives it,
+    /// for Crumble's chat; `None` until one is picked.
+    pub fn intelligence_provider(&self) -> Option<&str> {
+        self.state.intelligence_provider.as_deref()
     }
 
-    /// Makes Transcripts use the Model `model` on the OpenAI-compatible server.
-    pub fn set_transcription_model(&mut self, model: &str) {
-        self.state.transcription_model = model.trim().to_owned();
+    /// Makes the Provider with the id `provider` answer for Intelligence.
+    pub fn set_intelligence_provider(&mut self, provider: &str) {
+        self.state.intelligence_provider = Some(provider.to_owned());
         self.write(db::write_app_state);
     }
 

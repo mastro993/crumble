@@ -1,7 +1,7 @@
 //! The app's context menu: rows with an icon, a label and an optional description, and a
 //! trailing check or submenu chevron, opened at the pointer or under a select above a backdrop
 //! that swallows clicks outside it. A select's menu can have a search field that hides the rows
-//! whose label lacks its text.
+//! whose label lacks its text, and a last row that offers the text itself.
 //!
 //! GPUI Kit's `PopupMenu` fixes its row height, separators, and corners and cannot animate in,
 //! so Crumble draws its own. One `Menu` entity holds a menu, its open submenu, and the panel one
@@ -30,6 +30,7 @@ use gpui_kit::{
 pub(super) const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(150);
 
 type Handler = Rc<dyn Fn(&mut Window, &mut App)>;
+type TypedHandler = Rc<dyn Fn(SharedString, &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// One row of a menu, or a separator.
@@ -63,6 +64,11 @@ enum Kind {
     Panel {
         content: Content,
         focus: FocusHandle,
+    },
+    /// Offers `text`, the search field's, trimmed, as `Use “text”` while no row's label is it.
+    Typed {
+        text: SharedString,
+        handler: TypedHandler,
     },
 }
 
@@ -122,6 +128,24 @@ impl MenuItem {
     pub(super) fn on_select(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.kind = Kind::Action(Some(Rc::new(handler)));
         self
+    }
+
+    /// The last row of a searchable menu, which offers the search field's text itself, trimmed,
+    /// labelled `Use “text”`, while no other row's label is that text, ignoring case. Choosing
+    /// it runs `handler` with the text after the menu has closed. Its element is
+    /// `menu-item-{id}`.
+    pub(super) fn typed(
+        id: impl Into<SharedString>,
+        handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            hidden: true,
+            kind: Kind::Typed {
+                text: SharedString::default(),
+                handler: Rc::new(handler),
+            },
+            ..Self::new(id, "")
+        }
     }
 
     /// Opens `items` beside the row.
@@ -192,6 +216,8 @@ pub(super) struct Menu {
     scroll: ScrollHandle,
     /// The field that filters a select's rows.
     search: Option<Entity<InputState>>,
+    /// The width a searchable menu was last drawn at, which it keeps as its rows are filtered.
+    width: Rc<Cell<Option<Pixels>>>,
     submenu: Option<Submenu>,
     /// Where each row was last drawn; a submenu opens beside its row.
     row_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
@@ -258,6 +284,7 @@ impl Menu {
             highlight: None,
             scroll: ScrollHandle::new(),
             search: None,
+            width: Rc::default(),
             submenu: None,
             closing_submenu: None,
             panel_row: Rc::new(Cell::new(Bounds::default())),

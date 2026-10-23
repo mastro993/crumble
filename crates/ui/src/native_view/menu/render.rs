@@ -36,6 +36,7 @@ impl Render for Menu {
             .search_keys(menu, cx)
             .when_some(self.render_search(cx), |menu, search| menu.child(search))
             .child(scrolling("menu-rows", &self.scroll, rows))
+            .when(self.search.is_some(), |menu| self.keep_width(menu))
             .children(self.render_submenu(window, cx));
         let (positioner, menu) = match self.place {
             Place::At(position) => (Positioner::corner(Anchor::TopLeft, position), menu),

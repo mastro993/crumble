@@ -69,7 +69,7 @@ _Avoid_: nickname, display name, rename
 The list of every Account that is not Disabled, in a popover beside the rail's Calendars button. Its title says "Calendars" even though each row is an Account.
 
 **Settings page**:
-The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, turns Suggestions on or off, and downloads and deletes Local Models, picks the Models that make Transcripts and Summaries, the Transcripts' language, and what each Provider needs. It is split into sections picked from a sidebar at its leading edge, grouped under Calendar (General, Calendars) and Notes (Recording, Transcription, Local Models, Summary, Providers). Written "Settings" when nothing else could be meant.
+The page where the user picks the First day of week, Disables or Enables Accounts and Calendars, gives Aliases, turns Suggestions on or off, downloads and deletes Local Models, picks the Models that make Transcripts and Summaries, the Transcripts' language and the Intelligence Model, and sets up each remote Provider: its API key and its address. Each job's section picks its Provider, then that Provider's Model. It is split into sections picked from a sidebar at its leading edge, grouped under App (General, Calendars, Recording) and AI (Transcription, Summary, Intelligence, Providers, Local Models). Written "Settings" when nothing else could be meant.
 _Avoid_: preferences, options
 
 ### Agenda
@@ -116,13 +116,19 @@ _Avoid_: recap, digest, minutes
 A macOS notification, posted as a meeting starts while Crumble runs, that offers to record it. Only its Record button starts a Recording.
 _Avoid_: reminder, alert, prompt
 
+### Models
+
 **Model**:
-What turns a Recording into a Transcript, or a Transcript into a Summary. The user picks one for each job.
-_Avoid_: engine, backend, AI
+What turns a Recording into a Transcript, turns a Transcript into a Summary, or answers in Crumble's Chat. The user picks one for each of these jobs: Transcription, Summary and Intelligence.
+_Avoid_: engine, backend, AI, LLM
+
+**Intelligence Model**:
+The general-purpose Model Crumble's Chat talks to, picked in Settings: Apple's on-device Model or a remote Provider's. "Intelligence" alone names its job.
+_Avoid_: assistant, chatbot, AI model
 
 **Provider**:
-Where a Model runs: on the Mac, such as Apple's on-device Models or Crumble's own Local Models, or remotely, such as Anthropic or any OpenAI-compatible server.
-_Avoid_: vendor, service, backend
+Who runs a Model: on the Mac, Apple's on-device Models or Crumble's own Local Models; or remotely, a company's API reached with the user's API key, such as Anthropic, OpenAI, Google Gemini, ElevenLabs, OpenRouter, DeepSeek or xAI, or an OpenAI-compatible server the user runs, such as Ollama. An OpenAI-compatible server at a loopback address counts as on the Mac; a company's API never does, even through a proxy on the Mac.
+_Avoid_: vendor, service, backend, integration, connection
 
 **Local Model**:
 A Model that makes Transcripts, which Crumble downloads and runs itself, on the Mac. It is kept until the user deletes it. Apple's Model is not a Local Model: macOS ships and updates it.
@@ -144,6 +150,7 @@ _Avoid_: offline model, speech model, downloaded model
 - A **Note** has at most one **Recording**; its **Transcript** comes from that **Recording** and its **Summary** from that **Transcript** only, never from the **Memo**
 - A **Note** follows its **Event**'s **Disabled** and **Hidden** state; a **Quick note** is always shown
 - A **Local Model** can make a **Transcript** only once it is downloaded; its **Provider** is Crumble, on the Mac
+- A remote **Provider** does only the jobs its API offers, such as ElevenLabs only Transcripts, and only once it has what it needs: an API key when it requires one, an address requests can go to, and a **Model** for the job
 
 ## Example dialogue
 
@@ -159,3 +166,5 @@ _Avoid_: offline model, speech model, downloaded model
 - "current event" meant both an **Event** that has started and one happening today. Resolved: one that has started and not ended is **In progress**.
 - "settings" meant both the **Settings page** and everything Crumble keeps across restarts, such as the last **Calendar view** or the **Account** order. Resolved: "Settings" is only the page; the rest is not a domain term.
 - The **Calendars section** lists **Accounts**, not **Calendars**. Resolved: keep the "Calendars" title for users; in code and conversation its rows are **Accounts**.
+- "Claude" meant both a **Provider** and its **Models**. Resolved: the **Provider** is Anthropic; Claude names its **Models**.
+- "OpenAI" and the id `openai` meant the OpenAI-compatible server. Resolved: OpenAI is OpenAI's own API, and a server the user runs is the OpenAI-compatible server, `openai-compatible`.

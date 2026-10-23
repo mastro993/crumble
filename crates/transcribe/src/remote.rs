@@ -1,37 +1,46 @@
-//! A server that speaks OpenAI's audio transcriptions, through `crumble-remote`: OpenAI itself,
-//! or a Whisper server. Each track is uploaded on its own, in pieces under the upload limit,
-//! each repackaged from ADTS into M4A, which the API accepts (ADR 0008).
+//! A remote Provider's Model, through `crumble-remote` (ADRs 0008 and 0011): OpenAI's audio
+//! transcriptions, which OpenRouter and Whisper servers also speak, ElevenLabs' and xAI's speech
+//! to text, and Gemini's transcribe Model, one module each in `remote/`. Each track is uploaded
+//! on its own, in pieces under the API's limits on size and on length, each repackaged from ADTS
+//! into M4A, which all of them accept.
+
+mod elevenlabs;
+mod gemini;
+mod openai;
+mod words;
+mod xai;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use crumble_remote::{Provider, TIMEOUT, base_url, failure, no_response, post, without_userinfo};
+use crumble_remote::{
+    Provider, Speech, TIMEOUT, base_url, failure, no_response, post, without_userinfo,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::adts::{Chunk, chunks};
-use crate::{Segment, Track, Transcriber, merge, tracks};
+use crate::{DETECT, Segment, Track, Transcriber, merge, tracks};
+use words::Timed;
 
-/// The most audio uploaded at once. OpenAI takes files up to 25 MB; M4A holds the same AAC
-/// frames as ADTS in a little less room, so this leaves a margin. About 40 minutes of a
-/// 65 kbit/s track.
-const MAX_UPLOAD: usize = 20_000_000;
-
-/// A server that speaks OpenAI's audio transcriptions, such as OpenAI's or a Whisper server.
-pub struct OpenAiCompatible {
-    /// Its address up to `/audio/transcriptions`, such as `http://localhost:8000/v1`.
+/// A remote Provider's Model that transcribes, such as OpenAI's `whisper-1`, ElevenLabs'
+/// `scribe_v2`, or a Whisper server's.
+pub struct Remote {
+    /// Who runs the Model: a remote Provider whose API transcribes.
+    pub provider: Provider,
+    /// The address the user gave the Provider in Settings, or "" for its usual one.
     pub base_url: String,
-    /// The key, from the Keychain, if the server wants one.
+    /// The Provider's key, from the Keychain; a server the user runs may want none.
     pub api_key: Option<String>,
-    /// The Model's name on that server, such as `whisper-1`.
+    /// The Model's id, such as `whisper-1`.
     pub model: String,
 }
 
-impl Transcriber for OpenAiCompatible {
+impl Transcriber for Remote {
     fn provider(&self) -> Provider {
-        Provider::OpenAiCompatible
+        self.provider
     }
 
     fn model(&self) -> &str {
@@ -44,23 +53,33 @@ impl Transcriber for OpenAiCompatible {
         locale: &str,
         progress: &mut (dyn FnMut(f32) + Send),
     ) -> anyhow::Result<Vec<Segment>> {
-        let base = base_url(&self.base_url)?;
-        if self.model.trim().is_empty() {
-            bail!("Enter the server's Transcription Model in Settings.");
-        }
+        let (request, speech) = self.request(locale)?;
+        let ((max_bytes, max_length), transcribe): ((usize, Duration), Api) = match speech {
+            Speech::OpenAiTranscriptions => (
+                openai::max_piece(request.provider, request.model),
+                openai::transcribe,
+            ),
+            Speech::ElevenLabsSpeechToText => (
+                (elevenlabs::MAX_PIECE, Duration::MAX),
+                elevenlabs::transcribe,
+            ),
+            Speech::XaiSpeechToText => ((xai::MAX_PIECE, Duration::MAX), xai::transcribe),
+            Speech::GeminiInteractions => {
+                ((gemini::MAX_PIECE, gemini::MAX_LENGTH), gemini::transcribe)
+            }
+        };
         let mut uploads = Vec::new();
         for (track, path) in tracks(dir).context("This Recording has no audio to transcribe.")? {
             let audio = std::fs::read(&path)
                 .with_context(|| format!("could not read {}", path.display()))
                 .context("Couldn't read the Recording's audio.")?;
-            let pieces = chunks(&audio, MAX_UPLOAD)
+            let pieces = chunks(&audio, max_bytes, max_length)
                 .with_context(|| format!("could not read {}", path.display()))
                 .context("Couldn't read the Recording's audio.")?;
             uploads.push((track, audio, pieces));
         }
         let total: usize = uploads.iter().map(|(_, _, pieces)| pieces.len()).sum();
         let scratch = Scratch::new()?;
-        let url = format!("{base}/audio/transcriptions");
         let mut done = 0;
         let mut segments = Vec::new();
         for (track, audio, pieces) in &uploads {
@@ -69,8 +88,8 @@ impl Transcriber for OpenAiCompatible {
                 let m4a = scratch.m4a(&audio[piece.bytes.clone()])?;
                 // A local server may transcribe slower than the audio plays.
                 let timeout = TIMEOUT.max(piece.length * 2);
-                let response = self.upload(&url, base, &m4a, language(locale), timeout)?;
-                heard.extend(parse(&response, *track, piece)?);
+                let timed = transcribe(&request, &m4a, piece.length, timeout)?;
+                heard.extend(place(timed, *track, piece).with_context(|| request.unreadable())?);
                 done += 1;
                 #[allow(clippy::cast_precision_loss, reason = "a few pieces")]
                 progress(done as f32 / total as f32);
@@ -81,57 +100,159 @@ impl Transcriber for OpenAiCompatible {
     }
 }
 
-impl OpenAiCompatible {
-    /// Sends one piece of audio and returns the server's answer, within `timeout`.
-    fn upload(
-        &self,
-        url: &str,
-        base: &str,
-        m4a: &[u8],
-        language: &str,
-        timeout: Duration,
-    ) -> anyhow::Result<String> {
-        let boundary = format!("crumble-{}", Uuid::now_v7().simple());
-        let mut fields = vec![
-            ("model", self.model.trim()),
-            ("response_format", "verbose_json"),
-            ("timestamp_granularities[]", "segment"),
-        ];
-        if !language.is_empty() {
-            fields.push(("language", language));
+impl Remote {
+    /// What every request for this Model shares, and the API it goes through; or, for the
+    /// user, what Settings is missing.
+    fn request<'a>(&'a self, locale: &'a str) -> anyhow::Result<(Request<'a>, Speech)> {
+        let name = self.provider.name();
+        let remote = self.provider.remote();
+        let Some((remote, speech)) = remote.and_then(|remote| Some((remote, remote.speech()?)))
+        else {
+            bail!("{name} doesn't make Transcripts.");
+        };
+        let base = base_url(remote.base_url(&self.base_url))?;
+        let key = (self.api_key.as_deref())
+            .map(str::trim)
+            .filter(|key| !key.is_empty());
+        if key.is_none() && remote.api_key().is_some_and(|format| format.required()) {
+            bail!("Add an API key for {name} in Settings.");
         }
-        let body = multipart(&boundary, &fields, ("audio.m4a", "audio/mp4", m4a));
-        let authorization = self.api_key.as_ref().map(|key| format!("Bearer {key}"));
-        let headers: Vec<(&str, &str)> = authorization
-            .iter()
-            .map(|value| ("authorization", value.as_str()))
-            .collect();
-        let content_type = format!("multipart/form-data; boundary={boundary}");
-        let (status, text) =
-            post(url, &headers, (&content_type, &body), timeout).map_err(|error| {
-                // The address may hold a user name and password.
-                let base = without_userinfo(base);
-                no_response(&base, "Check that the server is running.", timeout, &error)
-            })?;
-        if status != 200 {
-            return Err(failure(
-                Provider::OpenAiCompatible,
-                &self.model,
-                status,
-                &text,
-            ));
+        let model = self.model.trim();
+        if model.is_empty() {
+            match self.provider {
+                Provider::OpenAiCompatible => {
+                    bail!("Enter the server's Transcription Model in Settings.")
+                }
+                _ => bail!("Choose a Transcription Model for {name} in Settings."),
+            }
         }
-        Ok(text)
+        let request = Request {
+            provider: self.provider,
+            base,
+            headers: remote.headers(key),
+            key,
+            model,
+            locale,
+        };
+        Ok((request, speech))
     }
 }
 
-/// The ISO 639-1 language of `locale`, as the API takes it: `en` for `en_US`.
+/// How an API transcribes a piece, M4A that plays for the given length, within the given
+/// timeout: the speech in it, timed within it.
+type Api = fn(&Request, &[u8], Duration, Duration) -> anyhow::Result<Vec<Timed>>;
+
+/// What every request for one Recording shares, and how its failures name the Provider.
+struct Request<'a> {
+    /// Who the requests go to.
+    provider: Provider,
+    /// The address paths follow, without a trailing `/`.
+    base: &'a str,
+    /// The key in its header, then those every request to the Provider carries.
+    headers: Vec<(&'static str, String)>,
+    /// The API key, so a failure can take it out of what the server said.
+    key: Option<&'a str>,
+    /// The Model's id.
+    model: &'a str,
+    /// The Recording's locale, such as `en_US`, or [`DETECT`].
+    locale: &'a str,
+}
+
+impl Request<'_> {
+    /// The headers a request carries: the Provider's, then `extra`.
+    fn headers<'h>(&'h self, extra: &[(&'h str, &'h str)]) -> Vec<(&'h str, &'h str)> {
+        (self.headers.iter())
+            .map(|(name, value)| (*name, value.as_str()))
+            .chain(extra.iter().copied())
+            .collect()
+    }
+
+    /// POSTs `body`, a content type and its bytes, to `url` with `extra` headers, and returns
+    /// the answer; or, for the user, why there is none.
+    fn post(
+        &self,
+        url: &str,
+        extra: &[(&str, &str)],
+        body: (&str, &[u8]),
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
+        let (status, text) = post(url, &self.headers(extra), body, timeout)
+            .map_err(|error| no_response(&self.address(), self.hint(), timeout, &error))?;
+        self.accepted(status, text)
+    }
+
+    /// POSTs `fields`, then `m4a` as the file, as `multipart/form-data` to `url`.
+    fn post_form(
+        &self,
+        url: &str,
+        fields: &[(&str, &str)],
+        m4a: &[u8],
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
+        let boundary = format!("crumble-{}", Uuid::now_v7().simple());
+        let body = multipart(&boundary, fields, ("audio.m4a", "audio/mp4", m4a));
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+        self.post(url, &[], (&content_type, &body), timeout)
+    }
+
+    /// `text`, when `status` says the Provider did what was asked; else what to tell the user.
+    fn accepted(&self, status: u16, text: String) -> anyhow::Result<String> {
+        if (200..300).contains(&status) {
+            Ok(text)
+        } else {
+            Err(failure(self.provider, self.model, status, &text, self.key))
+        }
+    }
+
+    /// Who a request that got no answer names: a company's name, or a server's address
+    /// without the user name and password it may hold.
+    fn address(&self) -> String {
+        match self.provider {
+            Provider::OpenAiCompatible => without_userinfo(self.base),
+            provider => provider.name().to_owned(),
+        }
+    }
+
+    /// What to check when a request got no answer.
+    fn hint(&self) -> &'static str {
+        match self.provider {
+            Provider::OpenAiCompatible => "Check that the server is running.",
+            _ => "Check the internet connection.",
+        }
+    }
+
+    /// What to tell the user when an answer isn't a transcription.
+    fn unreadable(&self) -> String {
+        match self.provider {
+            Provider::OpenAiCompatible => "The server's answer wasn't a transcription.".to_owned(),
+            provider => format!("{}'s answer wasn't a transcription.", provider.name()),
+        }
+    }
+}
+
+/// The ISO 639-1 language of `locale`, as most APIs take it: `en` for `en_US`; "" for
+/// [`DETECT`], which leaves the language to the Model.
 fn language(locale: &str) -> &str {
-    locale.split(['_', '-']).next().unwrap_or_default()
+    if locale == DETECT {
+        return "";
+    }
+    locale.split(['_', '-', '@']).next().unwrap_or_default()
+}
+
+/// The BCP-47 tag of `locale`, as Gemini takes it: `en-US` for `en_US`; "" for [`DETECT`].
+fn language_tag(locale: &str) -> String {
+    if locale == DETECT {
+        return String::new();
+    }
+    locale
+        .split('@')
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-")
 }
 
 /// A `multipart/form-data` body: each of `fields` as text, then `file` as its name, content type
-/// and bytes. `boundary` must not occur in any of them.
+/// and bytes, last, as xAI requires. `boundary` must not occur in any of them.
 fn multipart(boundary: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8])) -> Vec<u8> {
     let mut body = Vec::new();
     for (name, value) in fields {
@@ -154,45 +275,39 @@ fn multipart(boundary: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8]))
     body
 }
 
-/// The segments of `track` in a server's answer for `piece`, at their place in the Recording.
-/// `verbose_json` gives timed segments; an answer with only `text`, as some servers give
-/// whatever was asked, is one segment spanning the piece. A time no Recording can hold, as a
-/// broken server may send, fails the answer.
-fn parse(response: &str, track: Track, piece: &Chunk) -> anyhow::Result<Vec<Segment>> {
-    const UNREADABLE: &str = "The server's answer wasn't a transcription.";
-    let response: Value = serde_json::from_str(response).context(UNREADABLE)?;
-    let segment = |start: Duration, end: Duration, text: &str| -> anyhow::Result<_> {
+/// A time in seconds in an answer, 0 when it has none; `None` when no Recording is that long.
+fn seconds(value: &Value) -> Option<Duration> {
+    Duration::try_from_secs_f64(value.as_f64().unwrap_or(0.0).max(0.0)).ok()
+}
+
+/// A timed word in an answer: `{text, start, end}`, its times in seconds.
+fn word(value: &Value) -> Option<Timed> {
+    Some(Timed {
+        start: seconds(&value["start"])?,
+        end: seconds(&value["end"])?,
+        text: value["text"].as_str().unwrap_or_default().to_owned(),
+    })
+}
+
+/// `heard`, timed within `piece`, as segments of `track` at their place in the Recording,
+/// without the empty ones; `None` when a time is past any Recording, as a broken server may
+/// send.
+fn place(heard: Vec<Timed>, track: Track, piece: &Chunk) -> Option<Vec<Segment>> {
+    let mut placed = Vec::new();
+    for Timed { start, end, text } in heard {
+        let start = piece.start.checked_add(start)?;
+        let end = start.max(piece.start.checked_add(end)?);
         let text = text.trim();
-        let start = piece.start.checked_add(start).context(UNREADABLE)?;
-        let end = start.max(piece.start.checked_add(end).context(UNREADABLE)?);
-        Ok((!text.is_empty()).then(|| Segment {
-            track,
-            start,
-            end,
-            text: text.to_owned(),
-        }))
-    };
-    if let Some(segments) = response["segments"].as_array() {
-        let seconds = |value: &Value| {
-            Duration::try_from_secs_f64(value.as_f64().unwrap_or(0.0).max(0.0)).context(UNREADABLE)
-        };
-        let mut found = Vec::new();
-        for item in segments {
-            let text = item["text"].as_str().unwrap_or_default();
-            found.extend(segment(
-                seconds(&item["start"])?,
-                seconds(&item["end"])?,
-                text,
-            )?);
+        if !text.is_empty() {
+            placed.push(Segment {
+                track,
+                start,
+                end,
+                text: text.to_owned(),
+            });
         }
-        return Ok(found);
     }
-    let Some(text) = response["text"].as_str() else {
-        bail!(UNREADABLE);
-    };
-    Ok(segment(Duration::ZERO, piece.length, text)?
-        .into_iter()
-        .collect())
+    Some(placed)
 }
 
 /// A folder of its own in the temp folder for the pieces being uploaded; it goes, with them,
@@ -235,125 +350,4 @@ impl Drop for Scratch {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Chunk, OpenAiCompatible, language, multipart, parse};
-    use crate::{Segment, Track, Transcriber};
-    use std::path::Path;
-    use std::time::Duration;
-
-    fn piece(start_ms: u64, length_ms: u64) -> Chunk {
-        Chunk {
-            bytes: 0..0,
-            start: Duration::from_millis(start_ms),
-            length: Duration::from_millis(length_ms),
-        }
-    }
-
-    fn segment(track: Track, start_ms: u64, end_ms: u64, text: &str) -> Segment {
-        Segment {
-            track,
-            start: Duration::from_millis(start_ms),
-            end: Duration::from_millis(end_ms),
-            text: text.to_owned(),
-        }
-    }
-
-    #[test]
-    fn the_body_holds_each_field_then_the_file() {
-        let body = multipart(
-            "b0",
-            &[("model", "whisper-1"), ("language", "en")],
-            ("audio.m4a", "audio/mp4", b"\x00\xFFaudio"),
-        );
-        let mut expected =
-            b"--b0\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n\
---b0\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n\
---b0\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\n\
-Content-Type: audio/mp4\r\n\r\n"
-                .to_vec();
-        expected.extend(b"\x00\xFFaudio\r\n--b0--\r\n");
-        assert_eq!(body, expected);
-    }
-
-    #[test]
-    fn verbose_json_segments_land_at_the_piece_s_place() {
-        let response = r#"{"task":"transcribe","language":"english","duration":9.5,
-            "text":"Hello there. Can you hear me?","segments":[
-            {"id":0,"seek":0,"start":0.0,"end":2.4,"text":" Hello there.","tokens":[1]},
-            {"id":1,"seek":0,"start":3.0,"end":5.25,"text":" Can you hear me?","tokens":[2]},
-            {"id":2,"seek":0,"start":6.0,"end":5.0,"text":"   ","tokens":[]}]}"#;
-        assert_eq!(
-            parse(response, Track::System, &piece(60_000, 9_500)).ok(),
-            Some(vec![
-                segment(Track::System, 60_000, 62_400, "Hello there."),
-                segment(Track::System, 63_000, 65_250, "Can you hear me?"),
-            ])
-        );
-    }
-
-    #[test]
-    fn a_text_only_answer_spans_the_piece() {
-        assert_eq!(
-            parse(r#"{"text":" Hi. "}"#, Track::Mic, &piece(1_000, 4_000)).ok(),
-            Some(vec![segment(Track::Mic, 1_000, 5_000, "Hi.")])
-        );
-        assert_eq!(
-            parse(r#"{"text":""}"#, Track::Mic, &piece(0, 1)).ok(),
-            Some(Vec::new())
-        );
-        assert!(parse("<html>", Track::Mic, &piece(0, 1)).is_err());
-        assert!(parse(r#"{"error":"no"}"#, Track::Mic, &piece(0, 1)).is_err());
-        let huge = r#"{"segments":[{"start":1e300,"end":1e300,"text":"Hi."}]}"#;
-        assert!(parse(huge, Track::Mic, &piece(0, 1)).is_err());
-    }
-
-    #[test]
-    fn remote_segments_merge_across_tracks() {
-        let mic = parse(
-            r#"{"segments":[{"start":0.5,"end":1.5,"text":"Hi."}]}"#,
-            Track::Mic,
-            &piece(0, 10_000),
-        )
-        .unwrap_or_default();
-        let system = parse(
-            r#"{"segments":[{"start":0.0,"end":1.0,"text":"Hello?"}]}"#,
-            Track::System,
-            &piece(0, 10_000),
-        )
-        .unwrap_or_default();
-        let merged = crate::merge(vec![mic, system]);
-        let texts: Vec<_> = merged.iter().map(|segment| segment.text.as_str()).collect();
-        assert_eq!(texts, ["Hello?", "Hi."]);
-    }
-
-    #[test]
-    fn a_locale_gives_its_language() {
-        assert_eq!(language("en_US"), "en");
-        assert_eq!(language("zh-Hans-CN"), "zh");
-        assert_eq!(language("it"), "it");
-        assert_eq!(language(""), "");
-    }
-
-    #[test]
-    fn missing_settings_fail_before_any_upload() {
-        let error = |base_url: &str| {
-            let server = OpenAiCompatible {
-                base_url: base_url.into(),
-                api_key: Some("sk-test-secret".into()),
-                model: "whisper-1".into(),
-            };
-            server
-                .transcribe(Path::new("/nonexistent"), "en_US", &mut |_| {})
-                .map_err(|error| error.to_string())
-                .err()
-        };
-        assert_eq!(
-            error(" ").as_deref(),
-            Some("Enter the server's address in Settings.")
-        );
-        assert_eq!(
-            error("whisper.lan:8000/v1").as_deref(),
-            Some("Start the server's address with http:// or https://.")
-        );
-    }
-}
+mod tests;

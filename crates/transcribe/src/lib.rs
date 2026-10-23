@@ -1,9 +1,9 @@
 //! Transcripts of Recordings, made by a Model the user picks: Apple's SpeechAnalyzer on the Mac
 //! through a small Swift bridge (ADR 0006), a Local Model Crumble downloaded, run through
-//! transcribe.cpp in a worker process (ADR 0010), or a server that speaks OpenAI's audio
-//! transcriptions (ADR 0008). Each is a [`Transcriber`]. Each track is transcribed on its own,
-//! so the track labels the speech: the microphone is the user, the Mac's sound is the others on
-//! the call. No GPUI.
+//! transcribe.cpp in a worker process (ADR 0010), or a remote Provider's Model, through the API
+//! its `crumble_remote::Speech` names (ADRs 0008 and 0011). Each is a [`Transcriber`]. Each
+//! track is transcribed on its own, so the track labels the speech: the microphone is the user,
+//! the Mac's sound is the others on the call. No GPUI.
 
 mod adts;
 mod apple;
@@ -27,11 +27,11 @@ use crumble_remote::Provider;
 pub use apple::Apple;
 pub use ffi::{current_locale, install_model, language_name, model_status, supported_locales};
 pub use local::Local;
-pub use remote::OpenAiCompatible;
+pub use remote::Remote;
 #[cfg(target_os = "macos")]
 pub use worker::run_if_asked;
 
-/// The locale that asks a Local Model to tell the language itself, for "Detect automatically".
+/// The locale that asks a Model to tell the language itself, for "Detect automatically".
 pub const DETECT: &str = "auto";
 
 #[cfg(target_os = "macos")]

@@ -1,5 +1,6 @@
-//! A select's menu: opening under its trigger on the picked row, and the search field that
-//! hides the rows whose label lacks its text.
+//! A select's menu: opening under its trigger on the picked row, the search field that hides
+//! the rows whose label lacks its text while the menu keeps its width, and the row that offers
+//! the text itself.
 
 use super::super::controls::app_icon;
 use super::{Kind, Menu, MenuItem, OpenMenu, step};
@@ -9,7 +10,7 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_kit::{
     App, AppContext, Bounds, Context, Div, Focusable, InteractiveElement, ParentElement, Pixels,
-    Point, Styled, Window, div, point, prelude::FluentBuilder, px,
+    Point, SharedString, Styled, Window, canvas, div, point, prelude::FluentBuilder, px,
 };
 
 /// Where a menu opens.
@@ -47,8 +48,8 @@ impl OpenMenu {
             let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
             let filter = cx.subscribe(&search, |menu, search, event, cx| {
                 if matches!(event, InputEvent::Change) {
-                    let query = search.read(cx).value().trim().to_lowercase();
-                    menu.filter(&query);
+                    let text = search.read(cx).value();
+                    menu.filter(&text);
                     cx.notify();
                 }
             });
@@ -61,10 +62,10 @@ impl OpenMenu {
 }
 
 impl Menu {
-    /// Hides the rows whose label lacks `query`, and the separators while there is one, and
-    /// highlights the first row left.
-    fn filter(&mut self, query: &str) {
-        hide_unmatched(&mut self.items, query);
+    /// Hides the rows whose label lacks `text`, and the separators while there is some, shows
+    /// the row offering it unless a row's label is it, and highlights the first row left.
+    fn filter(&mut self, text: &str) {
+        hide_unmatched(&mut self.items, text);
         self.highlight = step(&self.items, None, true);
         self.scroll.set_offset(point(px(0.), px(0.)));
     }
@@ -90,6 +91,21 @@ impl Menu {
         )
     }
 
+    /// Keeps `menu` at the width it opened at, so hiding its widest rows does not narrow it,
+    /// and the row offering a long text cuts it short instead of widening it.
+    pub(super) fn keep_width<E: Styled + ParentElement + FluentBuilder>(&self, menu: E) -> E {
+        let width = self.width.clone();
+        menu.when_some(width.get(), |menu, width| menu.w(width))
+            .child(
+                canvas(
+                    move |menu, _, _| width.set(Some(menu.size.width)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+    }
+
     /// Takes the keys a search field would move its caret with, before it does.
     pub(super) fn search_keys<E: InteractiveElement + FluentBuilder>(
         &self,
@@ -113,18 +129,30 @@ impl Menu {
     }
 }
 
-/// Hides the rows whose lowercased label lacks `query`, already lowercased, and every
-/// separator while there is a query.
-fn hide_unmatched(items: &mut [MenuItem], query: &str) {
+/// Hides the rows whose label lacks `text`, trimmed and ignoring case, and every separator
+/// while there is some text. The row offering the text shows it, as typed, while no other
+/// row's label is it.
+fn hide_unmatched(items: &mut [MenuItem], text: &str) {
+    let text = text.trim();
+    let query = text.to_lowercase();
+    let titled = |item: &MenuItem| !matches!(item.kind, Kind::Separator | Kind::Typed { .. });
+    let named = (items.iter()).any(|item| titled(item) && item.label.to_lowercase() == query);
     for item in items {
-        item.hidden = !query.is_empty()
-            && (matches!(item.kind, Kind::Separator) || !item.label.to_lowercase().contains(query));
+        item.hidden = match &mut item.kind {
+            Kind::Typed { text: typed, .. } => {
+                *typed = SharedString::from(text.to_owned());
+                item.label = SharedString::from(format!("Use “{text}”"));
+                query.is_empty() || named
+            }
+            Kind::Separator => !query.is_empty(),
+            _ => !item.label.to_lowercase().contains(&query),
+        };
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{MenuItem, step};
+    use super::super::{Kind, MenuItem, step};
     use super::hide_unmatched;
 
     #[test]
@@ -142,5 +170,43 @@ mod tests {
         hide_unmatched(&mut items, "");
         assert!(items.iter().all(|item| !item.hidden));
         assert_eq!(step(&items, None, true), Some(0));
+    }
+
+    /// Whether the last row, offering the text, shows, and what it says and offers.
+    fn offered(items: &[MenuItem]) -> Option<(&str, &str)> {
+        let last = items.last().filter(|item| !item.hidden)?;
+        match &last.kind {
+            Kind::Typed { text, .. } => Some((&last.label, text)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_typed_row_offers_text_no_row_is_named_as_typed_and_trimmed() {
+        let mut items = [
+            MenuItem::new("sonnet", "claude-sonnet-5-5"),
+            MenuItem::separator(),
+            MenuItem::new("haiku", "claude-haiku-4-5"),
+            MenuItem::typed("typed", |_, _, _| {}),
+        ];
+        assert_eq!(offered(&items), None);
+        hide_unmatched(&mut items, "  My-Fine-Tune ");
+        assert_eq!(
+            offered(&items),
+            Some(("Use “My-Fine-Tune”", "My-Fine-Tune"))
+        );
+        // Alone, it is the row Enter chooses.
+        assert_eq!(step(&items, None, true), Some(3));
+        // It follows the rows the text is part of.
+        hide_unmatched(&mut items, "Claude");
+        assert_eq!(offered(&items), Some(("Use “Claude”", "Claude")));
+        assert_eq!(step(&items, None, true), Some(0));
+        // A row named the text, whatever its case, leaves nothing to offer.
+        hide_unmatched(&mut items, "Claude-Haiku-4-5 ");
+        assert_eq!(offered(&items), None);
+        assert_eq!(step(&items, None, false), Some(2));
+        hide_unmatched(&mut items, "   ");
+        assert_eq!(offered(&items), None);
+        assert_eq!(step(&items, None, false), Some(2));
     }
 }

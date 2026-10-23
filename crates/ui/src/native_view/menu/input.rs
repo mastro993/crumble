@@ -5,8 +5,8 @@ use super::{Kind, Menu, MenuItem, SUBMENU_CLOSE_DELAY, Submenu, step};
 use gpui_kit::{App, Context, Focusable, KeyDownEvent, Window};
 
 impl Menu {
-    /// Chooses row `ix`, or row `sub` of its submenu: an action closes the menu and then runs,
-    /// so it can move focus, and a submenu opens.
+    /// Chooses row `ix`, or row `sub` of its submenu: an action, or the row offering the search
+    /// field's text, closes the menu and then runs, so it can move focus, and a submenu opens.
     pub(super) fn choose(
         &mut self,
         ix: usize,
@@ -31,6 +31,11 @@ impl Menu {
                 if let Some(handler) = handler {
                     handler(window, cx);
                 }
+            }
+            Kind::Typed { text, handler } => {
+                let (text, handler) = (text.clone(), handler.clone());
+                self.close(window, cx);
+                handler(text, window, cx);
             }
             Kind::Submenu(_) if sub.is_none() => self.open_submenu(ix, from_keyboard, cx),
             Kind::Panel { focus, .. } => {

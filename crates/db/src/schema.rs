@@ -16,15 +16,12 @@ diesel::table! {
         id -> Integer,
         first_day_of_week -> Integer,
         calendar_view -> Text,
-        summary_provider -> Nullable<Text>,
-        claude_model -> Text,
-        openai_base_url -> Text,
-        openai_model -> Text,
-        transcription_model -> Text,
         transcription_locale -> Nullable<Text>,
         suggest_recording -> Bool,
         local_model -> Nullable<Text>,
+        summary_provider -> Nullable<Text>,
         transcription_provider -> Text,
+        intelligence_provider -> Nullable<Text>,
     }
 }
 
@@ -61,6 +58,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    providers (id) {
+        id -> Text,
+        base_url -> Nullable<Text>,
+        summary_model -> Nullable<Text>,
+        transcription_model -> Nullable<Text>,
+        intelligence_model -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     remote_audio_consents (provider, model, host) {
         provider -> Text,
         model -> Text,
@@ -87,6 +94,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     app_state,
     calendars,
     notes,
+    providers,
     remote_audio_consents,
     transcript_segments,
 );

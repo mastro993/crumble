@@ -17,8 +17,6 @@ mod tabs;
 mod transcript;
 mod transcript_tab;
 
-pub(super) use consent::TRANSCRIBERS;
-
 use super::NativeView;
 use crumble_eventkit::Event;
 use crumble_notes::{Note, NoteId, RecordingInfo, TranscriptSegment};

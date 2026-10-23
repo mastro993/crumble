@@ -1,4 +1,4 @@
-use super::{AccountColor, CalendarView, Store, Weekday, account_label, db};
+use super::{AccountColor, CalendarView, ProviderSettings, Store, Weekday, account_label, db};
 use crumble_eventkit::{Account, Calendar, Provider};
 use diesel::{RunQueryDsl, sql_query};
 
@@ -36,18 +36,26 @@ fn every_change_is_written_and_read_back() {
     store.set_account_color("source-2", AccountColor::Custom(0x3366ff));
     store.set_account_alias("source-3", "Work", "me@example.com");
     store.set_listed_order(&accounts, vec!["source-3".into(), "source-2".into()]);
-    store.set_summary_provider("openai");
-    store.set_claude_model(" claude-opus-5-5 ");
-    store.set_openai_base_url("http://localhost:11434/v1");
-    store.set_openai_model("llama3.2");
-    store.set_transcription_provider("openai");
-    store.set_transcription_model(" whisper-large-v3 ");
+    store.set_summary_provider("openai-compatible");
+    store.set_transcription_provider("openai-compatible");
+    store.set_intelligence_provider("anthropic");
+    store.set_provider(
+        "anthropic",
+        settings([None, Some("claude-opus-5-5"), None, None]),
+    );
+    store.set_provider(
+        "openai-compatible",
+        settings([
+            Some("http://localhost:11434/v1"),
+            Some("llama3.2"),
+            Some("whisper-large-v3"),
+            None,
+        ]),
+    );
     store.set_transcription_locale(Some("it_IT"));
     store.set_local_model(Some("whisper-medium"));
     store.add_audio_consent("openai", "whisper-1", "API.openai.com");
     store.set_suggests_recording(false);
-    assert_eq!(store.claude_model(), "claude-opus-5-5");
-    assert_eq!(store.transcription_model(), "whisper-large-v3");
     assert_eq!(
         store.state.account_order,
         ["source-1", "source-3", "source-2"]
@@ -63,8 +71,10 @@ fn every_change_is_written_and_read_back() {
         &accounts,
         vec!["source-2".into(), "source-1".into(), "source-3".into()],
     );
+    store.set_provider("anthropic", ProviderSettings::default());
     assert_eq!(store.reloaded(), store.state);
     assert!(store.state.disabled_accounts.is_empty());
+    assert_eq!(store.state.providers.len(), 1);
 }
 
 #[test]
@@ -95,17 +105,70 @@ fn the_summary_provider_is_the_picked_one_else_apples_when_available() {
     let mut store = Store::in_memory();
     assert_eq!(store.summary_provider(false), None);
     assert_eq!(store.summary_provider(true), Some("apple"));
-    assert_eq!(store.claude_model(), "claude-sonnet-5-5");
-    store.set_summary_provider("claude");
-    assert_eq!(store.summary_provider(true), Some("claude"));
-    assert_eq!(store.reloaded().summary_provider.as_deref(), Some("claude"));
+    store.set_summary_provider("anthropic");
+    assert_eq!(store.summary_provider(true), Some("anthropic"));
+    assert_eq!(
+        store.reloaded().summary_provider.as_deref(),
+        Some("anthropic")
+    );
+}
+
+#[test]
+fn the_intelligence_provider_is_none_until_one_is_picked() {
+    let mut store = Store::in_memory();
+    assert_eq!(store.intelligence_provider(), None);
+    store.set_intelligence_provider("gemini");
+    assert_eq!(store.intelligence_provider(), Some("gemini"));
+    assert_eq!(
+        store.reloaded().intelligence_provider.as_deref(),
+        Some("gemini")
+    );
+}
+
+/// Settings from its address, Summary, Transcription and Intelligence Models, in that order.
+fn settings(values: [Option<&str>; 4]) -> ProviderSettings {
+    let [
+        base_url,
+        summary_model,
+        transcription_model,
+        intelligence_model,
+    ] = values.map(|value| value.map(str::to_owned));
+    ProviderSettings {
+        base_url,
+        summary_model,
+        transcription_model,
+        intelligence_model,
+    }
+}
+
+#[test]
+fn provider_settings_are_trimmed_and_blank_ones_are_the_default() {
+    let mut store = Store::in_memory();
+    assert_eq!(store.provider("openai"), ProviderSettings::default());
+    store.set_provider(
+        "openai",
+        settings([
+            Some(" "),
+            Some(" gpt-6.1-sol "),
+            Some(""),
+            Some("gpt-6-luna"),
+        ]),
+    );
+    let trimmed = settings([None, Some("gpt-6.1-sol"), None, Some("gpt-6-luna")]);
+    assert_eq!(store.provider("openai"), trimmed);
+    assert_eq!(store.provider("gemini"), ProviderSettings::default());
+    assert_eq!(store.reloaded().providers.get("openai"), Some(&trimmed));
+
+    // Blank again, the Provider's row goes.
+    store.set_provider("openai", settings([Some(" "), None, Some(""), None]));
+    assert_eq!(store.provider("openai"), ProviderSettings::default());
+    assert!(store.reloaded().providers.is_empty());
 }
 
 #[test]
 fn transcripts_start_on_apple_in_the_mac_s_locale() {
     let mut store = Store::in_memory();
     assert_eq!(store.transcription_provider(), "apple");
-    assert_eq!(store.transcription_model(), "whisper-1");
     assert_eq!(store.transcription_locale(), None);
     assert_eq!(store.local_model(), None);
     store.set_transcription_locale(Some("it_IT"));

@@ -4,4 +4,6 @@ Cargo.lock linguist-generated
 skills-lock.json linguist-generated
 crates/db/src/schema.rs linguist-generated
 .agents/skills/** linguist-vendored
+# Crumble's own skill, written here, so it is checked like any other file.
+.agents/skills/add-provider/** -linguist-vendored
 crates/local-models/handy/** linguist-vendored

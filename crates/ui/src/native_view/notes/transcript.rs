@@ -9,9 +9,6 @@ use chrono::Utc;
 use crumble_notes::{NoteId, Track, TranscriptSegment};
 use crumble_remote::{Provider, runs_locally};
 use crumble_transcribe::{ModelStatus, Segment, Transcriber};
-use gpui_kit::component::WindowExt;
-use gpui_kit::component::button::ButtonVariant;
-use gpui_kit::component::dialog::DialogEntrance;
 use gpui_kit::{Context, Task, Window};
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -51,8 +48,8 @@ pub(super) struct Job {
     note: NoteId,
     pub(super) stage: Stage,
     /// Set once its Note no longer wants it, which stops a Local Model's worker. A blocking call
-    /// into Swift or a server's answer cannot be stopped, so a cancelled job still holds the slot
-    /// until it ends, and its result is dropped.
+    /// into Swift or a remote Model's answer cannot be stopped, so a cancelled job still holds
+    /// the slot until it ends, and its result is dropped.
     cancel: Arc<AtomicBool>,
     /// Receives the job's updates; dropping it drops the job's result.
     _updates: Task<()>,
@@ -138,7 +135,7 @@ impl NativeView {
         cx: &mut Context<Self>,
     ) {
         let provider = self.transcription_provider();
-        if !self.can_transcribe(provider) {
+        if !self.ready_for(provider, crumble_remote::Job::Transcription) {
             return;
         }
         let ids = self.untranscribed();
@@ -183,7 +180,7 @@ impl NativeView {
             return;
         }
         let provider = provider.unwrap_or_else(|| self.transcription_provider());
-        if !self.can_transcribe(provider) {
+        if !self.ready_for(provider, crumble_remote::Job::Transcription) {
             // Its Transcript tab points to Settings instead.
             self.note_detail.transcription.failed.remove(&id);
             cx.notify();
@@ -282,7 +279,7 @@ impl NativeView {
         cancel: &Arc<AtomicBool>,
     ) -> Option<(NoteId, Box<dyn Transcriber + Send>)> {
         while let Some((id, provider)) = self.note_detail.transcription.queue.pop_front() {
-            let local = runs_locally(provider, self.store.openai_base_url());
+            let local = runs_locally(provider, &self.provider_address(provider));
             if !local && self.consent_needed(provider).is_some() {
                 continue;
             }
@@ -396,47 +393,6 @@ impl NativeView {
             }
             _ => Vec::new(),
         };
-    }
-
-    /// Asks before transcribing the Note `id` again with `provider` when it has a Transcript,
-    /// as the new one replaces it; then asks for consent when `provider` needs it.
-    pub(super) fn confirm_transcribe_again(
-        &mut self,
-        id: NoteId,
-        provider: Provider,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let replaces = self
-            .note_detail
-            .note
-            .iter()
-            .any(|note| note.id == id && note.transcript.is_some());
-        if !replaces {
-            self.transcribe(id, Some(provider), Some(window), cx);
-            return;
-        }
-        let view = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let (view, id) = (view.clone(), id.clone());
-            alert
-                .entrance(DialogEntrance::Fade)
-                .title("Transcribe this recording again?")
-                .description("The new Transcript replaces the current one.")
-                .show_cancel(true)
-                .ok_text("Transcribe")
-                .ok_variant(ButtonVariant::Primary)
-                .on_ok(move |_, window, cx| {
-                    // After this dialog closes, so a consent dialog can open in its place.
-                    let (view, id) = (view.clone(), id.clone());
-                    window.defer(cx, move |window, cx| {
-                        let _ = view.update(cx, |view, cx| {
-                            view.transcribe(id, Some(provider), Some(window), cx);
-                        });
-                    });
-                    true
-                })
-        });
     }
 }
 

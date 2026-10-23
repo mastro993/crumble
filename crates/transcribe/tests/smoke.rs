@@ -89,7 +89,8 @@ fn transcribes_speech_from_say_on_a_local_server() {
         eprintln!("Skipped: no Whisper server listens on {address}.");
         return;
     }
-    let server = crumble_transcribe::OpenAiCompatible {
+    let server = crumble_transcribe::Remote {
+        provider: crumble_remote::Provider::OpenAiCompatible,
         base_url,
         api_key: None,
         model: std::env::var("CRUMBLE_WHISPER_MODEL").unwrap_or_else(|_| "whisper-1".to_owned()),

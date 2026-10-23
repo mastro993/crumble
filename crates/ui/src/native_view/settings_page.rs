@@ -1,7 +1,8 @@
 //! Settings page: choices kept across restarts through `Store`, in sections picked from a
-//! sidebar at the panel's leading edge. Every section is built from the parts in `form`. Its
-//! Calendars section is in `calendars`, its Transcription, Summary and Providers sections in
-//! `settings_models`, and its Local Models section in `local_models`.
+//! sidebar at the panel's leading edge, grouped under App and AI. Every section is built from
+//! the parts in `form`. Its Calendars section is in `calendars`, its Transcription, Summary and
+//! Intelligence sections in `settings_models`, its Providers section in `providers`, and its
+//! Local Models section in `local_models`.
 
 mod calendars;
 pub(super) mod form;
@@ -56,7 +57,8 @@ const SIDEBAR_TEXT_SIZE: f32 = 15.0;
 /// Space between a group's label and its first row.
 const GROUP_LABEL_GAP: f32 = 4.0;
 
-/// A part of the Settings page, listed in its sidebar.
+/// A part of the Settings page, listed in its sidebar. A section's place here is its sidebar
+/// row's id, so a new one goes at the end.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
     #[default]
@@ -67,20 +69,21 @@ pub(super) enum SettingsSection {
     LocalModels,
     Summary,
     Providers,
+    Intelligence,
 }
 
 impl SettingsSection {
     /// The sidebar's groups, each a label over its sections.
     const GROUPS: [(&'static str, &'static [Self]); 2] = [
-        ("Calendar", &[Self::General, Self::Calendars]),
+        ("App", &[Self::General, Self::Calendars, Self::Recording]),
         (
-            "Notes",
+            "AI",
             &[
-                Self::Recording,
                 Self::Transcription,
-                Self::LocalModels,
                 Self::Summary,
+                Self::Intelligence,
                 Self::Providers,
+                Self::LocalModels,
             ],
         ),
     ];
@@ -94,6 +97,7 @@ impl SettingsSection {
             Self::LocalModels => "Local Models",
             Self::Summary => "Summary",
             Self::Providers => "Providers",
+            Self::Intelligence => "Intelligence",
         }
     }
 
@@ -105,7 +109,8 @@ impl SettingsSection {
             Self::Transcription => "voice",
             Self::LocalModels => "chip",
             Self::Summary => "ai-brain",
-            Self::Providers => "key",
+            Self::Providers => "globe",
+            Self::Intelligence => "chat",
         }
     }
 }
@@ -136,8 +141,14 @@ impl NativeView {
     /// Opens Settings on `section`.
     pub(super) fn open_settings(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         self.settings_section = section;
-        self.local_models.reread = true;
         self.navigate(Route::Settings, cx);
+    }
+
+    /// Follows Settings showing a section, as it opens however it is reached or a section is
+    /// picked: reads the models folder again, and lists again the Models whose listing failed.
+    pub(super) fn settings_shown(&mut self) {
+        self.local_models.reread = true;
+        self.forget_listing_failures();
     }
 
     /// The sections sidebar beside the picked section's settings.
@@ -160,8 +171,11 @@ impl NativeView {
             }
             // Its list scrolls the whole section, title and all, drawing only the rows in view.
             SettingsSection::LocalModels => self.render_local_model_settings(cx),
-            SettingsSection::Summary => scrolling(section, self.render_summary_settings()),
-            SettingsSection::Providers => scrolling(section, self.render_provider_settings(cx)),
+            SettingsSection::Summary => scrolling(section, self.render_summary_settings(cx)),
+            SettingsSection::Intelligence => {
+                scrolling(section, self.render_intelligence_settings(cx))
+            }
+            SettingsSection::Providers => scrolling(section, self.render_providers(cx)),
         };
         // Every row keeps the selected row's ink; only the fill marks the section on screen.
         let theme = cx.theme();
@@ -215,7 +229,7 @@ impl NativeView {
                     cx,
                     move |view, _, cx| {
                         view.settings_section = each;
-                        view.local_models.reread = true;
+                        view.settings_shown();
                         cx.notify();
                     },
                 ));
