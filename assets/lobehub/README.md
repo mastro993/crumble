@@ -1,6 +1,6 @@
 # Provider logos
 
-These are the logos Settings shows next to each remote Provider, in the Providers list, and next to Apple's and each remote Provider's row in the Transcription and Intelligence Provider selects. They come from [LobeHub Icons](https://github.com/lobehub/lobe-icons), MIT licensed (see [LICENSE.md](LICENSE.md)). Each logo is a trademark of its owner and is shown only to identify that Provider.
+These are the logos Settings shows next to each remote Provider, in the Providers list, and next to Apple's and each remote Provider's row in the Transcription, Summary and Intelligence Provider selects. They come from [LobeHub Icons](https://github.com/lobehub/lobe-icons), MIT licensed (see [LICENSE.md](LICENSE.md)). Each logo is a trademark of its owner and is shown only to identify that Provider.
 
 Each file is named after its Provider's id, `Provider::id()` in `crumble-remote`. Every file was downloaded from npm `@lobehub/icons-static-svg` version 1.97.0:
 
