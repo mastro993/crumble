@@ -138,6 +138,8 @@ pub enum Row {
     Day(NaiveDate),
     /// The Now line, between Today's upcoming Events and the rest.
     Now,
+    /// Says Today has no upcoming or In progress Event, above the Now line where they would be.
+    NothingLeft,
     /// An Event, under the day it is listed in.
     Event(Rc<Event>),
     /// The last In progress Event, below the Now line, marking now: it shows its `progress` and
@@ -204,7 +206,8 @@ pub fn time_left(event: &Event, now: DateTime<Local>) -> Option<String> {
 }
 
 /// Ends Today's upcoming and In progress Events: the Now line goes above the In progress ones,
-/// so it never crosses one, and the last of them marks now.
+/// so it never crosses one, and the last of them marks now. With neither, Today's header is
+/// last, and a row says so before the Now line.
 fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
     let started = rows
         .iter()
@@ -215,6 +218,9 @@ fn close_now(rows: &mut Vec<Row>, now: DateTime<Local>) {
         && let Some(Row::Event(event)) = rows.pop()
     {
         rows.push(Row::Current(event));
+    }
+    if started == 0 && matches!(rows.last(), Some(Row::Day(_))) {
+        rows.push(Row::NothingLeft);
     }
     rows.insert(rows.len() - started, Row::Now);
 }

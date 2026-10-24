@@ -50,6 +50,7 @@ fn labels(rows: &[Row]) -> Vec<String> {
         .map(|row| match row {
             Row::Day(day) => day.format("%d").to_string(),
             Row::Now => "--".into(),
+            Row::NothingLeft => "nothing left".into(),
             Row::Event(event) => event.title.clone(),
             Row::Current(event) => format!("{} *", event.title),
             Row::QuickNote(note) => note.label.clone(),
@@ -127,7 +128,7 @@ fn the_last_in_progress_event_marks_now() {
     let ended = [timed("Workshop", at(15, 9, 0), at(15, 10, 0))];
     assert_eq!(
         labels(&rows(&ended, &[], all, now, date(1), false)),
-        ["15", "--", "Workshop"]
+        ["15", "nothing left", "--", "Workshop"]
     );
 }
 
@@ -164,7 +165,7 @@ fn only_today_s_upcoming_events_and_those_with_a_note_are_listed() {
             "Dinner"
         ]
     );
-    // Once Today has nothing left, it still shows its Now line.
+    // Once Today has nothing left, it says so and still shows its Now line.
     assert_eq!(
         labels(&rows(&events, &[], noted, at(15, 18, 0), date(1), false)),
         [
@@ -172,6 +173,7 @@ fn only_today_s_upcoming_events_and_those_with_a_note_are_listed() {
             "Planning",
             "Breakfast",
             "15",
+            "nothing left",
             "--",
             "Standup",
             "14",
@@ -193,7 +195,16 @@ fn the_next_day_with_timed_events_lists_them_all() {
     // The weekend and an all-day Event are skipped; a later day shows only what has a Note.
     assert_eq!(
         labels(&rows(&events, &[], noted, at(15, 12, 0), date(1), false)),
-        ["23", "Retro", "19", "Sync", "Kickoff", "15", "--"]
+        [
+            "23",
+            "Retro",
+            "19",
+            "Sync",
+            "Kickoff",
+            "15",
+            "nothing left",
+            "--"
+        ]
     );
 }
 
@@ -231,11 +242,11 @@ fn days_before_the_read_ones_show_only_while_in_progress() {
     // Once it ends, its start day is not among those read, so it leaves the list.
     assert_eq!(
         labels(&rows(&flight, &[], all, at(15, 12, 0), date(10), false)),
-        ["15", "--"]
+        ["15", "nothing left", "--"]
     );
     assert_eq!(
         labels(&rows(&flight, &[], all, at(15, 12, 0), date(9), false)),
-        ["15", "--", "09", "Flight"]
+        ["15", "nothing left", "--", "09", "Flight"]
     );
 }
 
@@ -244,16 +255,16 @@ fn today_shows_its_now_line_even_when_it_lists_nothing() {
     let events = [timed("Dinner", at(14, 19, 0), at(14, 20, 0))];
     assert_eq!(
         labels(&rows(&events, &[], all, at(15, 10, 0), date(1), false)),
-        ["15", "--", "14", "Dinner"]
+        ["15", "nothing left", "--", "14", "Dinner"]
     );
     assert_eq!(
         labels(&rows(&[], &[], all, at(15, 10, 0), date(1), true)),
-        ["15", "--", "end"]
+        ["15", "nothing left", "--", "end"]
     );
     let tomorrow = [timed("Planning", at(16, 10, 0), at(16, 11, 0))];
     assert_eq!(
         labels(&rows(&tomorrow, &[], all, at(15, 10, 0), date(1), false)),
-        ["16", "Planning", "15", "--"]
+        ["16", "Planning", "15", "nothing left", "--"]
     );
 }
 
@@ -299,7 +310,7 @@ fn quick_notes_join_the_events_at_their_time() {
     // Quick notes alone still get their day header and the Now line.
     assert_eq!(
         labels(&rows(&[], &notes[..1], all, now, date(10), false)),
-        ["15", "--", "Ideas"]
+        ["15", "nothing left", "--", "Ideas"]
     );
 }
 
