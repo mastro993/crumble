@@ -162,7 +162,7 @@ fn listed_at() -> SqlLiteral<Text> {
 }
 
 /// The start a Note snapshots: an all-day Event's first day, else its start as an instant.
-fn start_of(when: &When) -> Occurrence {
+pub(crate) fn start_of(when: &When) -> Occurrence {
     match when {
         When::AllDay { first, .. } => Occurrence::Day(*first),
         When::Timed { start, .. } => Occurrence::At(start.with_timezone(&Utc)),

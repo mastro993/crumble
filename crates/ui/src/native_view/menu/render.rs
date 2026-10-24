@@ -193,12 +193,13 @@ impl Menu {
         let opens_panel = parent.is_some() && item.opens_panel();
         let expanded = (opens_submenu && submenu.is_some_and(|open| open.parent == ix))
             || (opens_panel && submenu.is_some_and(|open| open.panel == Some(ix)));
+        let danger = item.destructive.then_some(theme.danger);
         let leading = match &item.leading {
             Some(Leading::Icon(name)) => Some(
                 app_icon(name)
                     .size(px(ICON_SIZE))
                     .flex_shrink_0()
-                    .text_color(muted)
+                    .text_color(danger.unwrap_or(muted))
                     .into_any_element(),
             ),
             Some(Leading::Element(element)) => Some(element(cx)),
@@ -245,6 +246,7 @@ impl Menu {
                 .when(highlighted, |row| row.bg(highlight))
                 .when(item.disabled, |row| row.opacity(DISABLED_OPACITY))
                 .when(item.hidden, Styled::hidden)
+                .when_some(danger, |row, danger| row.text_color(danger))
                 .children(leading)
                 .child(
                     div()

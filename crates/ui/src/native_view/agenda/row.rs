@@ -13,8 +13,8 @@ use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme, Sizable, StyledExt, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Bounds, ElementId, FontFeatures, Hsla, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, Window, canvas, deferred, div, fill, hsla,
-    point, prelude::FluentBuilder, px, relative, size,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, StatefulInteractiveElement, Styled,
+    Window, canvas, deferred, div, fill, hsla, point, prelude::FluentBuilder, px, relative, size,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -52,17 +52,28 @@ const TIME_LEFT_OPACITY: f32 = 0.5;
 /// Space between an Event's card and the column's edges.
 const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
-/// Where a row sits in the Agenda list: `alone` says it holds nothing else; `now` is the time
-/// the Event marking now shows its progress at and the Now line shows; `now_hover` says whether
-/// the pointer is on the Now line.
+/// Where a row sits in the Agenda list: `alone` says it holds nothing else; `menu_open` says
+/// its context menu is open; `now` is the time the Event marking now shows its progress at and
+/// the Now line shows; `now_hover` says whether the pointer is on the Now line.
 pub(super) struct RowItem {
     pub(super) alone: bool,
     pub(super) selected: bool,
+    pub(super) menu_open: bool,
     pub(super) now: DateTime<Local>,
     pub(super) now_hover: Rc<Cell<NowHover>>,
 }
 
 type SelectRow = Rc<dyn Fn(&Row, &mut Window, &mut App)>;
+type OpenRowMenu = Rc<dyn Fn(&Row, Point<Pixels>, &mut Window, &mut App)>;
+
+/// The element id of an Event's or a Quick note's row, which also owns its context menu.
+pub(super) fn row_id(row: &Row) -> Option<String> {
+    match row {
+        Row::Event(event) | Row::Current(event) => Some(format!("agenda-event-{}", event.id)),
+        Row::QuickNote(note) => Some(format!("agenda-note-{}", note.id)),
+        _ => None,
+    }
+}
 
 /// What the card of the Event marking now adds: how much of it has passed, and what is left.
 struct Current {
@@ -71,100 +82,113 @@ struct Current {
 }
 
 /// One item of the Agenda list; Events and Quick notes select on click, and on Enter or Space
-/// once Tab reaches them.
+/// once Tab reaches them, and open their context menu on a right click.
 pub(super) fn render_row(
     row: &Row,
     item: RowItem,
     colors: &HashMap<String, Hsla>,
     select: SelectRow,
+    menu: OpenRowMenu,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
     let RowItem {
         alone,
         selected,
+        menu_open,
         now,
         now_hover,
     } = item;
-    let selectable =
-        |id: String, color: Hsla, title: String, time: String, current: Option<Current>| {
-            let (row, select) = (row.clone(), select.clone());
-            // The secondary fill, in light mode a step stronger than a sidebar row's: half of a
-            // sidebar row's would match the Event marking now, which sits on the sidebar color.
-            let hover = theme.secondary.opacity(0.5);
-            // Over the Event marking now it replaces the card's sidebar color, so mix it in.
-            let hover = if current.is_some() {
-                theme.sidebar.blend(hover)
-            } else {
-                hover
-            };
-            let accent = theme.primary;
-            let lightness = if selected {
-                PASSED_SELECTED_LIGHTNESS
-            } else {
-                PASSED_LIGHTNESS
-            };
-            let lightness = if theme.mode.is_dark() {
-                1.0 - lightness
-            } else {
-                lightness
-            };
-            let passed = hsla(accent.h, PASSED_SATURATION, lightness, 1.0);
-            div().px(px(CARD_INSET)).child(
-                focusable(
-                    h_flex().id(ElementId::Name(id.into())).test_support(),
-                    title.clone(),
-                )
-                .relative()
-                .cursor_pointer()
-                .px(px(ROW_PADDING))
-                .py_1p5()
-                .gap_3()
-                .items_stretch()
-                .rounded(px(RADIUS))
-                // The Event marking now sits on the sidebar color, a shade lighter than a
-                // selected row's fill.
-                .when(current.is_some() && !selected, |row| row.bg(theme.sidebar))
-                .when(selected, |row| row.bg(theme.secondary))
-                .when(!selected, |row| row.hover(move |style| style.bg(hover)))
-                .on_click(move |_, window, cx| select(&row, window, cx))
-                // The part of the Event that has passed fills the card from its leading edge.
-                .when_some(current.as_ref(), |row, current| {
-                    row.child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left_0()
-                            .w(relative(current.progress))
-                            .rounded(px(RADIUS))
-                            .bg(passed),
-                    )
-                })
-                .child(div().flex_shrink_0().w(px(BAR)).rounded_full().bg(color))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_sm().truncate().child(title))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(time),
-                        ),
-                )
-                .children(current.and_then(|current| current.left).map(|left| {
-                    div()
-                        .flex_shrink_0()
-                        .self_center()
-                        .text_xs()
-                        .font_medium()
-                        .text_color(accent.opacity(TIME_LEFT_OPACITY))
-                        .child(left)
-                })),
-            )
+    let id = row_id(row).unwrap_or_default();
+    let selectable = |color: Hsla, title: String, time: String, current: Option<Current>| {
+        let (row, select, menu) = (row.clone(), select.clone(), menu.clone());
+        let menu_row = row.clone();
+        // The secondary fill, in light mode a step stronger than a sidebar row's: half of a
+        // sidebar row's would match the Event marking now, which sits on the sidebar color.
+        let hover = theme.secondary.opacity(0.5);
+        // Over the Event marking now it replaces the card's sidebar color, so mix it in.
+        let hover = if current.is_some() {
+            theme.sidebar.blend(hover)
+        } else {
+            hover
         };
+        let accent = theme.primary;
+        let lightness = if selected {
+            PASSED_SELECTED_LIGHTNESS
+        } else {
+            PASSED_LIGHTNESS
+        };
+        let lightness = if theme.mode.is_dark() {
+            1.0 - lightness
+        } else {
+            lightness
+        };
+        let passed = hsla(accent.h, PASSED_SATURATION, lightness, 1.0);
+        div().px(px(CARD_INSET)).child(
+            focusable(
+                h_flex()
+                    .id(ElementId::Name(id.clone().into()))
+                    .test_support(),
+                title.clone(),
+            )
+            .relative()
+            .cursor_pointer()
+            .px(px(ROW_PADDING))
+            .py_1p5()
+            .gap_3()
+            .items_stretch()
+            .rounded(px(RADIUS))
+            // The Event marking now sits on the sidebar color, a shade lighter than a
+            // selected row's fill.
+            .when(current.is_some() && !selected, |row| row.bg(theme.sidebar))
+            .when(selected, |row| row.bg(theme.secondary))
+            // The hover fill stays while the row's context menu is open.
+            .when(menu_open && !selected, |row| row.bg(hover))
+            .when(!selected, |row| row.hover(move |style| style.bg(hover)))
+            .on_click(move |_, window, cx| select(&row, window, cx))
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    menu(&menu_row, event.position, window, cx)
+                },
+            )
+            // The part of the Event that has passed fills the card from its leading edge.
+            .when_some(current.as_ref(), |row, current| {
+                row.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .w(relative(current.progress))
+                        .rounded(px(RADIUS))
+                        .bg(passed),
+                )
+            })
+            .child(div().flex_shrink_0().w(px(BAR)).rounded_full().bg(color))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_sm().truncate().child(title))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(time),
+                    ),
+            )
+            .children(current.and_then(|current| current.left).map(|left| {
+                div()
+                    .flex_shrink_0()
+                    .self_center()
+                    .text_xs()
+                    .font_medium()
+                    .text_color(accent.opacity(TIME_LEFT_OPACITY))
+                    .child(left)
+            })),
+        )
+    };
     let event_row = |event: &Event, current: Option<Current>| {
         let color = colors
             .get(&event.calendar_id)
@@ -175,13 +199,7 @@ pub(super) fn render_row(
         } else {
             event.title.clone()
         };
-        selectable(
-            format!("agenda-event-{}", event.id),
-            color,
-            title,
-            time_label(&event.when),
-            current,
-        )
+        selectable(color, title, time_label(&event.when), current)
     };
     let item = div().px(px(CONTENT_PADDING));
     match row {
@@ -204,7 +222,6 @@ pub(super) fn render_row(
         Row::Event(event) => event_row(event, None).into_any_element(),
         // No Account color: a Quick note belongs to none.
         Row::QuickNote(note) => selectable(
-            format!("agenda-note-{}", note.id),
             theme.muted_foreground.opacity(0.5),
             note.label.clone(),
             note.at.format("%H:%M").to_string(),
@@ -216,7 +233,7 @@ pub(super) fn render_row(
             .text_xs()
             .text_color(theme.muted_foreground)
             .child(if alone {
-                "No past Events"
+                "No notes yet"
             } else {
                 "End of Agenda"
             })
@@ -334,10 +351,12 @@ mod tests {
     use std::collections::HashMap;
     use std::rc::Rc;
 
-    /// Stands in for the Agenda list, counting the rows it is asked to select.
+    /// Stands in for the Agenda list, counting the rows it is asked to select, and those it is
+    /// asked to open the context menu of.
     #[derive(Default)]
     struct List {
         selected: Vec<Row>,
+        menus: Vec<Row>,
     }
 
     impl Render for List {
@@ -350,21 +369,30 @@ mod tests {
             let item = RowItem {
                 alone: true,
                 selected: false,
+                menu_open: false,
                 now: Local::now(),
                 now_hover: Rc::default(),
             };
             let list = cx.entity().downgrade();
+            let menus = list.clone();
             let select = Rc::new(move |row: &Row, _: &mut Window, cx: &mut gpui_kit::App| {
                 let _ = list.update(cx, |list, _| list.selected.push(row.clone()));
             });
+            let menu = Rc::new(
+                move |row: &Row, _, _: &mut Window, cx: &mut gpui_kit::App| {
+                    let _ = menus.update(cx, |list, _| list.menus.push(row.clone()));
+                },
+            );
             div()
                 .size_full()
-                .child(render_row(&row, item, &HashMap::new(), select, cx))
+                .child(render_row(&row, item, &HashMap::new(), select, menu, cx))
         }
     }
 
     #[gpui_kit::test]
-    fn a_quick_note_row_selects_on_click_enter_and_space(cx: &mut TestAppContext) {
+    fn a_quick_note_row_selects_on_click_enter_and_space_and_opens_its_menu_on_right_click(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(gpui_kit::init);
         let (handle, list) = cx
             .update(|cx| {
@@ -388,6 +416,7 @@ mod tests {
             window.click("agenda-note-kickoff", cx);
             window.press("enter", cx);
             window.press("space", cx);
+            window.right_click("agenda-note-kickoff", cx);
         })
         .unwrap_or_else(|error| panic!("update test window: {error}"));
 
@@ -395,6 +424,9 @@ mod tests {
             let selected = &list.read(cx).selected;
             assert_eq!(selected.len(), 3);
             assert!(matches!(&selected[0], Row::QuickNote(note) if note.id == "kickoff"));
+            // A right click opens its context menu and does not select it.
+            let menus = &list.read(cx).menus;
+            assert!(matches!(menus.as_slice(), [Row::QuickNote(note)] if note.id == "kickoff"));
         });
     }
 }

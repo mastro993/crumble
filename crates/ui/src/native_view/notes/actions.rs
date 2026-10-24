@@ -75,6 +75,7 @@ impl NativeView {
             items.push(
                 MenuItem::new("note-delete-recording", "Delete recording")
                     .icon("delete")
+                    .destructive()
                     .on_select(act(&view, move |view, window, cx| {
                         view.confirm_delete_recording(id.clone(), window, cx)
                     })),
@@ -83,6 +84,7 @@ impl NativeView {
         items.push(
             MenuItem::new("note-delete", "Delete note")
                 .icon("delete")
+                .destructive()
                 .on_select(act(&view, move |view, window, cx| {
                     view.confirm_delete_note(shown.clone(), window, cx)
                 })),
@@ -224,7 +226,12 @@ impl NativeView {
     }
 
     /// Asks before deleting the Note `id`, as nothing brings it back.
-    fn confirm_delete_note(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in super::super) fn confirm_delete_note(
+        &mut self,
+        id: NoteId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let view = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, id) = (view.clone(), id.clone());

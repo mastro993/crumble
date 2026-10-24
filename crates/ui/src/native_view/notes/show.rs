@@ -149,6 +149,7 @@ impl NativeView {
             }
         };
         if event.is_some() {
+            self.agenda.event_note_changed();
             self.show_note(Some(note), window, cx);
         } else {
             self.agenda.select_new_quick_note(note);
@@ -158,26 +159,31 @@ impl NativeView {
         memo.update(cx, |input, cx| input.focus(window, cx));
     }
 
-    /// Deletes the shown Note; a Quick note's row leaves the Agenda.
+    /// Deletes the Note `id`, shown or not; its row leaves the Agenda, unless it is an Event's
+    /// that is upcoming or In progress Today.
     pub(super) fn delete_note(&mut self, id: &NoteId, window: &mut Window, cx: &mut Context<Self>) {
-        if self
+        let shown = self
             .note_detail
             .note
             .as_ref()
-            .is_none_or(|note| &note.id != id)
-        {
-            return;
-        }
+            .is_some_and(|note| &note.id == id);
         // The Recording goes with its Note: stop and keep it, so it stays whole if the delete
         // fails, and close its files before they go. It is not transcribed, as it is going.
         if self.is_recording(id) {
             let _ = self.stop_recording(cx);
         }
-        self.note_detail.playback = None;
+        if shown {
+            self.note_detail.playback = None;
+        }
         self.cancel_transcription(id);
         if let Err(error) = self.notes.delete(id, Utc::now()) {
             eprintln!("Could not delete the Note: {error}");
-            self.note_detail.save_failed = true;
+            if shown {
+                self.note_detail.save_failed = true;
+            } else {
+                // A toast, as the Note is not shown to say it under.
+                window.push_notification(Notification::error("Couldn't delete the note"), cx);
+            }
             cx.notify();
             return;
         }
@@ -187,12 +193,18 @@ impl NativeView {
         detail.unsaved_titles.remove(id);
         detail.unsaved_memos.remove(id);
         detail.unsaved_recordings.remove(id);
-        detail.memo_dirty = false;
-        if matches!(detail.subject, Some(Subject::QuickNote(_))) {
+        if self.agenda.quick_note(id).is_some() {
             self.agenda.quick_note_deleted(id);
+        } else {
+            self.agenda.event_note_changed();
         }
         // Clears "Couldn't save" from an earlier failed attempt.
         self.retry_unsaved(cx);
-        self.show_note(None, window, cx);
+        if shown {
+            self.note_detail.memo_dirty = false;
+            self.show_note(None, window, cx);
+        } else {
+            cx.notify();
+        }
     }
 }

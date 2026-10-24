@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 #[cfg(test)]
 mod fixtures;
+mod noted;
 mod queries;
 mod recording;
 mod rows;
@@ -101,6 +102,15 @@ pub enum Track {
     Mic,
     /// The Mac's sound: the others on the call.
     System,
+}
+
+/// What shows a Note's folder in Finder, from [`Notes::folder_entry`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FolderEntry {
+    /// An audio file of its Recording, to select in its folder.
+    File(PathBuf),
+    /// The folder, empty, to open.
+    Folder(PathBuf),
 }
 
 /// What the database keeps about a Note's Recording; the audio is in [`Notes::recording_dir`].

@@ -59,7 +59,7 @@ fn labels(rows: &[Row]) -> Vec<String> {
 }
 
 #[test]
-fn events_up_to_the_end_of_today_are_listed_newest_first() {
+fn events_are_listed_newest_first() {
     let now = at(15, 12, 0);
     let events = [
         timed("Standup", at(15, 9, 0), at(15, 9, 15)),
@@ -71,8 +71,10 @@ fn events_up_to_the_end_of_today_are_listed_newest_first() {
         all_day("Trip", 13, 14),
     ];
     assert_eq!(
-        labels(&rows(&events, &[], now, date(1), true)),
+        labels(&rows(&events, &[], all, now, date(1), true)),
         [
+            "16",
+            "Tomorrow",
             "15",
             "Later today",
             "--",
@@ -101,7 +103,7 @@ fn the_last_in_progress_event_marks_now() {
         timed("Dinner", at(14, 19, 0), at(14, 20, 0)),
     ];
     assert_eq!(
-        labels(&rows(&events, &[], now, date(1), false)),
+        labels(&rows(&events, &[], all, now, date(1), false)),
         [
             "15", "Retro", "Lunch", "--", "Workshop", "Flight *", "Call", "14", "Dinner"
         ]
@@ -110,58 +112,53 @@ fn the_last_in_progress_event_marks_now() {
     // An Event starting now is In progress, no longer upcoming.
     let starting = [timed("Standup", at(15, 10, 0), at(15, 10, 15))];
     assert_eq!(
-        labels(&rows(&starting, &[], now, date(1), false)),
+        labels(&rows(&starting, &[], all, now, date(1), false)),
         ["15", "--", "Standup *"]
     );
 
     // Only In progress Events today: the Now line sits above them and the last marks now.
     let only = [timed("Workshop", at(15, 9, 0), at(15, 12, 0))];
     assert_eq!(
-        labels(&rows(&only, &[], now, date(1), false)),
+        labels(&rows(&only, &[], all, now, date(1), false)),
         ["15", "--", "Workshop *"]
     );
 
     // An Event ends at its end time: it is no longer In progress then.
     let ended = [timed("Workshop", at(15, 9, 0), at(15, 10, 0))];
     assert_eq!(
-        labels(&rows(&ended, &[], now, date(1), false)),
+        labels(&rows(&ended, &[], all, now, date(1), false)),
         ["15", "--", "Workshop"]
     );
 }
 
+/// Every Event has a Note.
+fn all(_: &Event) -> bool {
+    true
+}
+
 #[test]
-fn tomorrow_shows_on_top_once_today_has_nothing_left() {
+fn only_today_s_upcoming_events_and_those_with_a_note_are_listed() {
     let events = [
         timed("Standup", at(15, 9, 0), at(15, 9, 15)),
-        timed("Review", at(15, 17, 0), at(15, 18, 0)),
+        timed("Review", at(15, 11, 0), at(15, 12, 30)),
+        timed("Retro", at(15, 17, 0), at(15, 18, 0)),
+        all_day("Holiday", 15, 15),
         timed("Breakfast", at(16, 8, 0), at(16, 9, 0)),
         timed("Planning", at(16, 10, 0), at(16, 11, 0)),
-        all_day("Offsite", 16, 17),
-        all_day("Later", 17, 17),
+        timed("Dinner", at(14, 19, 0), at(14, 20, 0)),
+        timed("Lunch", at(14, 12, 0), at(14, 13, 0)),
     ];
-    // An upcoming Event is left today: Tomorrow waits.
+    let noted = |event: &Event| ["Standup", "Planning", "Dinner"].contains(&event.title.as_str());
     assert_eq!(
-        labels(&rows(&events, &[], at(15, 12, 0), date(1), false)),
-        ["15", "Review", "--", "Standup"]
-    );
-    // One In progress also keeps Today on top.
-    assert_eq!(
-        labels(&rows(&events, &[], at(15, 17, 30), date(1), false)),
-        ["15", "--", "Review *", "Standup"]
-    );
-    // Nothing left today: Tomorrow tops the list, but not the day after.
-    assert_eq!(
-        labels(&rows(&events, &[], at(15, 18, 0), date(1), false)),
+        labels(&rows(&events, &[], noted, at(15, 12, 0), date(1), false)),
         [
-            "16",
-            "Offsite",
-            "Planning",
-            "Breakfast",
-            "15",
-            "--",
-            "Review",
-            "Standup"
+            "16", "Planning", "15", "Retro", "--", "Review *", "Standup", "14", "Dinner"
         ]
+    );
+    // Once Today has nothing left, Tomorrow still shows only what has a Note.
+    assert_eq!(
+        labels(&rows(&events, &[], noted, at(15, 18, 0), date(1), false)),
+        ["16", "Planning", "15", "--", "Standup", "14", "Dinner"]
     );
 }
 
@@ -193,13 +190,13 @@ fn time_left_counts_started_minutes_until_the_end() {
 fn days_before_the_read_ones_show_only_while_in_progress() {
     let flight = [timed("Flight", at(9, 22, 0), at(15, 11, 0))];
     assert_eq!(
-        labels(&rows(&flight, &[], at(15, 10, 0), date(10), false)),
+        labels(&rows(&flight, &[], all, at(15, 10, 0), date(10), false)),
         ["15", "--", "Flight *"]
     );
     // Once it ends, its start day is not among those read, so it leaves the list.
-    assert!(rows(&flight, &[], at(15, 12, 0), date(10), false).is_empty());
+    assert!(rows(&flight, &[], all, at(15, 12, 0), date(10), false).is_empty());
     assert_eq!(
-        labels(&rows(&flight, &[], at(15, 12, 0), date(9), false)),
+        labels(&rows(&flight, &[], all, at(15, 12, 0), date(9), false)),
         ["09", "Flight"]
     );
 }
@@ -208,11 +205,11 @@ fn days_before_the_read_ones_show_only_while_in_progress() {
 fn days_without_today_have_no_now_line() {
     let events = [timed("Dinner", at(14, 19, 0), at(14, 20, 0))];
     assert_eq!(
-        labels(&rows(&events, &[], at(15, 10, 0), date(1), false)),
+        labels(&rows(&events, &[], all, at(15, 10, 0), date(1), false)),
         ["14", "Dinner"]
     );
     assert_eq!(
-        labels(&rows(&[], &[], at(15, 10, 0), date(1), true)),
+        labels(&rows(&[], &[], all, at(15, 10, 0), date(1), true)),
         ["end"]
     );
 }
@@ -241,7 +238,7 @@ fn quick_notes_join_the_events_at_their_time() {
         quick_note("Too old", at(9, 8, 0)),
     ];
     assert_eq!(
-        labels(&rows(&events, &notes, now, date(10), false)),
+        labels(&rows(&events, &notes, all, now, date(10), false)),
         [
             "15",
             "--",
@@ -258,7 +255,7 @@ fn quick_notes_join_the_events_at_their_time() {
     );
     // Quick notes alone still get their day header and the Now line.
     assert_eq!(
-        labels(&rows(&[], &notes[..1], now, date(10), false)),
+        labels(&rows(&[], &notes[..1], all, now, date(10), false)),
         ["15", "--", "Ideas"]
     );
 }

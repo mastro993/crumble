@@ -1,9 +1,11 @@
-//! Agenda page: every Event up to the end of Today and every Quick note, newest first, in a list
-//! that reads further into the past as it scrolls toward its end. Selecting a row, or clicking an
+//! Agenda page: Today's upcoming and In progress Events, every other Event that has a Note, and
+//! every Quick note, newest first, in a list that reads further into the past as it scrolls
+//! toward its end. Selecting a row, or clicking an
 //! Event in the Calendar page, shows its Note beside the list.
 
 mod now_hover;
 mod row;
+mod row_menu;
 mod view;
 
 use super::NativeView;
@@ -20,6 +22,7 @@ use gpui_kit::{
 };
 use now_hover::NowHover;
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -40,6 +43,8 @@ pub(super) struct AgendaPage {
     pub(super) events: Entity<AgendaEvents>,
     /// The Quick notes of the days the Events cover, newest first.
     quick_notes: Vec<Note>,
+    /// The ids of the Events read that have a Note.
+    noted: HashSet<String>,
     pub(super) selected: Option<Selected>,
     /// Whether the list still has to scroll the selected row into view, after an Event was
     /// opened from outside the list.
@@ -82,6 +87,7 @@ impl AgendaPage {
         Self {
             events,
             quick_notes: Vec::new(),
+            noted: HashSet::new(),
             selected: None,
             reveal: false,
             rows: Rc::default(),
@@ -129,10 +135,18 @@ impl AgendaPage {
         self.built = None;
     }
 
-    /// Drops a deleted Quick note's row and clears the selection.
+    /// Builds the rows again after an Event's Note was made or deleted, as only Events with a
+    /// Note are listed beside Today's upcoming ones.
+    pub(super) fn event_note_changed(&mut self) {
+        self.built = None;
+    }
+
+    /// Drops a deleted Quick note's row, and the selection when it was on it.
     pub(super) fn quick_note_deleted(&mut self, id: &NoteId) {
         self.quick_notes.retain(|note| &note.id != id);
-        self.selected = None;
+        if matches!(&self.selected, Some(Selected::QuickNote(selected)) if selected == id) {
+            self.selected = None;
+        }
         self.built = None;
     }
 
