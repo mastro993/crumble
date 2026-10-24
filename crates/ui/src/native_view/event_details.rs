@@ -1,10 +1,11 @@
 //! An Event's details: the hover card over its Calendar chip, and the buttons the Agenda page's
 //! header shows for the selected Event. Both are read-only, as Crumble never changes Events; a
-//! meeting link becomes a Join button.
+//! meeting link becomes a Join button while the Event is today and not over.
 
 use super::card::click_card;
 use super::controls::{app_icon, button};
-use crumble_calendar::events::when_text;
+use chrono::{DateTime, Local};
+use crumble_calendar::events::{joinable, when_text};
 use crumble_calendar::links::{one_paragraph, parse_links};
 use crumble_eventkit::{Event, Join, Participant, Response};
 use crumble_theme::sidebar::DETAIL_SIZE;
@@ -35,6 +36,11 @@ fn title(event: &Event) -> SharedString {
     } else {
         event.title.clone().into()
     }
+}
+
+/// The Event's meeting link, while it can be joined at `now`.
+fn join_at(event: &Event, now: DateTime<Local>) -> Option<&Join> {
+    event.join.as_ref().filter(|_| joinable(event, now))
 }
 
 /// A button that opens the meeting, named after its service.
@@ -140,8 +146,8 @@ fn linked_text(id: &'static str, text: &str, cx: &App) -> InteractiveText {
 }
 
 /// The hover card's content: title, when, the start of the description, the first
-/// participants, and a Join button.
-pub(super) fn card(event: &Event, cx: &App) -> Div {
+/// participants, and a Join button while it can be joined at `now`.
+pub(super) fn card(event: &Event, now: DateTime<Local>, cx: &App) -> Div {
     let theme = cx.theme();
     let more = event.participants.len().saturating_sub(CARD_PARTICIPANTS);
     v_flex()
@@ -193,17 +199,13 @@ pub(super) fn card(event: &Event, cx: &App) -> Div {
                     }),
             )
         })
-        .children(
-            event
-                .join
-                .as_ref()
-                .map(|join| join_button("event-card-join", join).w_full()),
-        )
+        .children(join_at(event, now).map(|join| join_button("event-card-join", join).w_full()))
 }
 
-/// A button for each of the description, the participants, and joining. The description and
-/// the participants open in boxes that close when clicked away from.
-pub(super) fn buttons(event: &Event) -> Div {
+/// A button for each of the description, the participants, and joining while it can be joined
+/// at `now`. The description and the participants open in boxes that close when clicked away
+/// from.
+pub(super) fn buttons(event: &Event, now: DateTime<Local>) -> Div {
     let description = event.description.clone().map(|description| {
         click_card(
             "event-description",
@@ -253,12 +255,7 @@ pub(super) fn buttons(event: &Event) -> Div {
         .gap_1()
         .children(description)
         .children(participants)
-        .children(
-            event
-                .join
-                .as_ref()
-                .map(|join| join_button("event-header-join", join).small()),
-        )
+        .children(join_at(event, now).map(|join| join_button("event-header-join", join).small()))
 }
 
 #[cfg(test)]
@@ -285,7 +282,7 @@ mod tests {
                 .size_full()
                 .flex()
                 .items_start()
-                .child(buttons(&self.0))
+                .child(buttons(&self.0, chrono::Local::now()))
         }
     }
 

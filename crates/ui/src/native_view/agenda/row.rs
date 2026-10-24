@@ -25,6 +25,8 @@ use std::time::Instant;
 /// Thickness of the Now line, and the height of the strip around it the pointer hovers to show
 /// the time.
 const NOW_LINE: f32 = 2.0;
+/// Diameter of the dot that starts the Now line, as on the Calendar's current time line.
+const NOW_DOT: f32 = 8.0;
 const NOW_ROW: f32 = 16.0;
 /// Length of each rounded dash of the Now line, and the gap between two.
 const NOW_DASH: f32 = 6.0;
@@ -52,7 +54,7 @@ const TIME_LEFT_OPACITY: f32 = 0.5;
 /// Space between an Event's card and the column's edges.
 const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
-/// Where a row sits in the Agenda list: `alone` says it holds nothing else; `menu_open` says
+/// Where a row sits in the Agenda list: `alone` says it lists no Event or Quick note; `menu_open` says
 /// its context menu is open; `now` is the time the Event marking now shows its progress at and
 /// the Now line shows; `now_hover` says whether the pointer is on the Now line.
 pub(super) struct RowItem {
@@ -211,6 +213,12 @@ pub(super) fn render_row(
             .child(day_label(*day, now.date_naive()))
             .into_any_element(),
         Row::Now => now_line(now, now_hover, cx).into_any_element(),
+        Row::NothingLeft => item
+            .pb_1()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child("No more events today")
+            .into_any_element(),
         Row::Current(event) => event_row(
             event,
             Some(Current {
@@ -295,9 +303,11 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
                 .on_hover(track_now_hover(hover)),
         )
         .child(
+            // Starts where the day headers and the Event color bars do and runs on to the column's
+            // trailing edge.
             div()
                 .absolute()
-                .left_0()
+                .left(px(CONTENT_PADDING))
                 .right_0()
                 .top(px(NOW_SPACE))
                 .h(px(NOW_LINE))
@@ -324,6 +334,15 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
                     )
                     .size_full(),
                 ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(CONTENT_PADDING - NOW_DOT / 2.0))
+                .top(px(NOW_SPACE + (NOW_LINE - NOW_DOT) / 2.0))
+                .size(px(NOW_DOT))
+                .rounded_full()
+                .bg(red),
         )
         .children(label)
 }

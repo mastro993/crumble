@@ -75,7 +75,7 @@ _Avoid_: preferences, options
 ### Agenda
 
 **Agenda page**:
-The page that lists Today's upcoming and In progress Events, every other Event that has a Note, and every Quick note, newest first, grouped by day, with a line marking now. Selecting a row, or clicking an Event in the Calendar page, shows everything about it and its Note beside the list.
+The page that lists Today, always, with its upcoming and In progress Events, the timed Events of the next day that has any, every other Event that has a Note, and every Quick note, newest first, grouped by day, with a line marking now. Selecting a row, or clicking an Event in the Calendar page, shows everything about it and its Note beside the list.
 _Avoid_: history, timeline, feed
 
 **Agenda list**:
@@ -141,7 +141,7 @@ _Avoid_: offline model, speech model, downloaded model
 - **Weekend** stays Saturday and Sunday whatever the **First day of week** is
 - An **Account** has one or more **Calendars**; a **Calendar** has many **Events**
 - The **Calendar page** shows **Events** from every **Calendar** that is not **Disabled** and whose **Account** is neither **Disabled** nor **Hidden**, inside the visible **Period**
-- The **Agenda page** shows the same **Events** as the **Calendar page** would, but only Today's upcoming and In progress ones and those with a **Note**, whatever the **Focused date**
+- The **Agenda page** shows the same **Events** as the **Calendar page** would, but only Today's upcoming and In progress ones, the next day's timed ones, and those with a **Note**, whatever the **Focused date**
 - Disabling an **Account** leaves out all its **Calendars** but keeps each **Calendar**'s own setting
 - **Disabled** lasts until the user changes it in Settings; **Hidden** lasts until the user changes it in the **Calendars section**
 - Only an **Account** can be **Hidden**; a **Calendar** can only be **Disabled**
