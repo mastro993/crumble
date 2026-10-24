@@ -52,7 +52,7 @@ const TIME_LEFT_OPACITY: f32 = 0.5;
 /// Space between an Event's card and the column's edges.
 const CARD_INSET: f32 = CONTENT_PADDING - ROW_PADDING;
 
-/// Where a row sits in the Agenda list: `alone` says it holds nothing else; `menu_open` says
+/// Where a row sits in the Agenda list: `alone` says it lists no Event or Quick note; `menu_open` says
 /// its context menu is open; `now` is the time the Event marking now shows its progress at and
 /// the Now line shows; `now_hover` says whether the pointer is on the Now line.
 pub(super) struct RowItem {
@@ -295,9 +295,11 @@ fn now_line(now: DateTime<Local>, hover: Rc<Cell<NowHover>>, cx: &App) -> impl I
                 .on_hover(track_now_hover(hover)),
         )
         .child(
+            // Starts where the day headers and the Event color bars do and runs on to the column's
+            // trailing edge.
             div()
                 .absolute()
-                .left_0()
+                .left(px(CONTENT_PADDING))
                 .right_0()
                 .top(px(NOW_SPACE))
                 .h(px(NOW_LINE))

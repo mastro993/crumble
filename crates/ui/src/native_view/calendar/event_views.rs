@@ -6,7 +6,7 @@ use super::NativeView;
 use super::grids::HOUR_HEIGHT;
 use crate::native_view::card::hover_card;
 use crate::native_view::keyboard::focusable;
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use crumble_calendar::events::{columns, day_order, minutes_on, on_day};
 use crumble_eventkit::{Calendar, Event, When};
 use gpui_kit::base::TestSupportExt;
@@ -168,7 +168,7 @@ impl RenderOnce for EventChip {
         hover_card(
             self.id,
             chip,
-            move |_, cx| event_details::card(&shown.event, cx).into_any_element(),
+            move |_, cx| event_details::card(&shown.event, Local::now(), cx).into_any_element(),
             window,
             cx,
         )

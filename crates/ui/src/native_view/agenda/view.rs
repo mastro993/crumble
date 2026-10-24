@@ -170,7 +170,7 @@ impl NativeView {
             // Empty header space still drags and zooms the window.
             .child(div().flex_1())
             .children(match &self.agenda.selected {
-                Some(Selected::Event(event)) => Some(event_details::buttons(event)),
+                Some(Selected::Event(event)) => Some(event_details::buttons(event, Local::now())),
                 _ => None,
             })
             .children(
@@ -209,6 +209,10 @@ impl NativeView {
                     .collect(),
             );
             let rows = self.agenda.rows.clone();
+            // Today's header and Now line always show, so the footer looks for anything else.
+            let alone = !rows
+                .iter()
+                .any(|row| matches!(row, Row::Event(_) | Row::Current(_) | Row::QuickNote(_)));
             let selected = rows.iter().position(|row| self.agenda.is_selected(row));
             let menu_open = self.menu.as_ref().and_then(|menu| {
                 rows.iter()
@@ -225,7 +229,7 @@ impl NativeView {
                     return div().into_any_element();
                 };
                 let item = RowItem {
-                    alone: rows.len() == 1,
+                    alone,
                     selected: selected == Some(index),
                     menu_open: menu_open == Some(index),
                     now,

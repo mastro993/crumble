@@ -1,7 +1,8 @@
 //! Where Events fall on the Calendar page: which days they touch, the part of a day a timed
-//! Event covers, side-by-side columns for overlapping ones, and the text that says when.
+//! Event covers, side-by-side columns for overlapping ones, the text that says when, and whether
+//! it can be joined.
 
-use chrono::{Days, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Days, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use crumble_eventkit::{Event, When};
 use std::borrow::Borrow;
 
@@ -17,6 +18,16 @@ pub fn on_day(event: &Event, date: NaiveDate) -> bool {
         When::AllDay { first, last } => first <= date && date <= last,
         When::Timed { .. } => minutes_on(event, date).is_some(),
     }
+}
+
+/// Whether `event` offers its Join button at `now`: it happens today and has not ended, so an
+/// Event that is over, or on another day, has none.
+pub fn joinable(event: &Event, now: DateTime<Local>) -> bool {
+    on_day(event, now.date_naive())
+        && match event.when {
+            When::AllDay { .. } => true,
+            When::Timed { end, .. } => now < end,
+        }
 }
 
 /// The minutes after midnight a timed Event covers on `date`, clipped to that day.
@@ -152,7 +163,7 @@ pub fn when_text(when: &When) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{columns, day_order, latest, minutes_on, on_day, when_text};
+    use super::{columns, day_order, joinable, latest, minutes_on, on_day, when_text};
     use chrono::{Local, NaiveDate, TimeZone, Utc};
     use crumble_eventkit::{Event, Occurrence, When};
 
@@ -224,6 +235,26 @@ mod tests {
         assert!(on_day(&trip, date(13)) && on_day(&trip, date(15)));
         assert!(!on_day(&trip, date(16)));
         assert_eq!(minutes_on(&trip, date(13)), None);
+    }
+
+    #[test]
+    fn only_todays_events_not_yet_ended_can_be_joined() {
+        let now = Local
+            .with_ymd_and_hms(2026, 10, 13, 12, 0, 0)
+            .earliest()
+            .unwrap_or_default();
+        assert!(joinable(&timed("Later", (13, 15, 0), (13, 16, 0)), now));
+        assert!(joinable(&timed("Running", (13, 11, 30), (13, 12, 30)), now));
+        assert!(joinable(&timed("Overnight", (12, 23, 0), (13, 13, 0)), now));
+        assert!(joinable(&all_day("Offsite", 12, 13), now));
+        assert!(!joinable(&timed("Ended", (13, 9, 0), (13, 12, 0)), now));
+        assert!(!joinable(
+            &timed("Yesterday", (12, 15, 0), (12, 16, 0)),
+            now
+        ));
+        assert!(!joinable(&timed("Tomorrow", (14, 9, 0), (14, 10, 0)), now));
+        assert!(!joinable(&all_day("Last week", 5, 9), now));
+        assert!(!joinable(&all_day("Next week", 19, 23), now));
     }
 
     #[test]

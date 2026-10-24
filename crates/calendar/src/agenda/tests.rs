@@ -152,13 +152,48 @@ fn only_today_s_upcoming_events_and_those_with_a_note_are_listed() {
     assert_eq!(
         labels(&rows(&events, &[], noted, at(15, 12, 0), date(1), false)),
         [
-            "16", "Planning", "15", "Retro", "--", "Review *", "Standup", "14", "Dinner"
+            "16",
+            "Planning",
+            "Breakfast",
+            "15",
+            "Retro",
+            "--",
+            "Review *",
+            "Standup",
+            "14",
+            "Dinner"
         ]
     );
-    // Once Today has nothing left, Tomorrow still shows only what has a Note.
+    // Once Today has nothing left, it still shows its Now line.
     assert_eq!(
         labels(&rows(&events, &[], noted, at(15, 18, 0), date(1), false)),
-        ["16", "Planning", "15", "--", "Standup", "14", "Dinner"]
+        [
+            "16",
+            "Planning",
+            "Breakfast",
+            "15",
+            "--",
+            "Standup",
+            "14",
+            "Dinner"
+        ]
+    );
+}
+
+#[test]
+fn the_next_day_with_timed_events_lists_them_all() {
+    let events = [
+        all_day("Holiday", 16, 16),
+        timed("Kickoff", at(19, 9, 0), at(19, 10, 0)),
+        timed("Sync", at(19, 14, 0), at(19, 15, 0)),
+        timed("Review", at(21, 10, 0), at(21, 11, 0)),
+        timed("Retro", at(23, 10, 0), at(23, 11, 0)),
+    ];
+    let noted = |event: &Event| event.title == "Retro";
+    // The weekend and an all-day Event are skipped; a later day shows only what has a Note.
+    assert_eq!(
+        labels(&rows(&events, &[], noted, at(15, 12, 0), date(1), false)),
+        ["23", "Retro", "19", "Sync", "Kickoff", "15", "--"]
     );
 }
 
@@ -194,23 +229,31 @@ fn days_before_the_read_ones_show_only_while_in_progress() {
         ["15", "--", "Flight *"]
     );
     // Once it ends, its start day is not among those read, so it leaves the list.
-    assert!(rows(&flight, &[], all, at(15, 12, 0), date(10), false).is_empty());
+    assert_eq!(
+        labels(&rows(&flight, &[], all, at(15, 12, 0), date(10), false)),
+        ["15", "--"]
+    );
     assert_eq!(
         labels(&rows(&flight, &[], all, at(15, 12, 0), date(9), false)),
-        ["09", "Flight"]
+        ["15", "--", "09", "Flight"]
     );
 }
 
 #[test]
-fn days_without_today_have_no_now_line() {
+fn today_shows_its_now_line_even_when_it_lists_nothing() {
     let events = [timed("Dinner", at(14, 19, 0), at(14, 20, 0))];
     assert_eq!(
         labels(&rows(&events, &[], all, at(15, 10, 0), date(1), false)),
-        ["14", "Dinner"]
+        ["15", "--", "14", "Dinner"]
     );
     assert_eq!(
         labels(&rows(&[], &[], all, at(15, 10, 0), date(1), true)),
-        ["end"]
+        ["15", "--", "end"]
+    );
+    let tomorrow = [timed("Planning", at(16, 10, 0), at(16, 11, 0))];
+    assert_eq!(
+        labels(&rows(&tomorrow, &[], all, at(15, 10, 0), date(1), false)),
+        ["16", "Planning", "15", "--"]
     );
 }
 
@@ -296,16 +339,21 @@ fn span(from: NaiveDate, to: NaiveDate) -> Span {
     }
 }
 
+/// The day after the last one read ahead of Today, the 15th.
+fn ahead() -> NaiveDate {
+    date(15) + Days::new(31)
+}
+
 fn days_before(day: NaiveDate, days: u64) -> NaiveDate {
     day.checked_sub_days(Days::new(days)).unwrap_or(day)
 }
 
 #[test]
-fn the_first_read_covers_the_last_thirty_days_and_tomorrow() {
+fn the_first_read_covers_the_last_thirty_days_and_the_thirty_after_today() {
     let ids = vec!["work".to_owned()];
     assert_eq!(
         next_read(None, false, false, false, date(15), ids),
-        Some((span(date(16) - Days::new(30), date(17)), false))
+        Some((span(date(16) - Days::new(30), ahead()), false))
     );
 }
 
@@ -314,15 +362,15 @@ fn a_change_reads_the_covered_days_again_back_to_the_horizon() {
     let today = date(15);
     let horizon = horizon(today);
     let ids = || vec!["work".to_owned()];
-    let current = span(horizon, date(17));
-    let again = Some((span(horizon, date(17)), false));
+    let current = span(horizon, ahead());
+    let again = Some((span(horizon, ahead()), false));
     // EventKit changed.
     assert_eq!(
         next_read(Some(&current), true, true, false, today, ids()),
         again
     );
     // A new day: the horizon moved, so the oldest day falls out.
-    let yesterdays = span(days_before(horizon, 1), date(16));
+    let yesterdays = span(days_before(horizon, 1), days_before(ahead(), 1));
     assert_eq!(
         next_read(Some(&yesterdays), false, false, false, today, ids()),
         again
@@ -333,7 +381,7 @@ fn a_change_reads_the_covered_days_again_back_to_the_horizon() {
         Some((
             Span {
                 calendar_ids: vec![],
-                ..span(horizon, date(17))
+                ..span(horizon, ahead())
             },
             false
         ))
@@ -345,18 +393,18 @@ fn older_reads_stop_at_the_horizon_and_wait_for_the_one_under_way() {
     let today = date(15);
     let horizon = horizon(today);
     let ids = || vec!["work".to_owned()];
-    let recent = span(date(1), date(17));
+    let recent = span(date(1), ahead());
     assert_eq!(
         next_read(Some(&recent), false, false, true, today, ids()),
-        Some((span(days_before(date(1), 30), date(17)), true))
+        Some((span(days_before(date(1), 30), ahead()), true))
     );
     // The last chunk ends at the horizon, and nothing is read past it.
-    let near = span(horizon + Days::new(10), date(17));
+    let near = span(horizon + Days::new(10), ahead());
     assert_eq!(
         next_read(Some(&near), false, false, true, today, ids()),
-        Some((span(horizon, date(17)), true))
+        Some((span(horizon, ahead()), true))
     );
-    let done = span(horizon, date(17));
+    let done = span(horizon, ahead());
     assert_eq!(
         next_read(Some(&done), false, false, true, today, ids()),
         None
