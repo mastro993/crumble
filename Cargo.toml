@@ -70,7 +70,7 @@ serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.11"
 fs4 = "1.1"
 # Runs Local Models: transcribe.cpp on ggml with Metal (ADR 0010). Builds C++ with CMake.
-transcribe-cpp = "0.4"
+transcribe-cpp = "0.4.1"
 # API keys in the macOS Keychain (ADR 0007).
 security-framework = "3.7"
 

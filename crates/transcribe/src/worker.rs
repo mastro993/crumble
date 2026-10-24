@@ -11,7 +11,8 @@ use std::process::ExitCode;
 
 use anyhow::{Context, anyhow, bail};
 use transcribe_cpp::{
-    Backend, Model, ModelOptions, RunOptions, Session, TimestampKind, VadOptions, VadSession,
+    Backend, Error, Model, ModelOptions, RunOptions, Session, TimestampKind, Transcript,
+    VadOptions, VadSession,
 };
 
 use crate::chunks::{RATE, chunks};
@@ -147,7 +148,7 @@ fn transcribe(
     if audio.is_empty() {
         return Ok(());
     }
-    let result = session.run(audio, options).context("transcribe")?;
+    let result = finished(session.run(audio, options)).context("transcribe")?;
     let offset = milliseconds(piece.start);
     if result.timestamp_kind == TimestampKind::None || result.segments.is_empty() {
         let text = result.text.trim();
@@ -166,6 +167,27 @@ fn transcribe(
         }
     }
     Ok(())
+}
+
+/// The Transcript of one run. A decode stopped because the Model began repeating itself, or ran
+/// out of room, still keeps what came before; one stuck piece should not lose the whole Recording.
+fn finished(run: Result<Transcript, Error>) -> Result<Transcript, Error> {
+    match run {
+        Err(
+            Error::OutputRepetition {
+                message,
+                partial: Some(partial),
+            }
+            | Error::OutputTruncated {
+                message,
+                partial: Some(partial),
+            },
+        ) => {
+            eprintln!("Transcription worker: kept the text before the stop: {message}");
+            Ok(*partial)
+        }
+        run => run,
+    }
 }
 
 fn sample(at: i64) -> usize {
@@ -190,4 +212,45 @@ fn quit_now() -> ! {
     }
     // SAFETY: `_exit` takes any code and never returns.
     unsafe { _exit(1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finished;
+    use transcribe_cpp::{Error, Transcript};
+
+    fn said(text: &str) -> Transcript {
+        Transcript {
+            text: text.to_owned(),
+            ..Transcript::default()
+        }
+    }
+
+    #[test]
+    fn a_stuck_decode_keeps_the_text_before_it() {
+        let repeated = Error::OutputRepetition {
+            message: "repeating".to_owned(),
+            partial: Some(Box::new(said("Prima di tutto"))),
+        };
+        assert_eq!(finished(Err(repeated)).ok(), Some(said("Prima di tutto")));
+        let truncated = Error::OutputTruncated {
+            message: "budget".to_owned(),
+            partial: Some(Box::new(said("Lo scorso anno"))),
+        };
+        assert_eq!(finished(Err(truncated)).ok(), Some(said("Lo scorso anno")));
+    }
+
+    #[test]
+    fn other_failures_still_fail() {
+        let aborted = Error::Aborted {
+            message: "cancelled".to_owned(),
+            partial: Some(Box::new(said("half"))),
+        };
+        assert!(finished(Err(aborted)).is_err());
+        let empty = Error::OutputRepetition {
+            message: "repeating".to_owned(),
+            partial: None,
+        };
+        assert!(finished(Err(empty)).is_err());
+    }
 }
