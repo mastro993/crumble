@@ -7,7 +7,7 @@ use super::super::event_details;
 use super::super::route::Route;
 use super::super::sidebar::{column, surface};
 use super::Selected;
-use super::row::{RowItem, render_row};
+use super::row::{RowItem, render_row, row_id};
 use chrono::{Local, NaiveDate, Timelike, Utc};
 use crumble_calendar::agenda::{self, QuickNote, Row, horizon};
 use crumble_calendar::{local_midnight, today};
@@ -17,9 +17,9 @@ use crumble_theme::{CONTENT_PADDING, SURFACE_RADIUS};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Sizable, button::ButtonVariants, h_flex};
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, App, Context, Hsla, IntoElement, ParentElement, Styled,
-    Window, div, ease_out_quint, linear_color_stop, linear_gradient, list, prelude::FluentBuilder,
-    px,
+    Animation, AnimationExt, AnyElement, App, Context, Hsla, IntoElement, ParentElement, Pixels,
+    Point, Styled, Window, div, ease_out_quint, linear_color_stop, linear_gradient, list,
+    prelude::FluentBuilder, px,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -37,7 +37,8 @@ const REVEAL_RISE: f32 = 8.0;
 impl NativeView {
     /// Keeps the Agenda current while it shows: reads it the first time, again after the day,
     /// the shown Calendars, or EventKit change, and further back near the end of the list;
-    /// rebuilds the rows each minute so Events join as they start.
+    /// rebuilds the rows each minute so Events move below now as they start and leave as they
+    /// end without a Note.
     pub(in super::super) fn maintain_agenda(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.agenda.step_scroll_to_top(window, cx);
         let sync = self.calendar_sync.read(cx);
@@ -72,6 +73,10 @@ impl NativeView {
             if let Some(quick_notes) = read_quick_notes(notes, from, today) {
                 agenda.quick_notes = quick_notes;
             }
+            match notes.noted(loaded.events().iter().map(|event| &**event)) {
+                Ok(noted) => agenda.noted = noted,
+                Err(error) => eprintln!("Could not read which Events have a Note: {error}"),
+            }
             let quick_notes: Vec<Rc<QuickNote>> = agenda
                 .quick_notes
                 .iter()
@@ -83,7 +88,8 @@ impl NativeView {
                     })
                 })
                 .collect();
-            let rows = agenda::rows(loaded.events(), &quick_notes, now, from, end);
+            let noted = |event: &Event| agenda.noted.contains(&event.id);
+            let rows = agenda::rows(loaded.events(), &quick_notes, noted, now, from, end);
             agenda.set_rows(rows);
             agenda.reselect();
         }
@@ -204,6 +210,10 @@ impl NativeView {
             );
             let rows = self.agenda.rows.clone();
             let selected = rows.iter().position(|row| self.agenda.is_selected(row));
+            let menu_open = self.menu.as_ref().and_then(|menu| {
+                rows.iter()
+                    .position(|row| row_id(row).is_some_and(|id| menu.is_for(&id)))
+            });
             let view = cx.entity().downgrade();
             let now = Local::now();
             let now_hover = self.agenda.now_hover.clone();
@@ -217,14 +227,24 @@ impl NativeView {
                 let item = RowItem {
                     alone: rows.len() == 1,
                     selected: selected == Some(index),
+                    menu_open: menu_open == Some(index),
                     now,
                     now_hover: now_hover.clone(),
                 };
-                let view = view.clone();
+                let selecting = view.clone();
                 let select = Rc::new(move |row: &Row, window: &mut Window, cx: &mut App| {
-                    let _ = view.update(cx, |view, cx| view.select_agenda_row(row, window, cx));
+                    let _ =
+                        selecting.update(cx, |view, cx| view.select_agenda_row(row, window, cx));
                 });
-                render_row(row, item, &colors, select, cx)
+                let view = view.clone();
+                let menu = Rc::new(
+                    move |row: &Row, position: Point<Pixels>, window: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |view, cx| {
+                            view.open_agenda_row_menu(row, position, window, cx);
+                        });
+                    },
+                );
+                render_row(row, item, &colors, select, menu, cx)
             })
             .size_full();
             // The list rises into place as it fades in.

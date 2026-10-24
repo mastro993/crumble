@@ -10,7 +10,7 @@ use crumble_db::schema::notes;
 use diesel::prelude::*;
 
 use crate::rows::{decode_time, encode_time, live, millis, no_summary, segments_of, written};
-use crate::{NoteId, Notes, RecordingInfo};
+use crate::{FolderEntry, NoteId, Notes, RecordingInfo};
 
 impl Notes {
     /// The folder of the Note `id`'s Recording: `recordings/<id>/`. It may not exist.
@@ -143,6 +143,28 @@ impl Notes {
             .select(notes::id)
             .load::<String>(self.connection()?)?;
         Ok(ids.into_iter().map(NoteId).collect())
+    }
+
+    /// What shows the Note `id`'s folder in Finder: the first of its audio files by name, for
+    /// Finder to select, or else the folder itself, made if it is missing.
+    pub fn folder_entry(&self, id: &NoteId) -> anyhow::Result<FolderEntry> {
+        let dir = self.recording_dir(id);
+        let mut files = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file())
+                .collect(),
+            Err(error) if error.kind() == ErrorKind::NotFound => Vec::new(),
+            Err(error) => bail!("could not read the folder of Note {id}: {error}"),
+        };
+        files.sort();
+        if let Some(file) = files.into_iter().next() {
+            return Ok(FolderEntry::File(file));
+        }
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| anyhow!("could not make the folder of Note {id}: {error}"))?;
+        Ok(FolderEntry::Folder(dir))
     }
 
     /// Deletes the Note `id`'s Recording folder, if there is one.

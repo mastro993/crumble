@@ -1,7 +1,7 @@
 use chrono::Duration;
 
 use crate::fixtures::{at, ok, record_audio};
-use crate::{Note, Notes};
+use crate::{FolderEntry, Note, Notes};
 
 #[test]
 fn a_recording_starts_once_then_finishes() {
@@ -183,4 +183,23 @@ fn a_crash_left_recording_keeps_what_its_files_hold() {
     assert!(recordings.contains(&(unreadable.id.clone(), Some(None))));
     assert!(recordings.contains(&(finished.id, Some(Some(std::time::Duration::from_secs(9))))));
     assert_eq!(ok(notes.unfinished_recordings()), [unreadable.id]);
+}
+
+#[test]
+fn a_note_s_folder_shows_its_first_audio_file_or_else_itself() {
+    let mut notes = Notes::in_memory();
+    let note = ok(notes.create(None, at(5)));
+    let dir = notes.recording_dir(&note.id);
+    // A Note that never recorded gets its folder made, to open.
+    assert_eq!(
+        ok(notes.folder_entry(&note.id)),
+        FolderEntry::Folder(dir.clone())
+    );
+    assert!(dir.is_dir());
+    ok(std::fs::write(dir.join("system.aac"), b"audio").map_err(anyhow::Error::from));
+    record_audio(&notes, &note);
+    assert_eq!(
+        ok(notes.folder_entry(&note.id)),
+        FolderEntry::File(dir.join("mic.aac"))
+    );
 }

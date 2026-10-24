@@ -42,6 +42,8 @@ pub(super) struct MenuItem {
     leading: Option<Leading>,
     checked: Option<bool>,
     disabled: bool,
+    /// Drawn in the danger color, as an action that can't be undone.
+    destructive: bool,
     /// Left out by the search field's text.
     hidden: bool,
     kind: Kind,
@@ -83,6 +85,7 @@ impl MenuItem {
             leading: None,
             checked: None,
             disabled: false,
+            destructive: false,
             hidden: false,
             kind: Kind::Action(None),
         }
@@ -116,6 +119,12 @@ impl MenuItem {
     /// Makes the row a checkbox, showing a check at its trailing edge while `checked`.
     pub(super) fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+
+    /// Draws the row's label and icon in the danger color, for an action that can't be undone.
+    pub(super) fn destructive(mut self) -> Self {
+        self.destructive = true;
         self
     }
 
