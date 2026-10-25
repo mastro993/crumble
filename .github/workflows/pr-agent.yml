@@ -2,7 +2,9 @@ name: PR Agent
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    # synchronize re-runs this check on new pushes so a required "PR-Agent review"
+    # does not stay Expected. A push runs /review only (handle_push_trigger).
+    types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
 
@@ -10,16 +12,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  # Split by event so a /ask comment cannot cancel an in-flight pull_request
+  # review and leave the required check cancelled. issue_comment runs attach to
+  # the default branch and cannot satisfy that check.
+  group: pr-agent-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pr-agent:
+    name: PR-Agent review
     # Auto /review and /improve on non-draft, non-bot, same-repo PRs. All review
     # settings live in .pr_agent.toml. Collaborator `/review`, `/improve` or
     # `/ask …` comments re-run the job; that is the only way to review a fork
     # PR, because GitHub withholds secrets from fork runs. Other comments never
     # start the job.
+    # Skipped jobs (drafts, bots, forks) count as passing for a required check.
     if: >-
       github.event.sender.type != 'Bot' &&
       ((github.event_name == 'pull_request' &&
@@ -35,7 +42,46 @@ jobs:
       pull-requests: write
     steps:
       # The action's own Dockerfile pulls a rolling tag, so pin the release image (0.48.0) by digest.
-      - uses: docker://pragent/pr-agent@sha256:80edef71baa3df28c129d858d4b53784abfc14704c235efb32b6c461d5399a6d
+      - id: pr-agent
+        uses: docker://pragent/pr-agent@sha256:80edef71baa3df28c129d858d4b53784abfc14704c235efb32b6c461d5399a6d
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      # Fail only when the review is blocking: changes_required, or a security
+      # concern other than "No". Findings alone do not fail. Gate pull_request
+      # runs only; issue_comment cannot satisfy the required check.
+      - name: Gate on a blocking review
+        if: github.event_name == 'pull_request'
+        env:
+          REVIEW: ${{ steps.pr-agent.outputs.review }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("REVIEW", "")
+          if not raw.strip():
+              sys.exit(0)
+
+          try:
+              review = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              print(f"Could not parse PR-Agent review output: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          if not isinstance(review, dict):
+              print("PR-Agent review output is not a JSON object", file=sys.stderr)
+              sys.exit(1)
+
+          security = review.get("security_concerns")
+          if security is not None and str(security).strip().casefold() != "no":
+              print("PR-Agent flagged a security concern")
+              sys.exit(1)
+
+          merge = review.get("merge_recommendation")
+          if merge is not None and str(merge).strip() == "changes_required":
+              print("PR-Agent requested changes")
+              sys.exit(1)
+          PY
