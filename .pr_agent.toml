@@ -1,0 +1,126 @@
+# Shared PR-Agent (qodo-ai/pr-agent v0.48.0) config for
+# mastro993/gta-lunigiana, mastro993/xbase, and mastro993/crumble.
+# Keep this file in sync across those repositories.
+#
+# Prompt caching is intentionally off: litellm.cache_control_injection_points
+# stays at the default []. Single-shot /review and /improve calls do not reuse
+# a prompt prefix, so Anthropic cache writes would add cost without hits.
+
+[config]
+# Sonnet is the daily-driver: strong review quality at a fraction of Opus cost.
+# Opus is fallback only, for a failed/timed-out Sonnet call — not a second pass.
+model = "anthropic/claude-sonnet-5"
+fallback_models = ["anthropic/claude-opus-5-5"]
+ai_timeout = 180
+# Caps prompt+completion tokens. 48000 is enough for a typical PR plus extra
+# instructions, well below the 200k some repos used, and above the 32k default
+# so a mid-size diff is less likely to be clipped.
+max_model_tokens = 48000
+publish_output_progress = false
+enable_claude_extended_thinking = false
+enable_claude_adaptive_thinking = false
+response_language = "en-US"
+
+[github_action_config]
+auto_review = true
+auto_improve = true
+auto_describe = false
+pr_actions = ["opened", "reopened", "ready_for_review"]
+
+[github]
+ignore_bot_pr = true
+
+[pr_reviewer]
+num_max_findings = 4
+require_score_review = false
+require_tests_review = true
+require_estimate_effort_to_review = false
+require_estimate_contribution_time_cost = false
+require_security_review = true
+require_ticket_analysis_review = false
+enable_review_labels_security = true
+enable_review_labels_effort = false
+enable_help_text = false
+# Chunking multiplies review calls. Keep it off; cap stays 2 if it is enabled later.
+enable_large_pr_chunking = false
+max_number_of_calls = 2
+publish_output_no_suggestions = false
+final_update_message = false
+extra_instructions = """\
+Focus on bugs, security issues, correctness defects, and missing tests.
+Skip style, formatting, and naming nits that linters or formatters already cover.
+Each finding must be concrete, actionable, and cite file paths with line numbers.
+Reply in English.
+"""
+
+[pr_code_suggestions]
+num_code_suggestions_per_chunk = 2
+max_number_of_calls = 2
+max_suggestions_per_file = 2
+suggestions_score_threshold = 7
+score_on_reflection_failure = 6
+focus_only_on_problems = true
+# Table output (not committable inline comments) is the quieter default.
+committable_code_suggestions = false
+dual_publishing_score_threshold = -1
+enable_help_text = false
+publish_output_no_suggestions = false
+extra_instructions = """\
+Suggest only high-impact fixes for bugs, security issues, correctness defects, and missing tests.
+Skip style, formatting, and naming nits that linters or formatters already cover.
+Keep each suggestion concrete, actionable, and tied to specific lines.
+Reply in English.
+"""
+
+[litellm]
+cache_control_injection_points = []
+
+[ignore]
+glob = [
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/yarn.lock",
+  "**/bun.lock",
+  "**/bun.lockb",
+  "**/npm-shrinkwrap.json",
+  "**/Cargo.lock",
+  "**/Podfile.lock",
+  "**/pubspec.lock",
+  "**/composer.lock",
+  "**/Gemfile.lock",
+  "**/poetry.lock",
+  "**/Pipfile.lock",
+  "**/go.sum",
+  "**/vendor/**",
+  "**/node_modules/**",
+  "**/third_party/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/out/**",
+  "**/target/**",
+  "**/.next/**",
+  "**/coverage/**",
+  "**/__snapshots__/**",
+  "**/*.snap",
+  "**/*.min.js",
+  "**/*.min.css",
+  "**/*.map",
+  "**/*.png",
+  "**/*.jpg",
+  "**/*.jpeg",
+  "**/*.gif",
+  "**/*.webp",
+  "**/*.ico",
+  "**/*.pdf",
+  "**/*.mp3",
+  "**/*.mp4",
+  "**/*.mov",
+  "**/*.wav",
+  "**/*.woff",
+  "**/*.woff2",
+  "**/*.ttf",
+  "**/*.otf",
+  "**/*.wasm",
+  "**/generated/**",
+  "**/*.generated.*",
+]

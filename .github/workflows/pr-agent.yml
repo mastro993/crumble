@@ -8,14 +8,20 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
+
+# One in-flight run per pull request; a newer event cancels the previous one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
 
 jobs:
   pr-agent:
-    # Reviews every PR when it opens, and answers `/review`, `/improve`, `/ask …` comments. The repo
-    # is public, so only people with write access can spend the API key through a comment. Drafts
-    # wait for `ready_for_review`, and fork PRs, which get no secrets, wait for a `/review` comment.
-    # Other comments never start the job. PR-Agent reads the diff through the API and never checks
-    # out the PR's code.
+    # Reviews every PR when it opens, and answers `/review`, `/improve`, `/ask …`
+    # comments. Drafts wait for `ready_for_review`. Fork PRs get no secrets, so
+    # they wait for a `/review` comment from a collaborator. Bot PRs (Dependabot,
+    # Renovate) are skipped. Settings live in `.pr_agent.toml`, not here.
     if: >-
       github.event.sender.type != 'Bot' &&
       ((github.event_name == 'pull_request' &&
@@ -26,19 +32,11 @@ jobs:
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
     steps:
-      # The action's own Dockerfile pulls a rolling tag, so pin the release image (0.48.0) by digest.
+      # The action's own Dockerfile pulls a rolling tag, so pin the release image
+      # (v0.48.0) by digest. PR-Agent reads the diff through the API and never
+      # checks out the PR's code.
       - uses: docker://pragent/pr-agent@sha256:80edef71baa3df28c129d858d4b53784abfc14704c235efb32b6c461d5399a6d
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          config.model: anthropic/claude-opus-5-5
-          config.fallback_models: '["anthropic/claude-sonnet-5"]'
-          github_action_config.auto_review: "true"
-          github_action_config.auto_improve: "true"
-          # PR bodies are written by hand, so the agent must not rewrite them.
-          github_action_config.auto_describe: "false"
